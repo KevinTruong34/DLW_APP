@@ -2,13 +2,13 @@ import streamlit as st
 import pandas as pd
 
 # ==========================================
-# PHIÊN BẢN: 6.2.7
+# PHIÊN BẢN: 6.2.8
 # ==========================================
 
 # 1. CẤU HÌNH GIAO DIỆN
 st.set_page_config(page_title="Hệ thống Tra cứu Watch Store", layout="wide")
 
-# --- CSS TỐI THƯỢNG: XÓA SỔ HOÀN TOÀN HEADER & FOOTER ---
+# --- CSS TỐI THƯỢNG: XÓA SỔ HOÀN TOÀN HEADER, FOOTER & TOOLBAR BẢNG ---
 st.markdown("""
     <style>
     /* 1. Ẩn hoàn toàn thanh Header trên cùng (Chứa Menu, Deploy) */
@@ -29,6 +29,9 @@ st.markdown("""
     /* 5. Thu nhỏ số tiền */
     [data-testid="stMetricValue"] {font-size: 1.4rem !important;}
     [data-testid="stMetricLabel"] {font-size: 0.9rem !important; color: gray;}
+    
+    /* 6. Ẩn thanh công cụ (Toolbar) khi di chuột vào bảng dữ liệu */
+    [data-testid="stElementToolbar"] {display: none !important;}
     </style>
     """, unsafe_allow_html=True)
 
@@ -91,7 +94,6 @@ def hien_thi_hoa_don(inv_data, inv_code):
             </div>
         """, unsafe_allow_html=True)
         
-        # CHỈNH SỬA TẠI ĐÂY: Chuyển thành 2 cột thay vì 3 cột
         c1, c2 = st.columns(2)
         c1.metric("Tổng tiền hàng", f"{row.get('Tổng tiền hàng', 0):,.0f} đ")
         c2.metric("Thực tế trả", f"{row.get('Khách đã trả', 0):,.0f} đ")

@@ -32,14 +32,13 @@ def parse_money(val):
 @st.cache_data(ttl=300)
 def load_data(url):
     df = pd.read_csv(url, dtype=str)
-    # Xử lý các cột tiền ngay khi tải
     money_cols = ['Tổng tiền hàng', 'Khách cần trả', 'Khách đã trả', 'Đơn giá', 'Thành tiền']
     for col in money_cols:
         if col in df.columns:
             df[col] = df[col].apply(parse_money)
     return df
 
-# 4. HÀM HIỂN THỊ HÓA ĐƠN
+# 4. HÀM VẼ 1 HÓA ĐƠN ĐƠN LẺ
 def hien_thi_hoa_don(inv_data, inv_code):
     row = inv_data.iloc[0]
     status = row.get('Trạng thái', 'N/A')
@@ -47,7 +46,6 @@ def hien_thi_hoa_don(inv_data, inv_code):
     ten_kh = row.get('Tên khách hàng', 'Khách lẻ')
     sdt = row.get('Điện thoại', 'N/A')
     
-    # Tiêu đề hiển thị đầy đủ thông tin
     header = f"🧾 {inv_code} — {row.get('Thời gian', '')} | {ten_kh} ({sdt})"
     
     with st.expander(header, expanded=True):
@@ -73,69 +71,76 @@ def hien_thi_hoa_don(inv_data, inv_code):
                 
         st.dataframe(df_view, use_container_width=True, hide_index=True)
 
-# 5. GIAO DIỆN CHÍNH
+# 5. HÀM QUẢN LÝ DANH SÁCH (Tách Đơn hoàn thành & Đơn hủy)
+def xu_ly_danh_sach_hoa_don(res):
+    # Tách dữ liệu thành 2 nhóm
+    res_active = res[res['Trạng thái'] != 'Đã hủy']
+    res_canceled = res[res['Trạng thái'] == 'Đã hủy']
+    
+    # In các hóa đơn Hoàn thành trước
+    if not res_active.empty:
+        for code in res_active['Mã hóa đơn'].unique():
+            hien_thi_hoa_don(res_active[res_active['Mã hóa đơn'] == code], code)
+            
+    # In các hóa đơn Đã hủy vào một hộp đóng kín ở cuối
+    if not res_canceled.empty:
+        so_luong_huy = len(res_canceled['Mã hóa đơn'].unique())
+        st.markdown("<br>", unsafe_allow_html=True) # Tạo khoảng trống cho đẹp
+        with st.expander(f"🗑️ Xem các hóa đơn Đã hủy ({so_luong_huy})", expanded=False):
+            for code in res_canceled['Mã hóa đơn'].unique():
+                hien_thi_hoa_don(res_canceled[res_canceled['Mã hóa đơn'] == code], code)
+
+# 6. GIAO DIỆN CHÍNH
 try:
     raw_data = load_data(SHEET_URL)
     
-    # Khu vực bộ lọc trên cùng
     col_title, col_filter, col_refresh = st.columns([2, 1.5, 0.5])
-    
     with col_title:
         st.title("🔍 Tra cứu Hóa đơn")
-        
     with col_filter:
-        # Lấy danh sách chi nhánh thực tế từ database
         list_chi_nhanh = raw_data['Chi nhánh'].unique().tolist()
-        selected_branches = st.multiselect(
-            "Lọc Chi nhánh:", 
-            options=list_chi_nhanh, 
-            default=list_chi_nhanh
-        )
-        
+        selected_branches = st.multiselect("Lọc Chi nhánh:", options=list_chi_nhanh, default=list_chi_nhanh)
     with col_refresh:
-        st.write("") # Căn lề
+        st.write("") 
         if st.button("🔄 Reload"):
             st.cache_data.clear()
             st.rerun()
 
-    # Lọc dữ liệu theo chi nhánh đã chọn
     data = raw_data[raw_data['Chi nhánh'].isin(selected_branches)]
-    
-    # Xử lý tìm kiếm số điện thoại (Xóa ký tự không phải số)
     data['SĐT_Search'] = data['Điện thoại'].fillna('').str.replace(r'\D+', '', regex=True)
 
     tab1, tab2, tab3 = st.tabs(["📞 Số điện thoại", "🧾 Mã Hóa Đơn", "📅 Ngày tháng"])
     
+    # --- TAB 1: SỐ ĐIỆN THOẠI ---
     with tab1:
         search_phone = st.text_input("Nhập số điện thoại:", key="in_phone")
         if search_phone:
             clean_phone = search_phone.replace(" ", "")
             res = data[data['SĐT_Search'].str.contains(clean_phone, na=False)]
             if not res.empty:
-                for code in res['Mã hóa đơn'].unique():
-                    hien_thi_hoa_don(res[res['Mã hóa đơn'] == code], code)
+                st.info(f"Khách hàng: **{res.iloc[0].get('Tên khách hàng', 'Khách lẻ')}**")
+                xu_ly_danh_sach_hoa_don(res)
             else: st.warning("Không tìm thấy số điện thoại này.")
 
+    # --- TAB 2: MÃ HÓA ĐƠN ---
     with tab2:
         search_inv = st.text_input("Nhập mã (Ví dụ: 11119 hoặc HD011119):", key="in_inv")
         if search_inv:
             query = search_inv.strip().upper()
-            # Tìm kiếm linh hoạt: Nếu gõ số thì tìm phần đuôi, nếu gõ đầy đủ HD thì tìm chính xác
-            res = data[data['Mã hóa đơn'].str.contains(query, na=False)]
+            # CẬP NHẬT: Dùng endswith để tìm chính xác phần đuôi của hóa đơn
+            res = data[data['Mã hóa đơn'].str.upper().str.endswith(query, na=False)]
             if not res.empty:
-                for code in res['Mã hóa đơn'].unique():
-                    hien_thi_hoa_don(res[res['Mã hóa đơn'] == code], code)
+                xu_ly_danh_sach_hoa_don(res)
             else: st.warning("Không tìm thấy mã hóa đơn này.")
 
+    # --- TAB 3: NGÀY THÁNG ---
     with tab3:
         search_date = st.text_input("Nhập ngày/tháng (Ví dụ: 13/04/2026 hoặc 04/2026):", key="in_date")
         if search_date:
             res = data[data['Thời gian'].astype(str).str.contains(search_date.strip(), na=False)]
             if not res.empty:
-                codes = res['Mã hóa đơn'].unique()
-                st.success(f"Tìm thấy {len(codes)} hóa đơn tại các chi nhánh đã chọn.")
-                for code in codes:
-                    hien_thi_hoa_don(res[res['Mã hóa đơn'] == code], code)
+                st.success(f"Tìm thấy {len(res['Mã hóa đơn'].unique())} hóa đơn tại các chi nhánh đã chọn.")
+                xu_ly_danh_sach_hoa_don(res)
             else: st.warning("Không có hóa đơn nào trong thời gian này.")
 
 except Exception as e:

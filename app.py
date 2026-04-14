@@ -4,10 +4,22 @@ import pandas as pd
 # 1. CẤU HÌNH GIAO DIỆN
 st.set_page_config(page_title="Hệ thống Tra cứu Watch Store", layout="wide")
 
+# --- XÓA MENU STREAMLIT VÀ GITHUB ---
+hide_st_style = """
+            <style>
+            #MainMenu {visibility: hidden;}
+            header {visibility: hidden;}
+            footer {visibility: hidden;}
+            .stAppDeployButton {display:none;}
+            </style>
+            """
+st.markdown(hide_st_style, unsafe_allow_html=True)
+
+# 2. THÔNG TIN HỆ THỐNG
 PASSWORD_SYSTEM = "9999"
 SHEET_URL = "https://docs.google.com/spreadsheets/d/e/2PACX-1vT27nMRVzpVgaCVNmvREvonJM_fRJ2uGxm4I8LT2PuBxIaFtvuqIO54tOixVCmmpEcLThzEkG92iNsb/pub?output=csv"
 
-# 2. BẢO MẬT
+# 3. BẢO MẬT
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
 
@@ -22,7 +34,7 @@ if not st.session_state["authenticated"]:
             st.error("Mật khẩu không chính xác!")
     st.stop()
 
-# 3. HÀM XỬ LÝ TIỀN TỆ
+# 4. HÀM XỬ LÝ TIỀN TỆ
 def parse_money(val):
     if pd.isna(val): return 0
     val = str(val).strip().replace('.', '').replace(',', '.')
@@ -38,7 +50,7 @@ def load_data(url):
             df[col] = df[col].apply(parse_money)
     return df
 
-# 4. HÀM VẼ 1 HÓA ĐƠN ĐƠN LẺ
+# 5. HÀM VẼ 1 HÓA ĐƠN ĐƠN LẺ
 def hien_thi_hoa_don(inv_data, inv_code):
     row = inv_data.iloc[0]
     status = row.get('Trạng thái', 'N/A')
@@ -69,28 +81,27 @@ def hien_thi_hoa_don(inv_data, inv_code):
             if c in df_view.columns:
                 df_view[c] = df_view[c].apply(lambda x: f"{x:,.0f} đ")
                 
-        st.dataframe(df_view, use_container_width=True, hide_index=True)
+        # NÂNG CẤP: Bọc bảng sản phẩm vào một nút mở rộng mặc định đóng
+        with st.expander("📦 Xem chi tiết hàng hóa", expanded=False):
+            st.dataframe(df_view, use_container_width=True, hide_index=True)
 
-# 5. HÀM QUẢN LÝ DANH SÁCH (Tách Đơn hoàn thành & Đơn hủy)
+# 6. HÀM QUẢN LÝ DANH SÁCH (Tách Đơn hoàn thành & Đơn hủy)
 def xu_ly_danh_sach_hoa_don(res):
-    # Tách dữ liệu thành 2 nhóm
     res_active = res[res['Trạng thái'] != 'Đã hủy']
     res_canceled = res[res['Trạng thái'] == 'Đã hủy']
     
-    # In các hóa đơn Hoàn thành trước
     if not res_active.empty:
         for code in res_active['Mã hóa đơn'].unique():
             hien_thi_hoa_don(res_active[res_active['Mã hóa đơn'] == code], code)
             
-    # In các hóa đơn Đã hủy vào một hộp đóng kín ở cuối
     if not res_canceled.empty:
         so_luong_huy = len(res_canceled['Mã hóa đơn'].unique())
-        st.markdown("<br>", unsafe_allow_html=True) # Tạo khoảng trống cho đẹp
+        st.markdown("<br>", unsafe_allow_html=True) 
         with st.expander(f"🗑️ Xem các hóa đơn Đã hủy ({so_luong_huy})", expanded=False):
             for code in res_canceled['Mã hóa đơn'].unique():
                 hien_thi_hoa_don(res_canceled[res_canceled['Mã hóa đơn'] == code], code)
 
-# 6. GIAO DIỆN CHÍNH
+# 7. GIAO DIỆN CHÍNH
 try:
     raw_data = load_data(SHEET_URL)
     
@@ -111,7 +122,6 @@ try:
 
     tab1, tab2, tab3 = st.tabs(["📞 Số điện thoại", "🧾 Mã Hóa Đơn", "📅 Ngày tháng"])
     
-    # --- TAB 1: SỐ ĐIỆN THOẠI ---
     with tab1:
         search_phone = st.text_input("Nhập số điện thoại:", key="in_phone")
         if search_phone:
@@ -122,18 +132,15 @@ try:
                 xu_ly_danh_sach_hoa_don(res)
             else: st.warning("Không tìm thấy số điện thoại này.")
 
-    # --- TAB 2: MÃ HÓA ĐƠN ---
     with tab2:
         search_inv = st.text_input("Nhập mã (Ví dụ: 11119 hoặc HD011119):", key="in_inv")
         if search_inv:
             query = search_inv.strip().upper()
-            # CẬP NHẬT: Dùng endswith để tìm chính xác phần đuôi của hóa đơn
             res = data[data['Mã hóa đơn'].str.upper().str.endswith(query, na=False)]
             if not res.empty:
                 xu_ly_danh_sach_hoa_don(res)
             else: st.warning("Không tìm thấy mã hóa đơn này.")
 
-    # --- TAB 3: NGÀY THÁNG ---
     with tab3:
         search_date = st.text_input("Nhập ngày/tháng (Ví dụ: 13/04/2026 hoặc 04/2026):", key="in_date")
         if search_date:

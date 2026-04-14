@@ -4,22 +4,25 @@ import pandas as pd
 # 1. CẤU HÌNH GIAO DIỆN
 st.set_page_config(page_title="Hệ thống Tra cứu Watch Store", layout="wide")
 
-# --- XÓA MENU STREAMLIT VÀ GITHUB ---
-hide_st_style = """
-            <style>
-            #MainMenu {visibility: hidden;}
-            header {visibility: hidden;}
-            footer {visibility: hidden;}
-            .stAppDeployButton {display:none;}
-            </style>
-            """
-st.markdown(hide_st_style, unsafe_allow_html=True)
+# --- CSS TÙY CHỈNH: ẨN "MANAGE APP" & GIỮ MENU SÁNG/TỐI ---
+st.markdown("""
+    <style>
+    /* Ẩn nút Deploy góc trên bên phải */
+    .stAppDeployButton {display:none;}
+    /* Ẩn dòng chữ Made with Streamlit và nút Manage app ở góc dưới */
+    footer {display:none;}
+    #stConnectionStatus {display: none !important;}
+    /* Giữ lại MainMenu để chỉnh Sáng/Tối */
+    #MainMenu {visibility: visible;}
+    </style>
+    """, unsafe_allow_html=True)
 
 # 2. THÔNG TIN HỆ THỐNG
 PASSWORD_SYSTEM = "9999"
+# Lấy link từ Secrets đã cấu hình
 SHEET_URL = st.secrets["MY_SHEET_URL"]
 
-# 3. BẢO MẬT
+# 3. BẢO MẬT ĐĂNG NHẬP
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
 
@@ -34,7 +37,7 @@ if not st.session_state["authenticated"]:
             st.error("Mật khẩu không chính xác!")
     st.stop()
 
-# 4. HÀM XỬ LÝ TIỀN TỆ
+# 4. CÁC HÀM XỬ LÝ DỮ LIỆU
 def parse_money(val):
     if pd.isna(val): return 0
     val = str(val).strip().replace('.', '').replace(',', '.')
@@ -50,7 +53,6 @@ def load_data(url):
             df[col] = df[col].apply(parse_money)
     return df
 
-# 5. HÀM VẼ 1 HÓA ĐƠN ĐƠN LẺ
 def hien_thi_hoa_don(inv_data, inv_code):
     row = inv_data.iloc[0]
     status = row.get('Trạng thái', 'N/A')
@@ -81,11 +83,9 @@ def hien_thi_hoa_don(inv_data, inv_code):
             if c in df_view.columns:
                 df_view[c] = df_view[c].apply(lambda x: f"{x:,.0f} đ")
                 
-        # NÂNG CẤP: Bọc bảng sản phẩm vào một nút mở rộng mặc định đóng
-        with st.expander("📦 Xem chi tiết hàng hóa", expanded=False):
+        with st.expander(" Xem chi tiết hàng hóa", expanded=False):
             st.dataframe(df_view, use_container_width=True, hide_index=True)
 
-# 6. HÀM QUẢN LÝ DANH SÁCH (Tách Đơn hoàn thành & Đơn hủy)
 def xu_ly_danh_sach_hoa_don(res):
     res_active = res[res['Trạng thái'] != 'Đã hủy']
     res_canceled = res[res['Trạng thái'] == 'Đã hủy']
@@ -101,25 +101,31 @@ def xu_ly_danh_sach_hoa_don(res):
             for code in res_canceled['Mã hóa đơn'].unique():
                 hien_thi_hoa_don(res_canceled[res_canceled['Mã hóa đơn'] == code], code)
 
-# 7. GIAO DIỆN CHÍNH
+# 5. BỐ CỤC HEADER & TRA CỨU
 try:
     raw_data = load_data(SHEET_URL)
     
-    col_title, col_filter, col_refresh = st.columns([2, 1.5, 0.5])
-    with col_title:
+    # Chia cột cho tiêu đề và các nút chức năng (Header)
+    col_h1, col_h2, col_h3 = st.columns([2, 0.5, 1.5])
+    
+    with col_h1:
         st.title("🔍 Tra cứu Hóa đơn")
-    with col_filter:
-        list_chi_nhanh = raw_data['Chi nhánh'].unique().tolist()
-        selected_branches = st.multiselect("Lọc Chi nhánh:", options=list_chi_nhanh, default=list_chi_nhanh)
-    with col_refresh:
-        st.write("") 
-        if st.button("🔄 Reload"):
+        
+    with col_h2:
+        st.write("<br>", unsafe_allow_html=True) # Căn chỉnh cho bằng hàng với tiêu đề
+        if st.button("🔄 Reload", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
+            
+    with col_h3:
+        list_chi_nhanh = raw_data['Chi nhánh'].unique().tolist()
+        selected_branches = st.multiselect("Chi nhánh:", options=list_chi_nhanh, default=list_chi_nhanh)
 
-    data = raw_data[raw_data['Chi nhánh'].isin(selected_branches)]
+    # Lọc dữ liệu theo chi nhánh
+    data = raw_data[raw_data['Chi nhánh'].isin(selected_branches)].copy()
     data['SĐT_Search'] = data['Điện thoại'].fillna('').str.replace(r'\D+', '', regex=True)
 
+    # Các Tab tra cứu
     tab1, tab2, tab3 = st.tabs(["📞 Số điện thoại", "🧾 Mã Hóa Đơn", "📅 Ngày tháng"])
     
     with tab1:
@@ -130,25 +136,25 @@ try:
             if not res.empty:
                 st.info(f"Khách hàng: **{res.iloc[0].get('Tên khách hàng', 'Khách lẻ')}**")
                 xu_ly_danh_sach_hoa_don(res)
-            else: st.warning("Không tìm thấy số điện thoại này.")
+            else: st.warning("Không tìm thấy số điện thoại.")
 
     with tab2:
-        search_inv = st.text_input("Nhập mã (Ví dụ: 11119 hoặc HD011119):", key="in_inv")
+        search_inv = st.text_input("Nhập mã (Ví dụ: 1007 hoặc HD011007):", key="in_inv")
         if search_inv:
             query = search_inv.strip().upper()
             res = data[data['Mã hóa đơn'].str.upper().str.endswith(query, na=False)]
             if not res.empty:
                 xu_ly_danh_sach_hoa_don(res)
-            else: st.warning("Không tìm thấy mã hóa đơn này.")
+            else: st.warning("Không tìm thấy mã hóa đơn.")
 
     with tab3:
-        search_date = st.text_input("Nhập ngày/tháng (Ví dụ: 13/04/2026 hoặc 04/2026):", key="in_date")
+        search_date = st.text_input("Nhập ngày/tháng (Ví dụ: 14/04/2026):", key="in_date")
         if search_date:
             res = data[data['Thời gian'].astype(str).str.contains(search_date.strip(), na=False)]
             if not res.empty:
-                st.success(f"Tìm thấy {len(res['Mã hóa đơn'].unique())} hóa đơn tại các chi nhánh đã chọn.")
+                st.success(f"Tìm thấy {len(res['Mã hóa đơn'].unique())} hóa đơn.")
                 xu_ly_danh_sach_hoa_don(res)
-            else: st.warning("Không có hóa đơn nào trong thời gian này.")
+            else: st.warning("Không có dữ liệu trong thời gian này.")
 
 except Exception as e:
     st.error(f"Lỗi: {e}")

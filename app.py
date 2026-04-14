@@ -4,22 +4,28 @@ import pandas as pd
 # 1. CẤU HÌNH GIAO DIỆN
 st.set_page_config(page_title="Hệ thống Tra cứu Watch Store", layout="wide")
 
-# --- CSS TÙY CHỈNH: ẨN "MANAGE APP" & GIỮ MENU SÁNG/TỐI ---
+# --- CSS TÙY CHỈNH: ẨN LOGO, GIỮ MENU SÁNG/TỐI & THU NHỎ SỐ TIỀN ---
 st.markdown("""
     <style>
-    /* Ẩn nút Deploy góc trên bên phải */
-    .stAppDeployButton {display:none;}
-    /* Ẩn dòng chữ Made with Streamlit và nút Manage app ở góc dưới */
-    footer {display:none;}
-    #stConnectionStatus {display: none !important;}
+    /* Ẩn nút Deploy và thanh công cụ Github */
+    .stAppDeployButton {display:none !important;}
+    [data-testid="stToolbar"] {right: 40px;}
+    
+    /* Ẩn dòng chữ Hosted with Streamlit ở góc dưới */
+    [data-testid="viewerBadge"] {display: none !important;}
+    footer {display:none !important;}
+    
     /* Giữ lại MainMenu để chỉnh Sáng/Tối */
     #MainMenu {visibility: visible;}
+    
+    /* THU NHỎ KÍCH THƯỚC CÁC Ô SỐ TIỀN (METRIC) */
+    [data-testid="stMetricValue"] {font-size: 1.4rem !important;}
+    [data-testid="stMetricLabel"] {font-size: 0.9rem !important; color: gray;}
     </style>
     """, unsafe_allow_html=True)
 
 # 2. THÔNG TIN HỆ THỐNG
 PASSWORD_SYSTEM = "9999"
-# Lấy link từ Secrets đã cấu hình
 SHEET_URL = st.secrets["MY_SHEET_URL"]
 
 # 3. BẢO MẬT ĐĂNG NHẬP
@@ -47,6 +53,15 @@ def parse_money(val):
 @st.cache_data(ttl=300)
 def load_data(url):
     df = pd.read_csv(url, dtype=str)
+    
+    # KIỂM TRA VÀ TỰ ĐỘNG LỌC TRÙNG LẶP DO COPY NHẦM
+    tong_dong_ban_dau = len(df)
+    df = df.drop_duplicates()
+    so_dong_trung = tong_dong_ban_dau - len(df)
+    
+    # Lưu số lượng trùng lặp vào session để hiện cảnh báo
+    st.session_state['so_dong_trung'] = so_dong_trung
+    
     money_cols = ['Tổng tiền hàng', 'Khách cần trả', 'Khách đã trả', 'Đơn giá', 'Thành tiền']
     for col in money_cols:
         if col in df.columns:
@@ -60,7 +75,8 @@ def hien_thi_hoa_don(inv_data, inv_code):
     ten_kh = row.get('Tên khách hàng', 'Khách lẻ')
     sdt = row.get('Điện thoại', 'N/A')
     
-    header = f"🧾 {inv_code} — {row.get('Thời gian', '')} | {ten_kh} ({sdt})"
+    # LÀM NỔI BẬT TIÊU ĐỀ BẰNG MARKDOWN (DẤU **)
+    header = f"🧾 **{inv_code}** — {row.get('Thời gian', '')} | **{ten_kh}** ({sdt})"
     
     with st.expander(header, expanded=True):
         st.markdown(f"""
@@ -83,7 +99,7 @@ def hien_thi_hoa_don(inv_data, inv_code):
             if c in df_view.columns:
                 df_view[c] = df_view[c].apply(lambda x: f"{x:,.0f} đ")
                 
-        with st.expander(" Xem chi tiết hàng hóa", expanded=False):
+        with st.expander("📦 Xem chi tiết hàng hóa", expanded=False):
             st.dataframe(df_view, use_container_width=True, hide_index=True)
 
 def xu_ly_danh_sach_hoa_don(res):
@@ -105,14 +121,17 @@ def xu_ly_danh_sach_hoa_don(res):
 try:
     raw_data = load_data(SHEET_URL)
     
-    # Chia cột cho tiêu đề và các nút chức năng (Header)
+    # HIỂN THỊ CẢNH BÁO TRÙNG LẶP (NẾU CÓ)
+    if st.session_state.get('so_dong_trung', 0) > 0:
+        st.warning(f"⚠️ **Cảnh báo dữ liệu:** Phát hiện {st.session_state['so_dong_trung']} dòng bị lặp lại trong Google Sheets (có thể do copy-paste nhầm). Web đã tự động ẩn đi các dòng dư để tính toán chính xác, nhưng bạn nên vào Google Sheets để xóa thủ công cho sạch dữ liệu.")
+
     col_h1, col_h2, col_h3 = st.columns([2, 0.5, 1.5])
     
     with col_h1:
         st.title("🔍 Tra cứu Hóa đơn")
         
     with col_h2:
-        st.write("<br>", unsafe_allow_html=True) # Căn chỉnh cho bằng hàng với tiêu đề
+        st.write("<br>", unsafe_allow_html=True) 
         if st.button("🔄 Reload", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
@@ -121,11 +140,9 @@ try:
         list_chi_nhanh = raw_data['Chi nhánh'].unique().tolist()
         selected_branches = st.multiselect("Chi nhánh:", options=list_chi_nhanh, default=list_chi_nhanh)
 
-    # Lọc dữ liệu theo chi nhánh
     data = raw_data[raw_data['Chi nhánh'].isin(selected_branches)].copy()
     data['SĐT_Search'] = data['Điện thoại'].fillna('').str.replace(r'\D+', '', regex=True)
 
-    # Các Tab tra cứu
     tab1, tab2, tab3 = st.tabs(["📞 Số điện thoại", "🧾 Mã Hóa Đơn", "📅 Ngày tháng"])
     
     with tab1:
@@ -157,4 +174,4 @@ try:
             else: st.warning("Không có dữ liệu trong thời gian này.")
 
 except Exception as e:
-    st.error(f"Lỗi: {e}")
+    st.error(f"Lỗi tải dữ liệu: {e}")

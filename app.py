@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
+from supabase import create_client, Client
 
 # ==========================================
-# PHIÊN BẢN: 6.3.0
+# PHIÊN BẢN: 7.0.0
 # ==========================================
 
 # 1. CẤU HÌNH GIAO DIỆN
@@ -27,12 +28,13 @@ st.markdown("""
 # 2. THÔNG TIN HỆ THỐNG
 PASSWORD_SYSTEM = "9999"
 
-# Load cả 2 link từ Secrets
+# Kết nối Supabase từ Secrets
 try:
-    SHEET_URL = st.secrets["MY_SHEET_URL"]
-    THE_KHO_URL = st.secrets.get("THE_KHO_URL", "") # Dùng get để không báo lỗi nếu bạn chưa kịp tạo link thẻ kho
+    SUPABASE_URL = st.secrets["SUPABASE_URL"]
+    SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 except Exception:
-    st.error("Chưa cấu hình xong URL trong Streamlit Secrets!")
+    st.error("Chưa cấu hình SUPABASE_URL và SUPABASE_KEY trong Streamlit Secrets!")
     st.stop()
 
 # 3. BẢO MẬT ĐĂNG NHẬP
@@ -58,18 +60,61 @@ def parse_money(val):
     except: return 0
 
 @st.cache_data(ttl=300)
-def load_data(url):
-    df = pd.read_csv(url, dtype=str)
-    # Lọc trùng lặp
-    tong_dong_ban_dau = len(df)
+def load_hoa_don():
+    """Load toàn bộ bảng hoa_don từ Supabase (tự động phân trang)"""
+    all_rows = []
+    batch = 1000
+    offset = 0
+    while True:
+        res = supabase.table("hoa_don").select("*").range(offset, offset + batch - 1).execute()
+        rows = res.data
+        if not rows:
+            break
+        all_rows.extend(rows)
+        if len(rows) < batch:
+            break
+        offset += batch
+
+    df = pd.DataFrame(all_rows)
+
+    # Đếm trùng lặp
+    tong_ban_dau = len(df)
     df = df.drop_duplicates()
-    so_dong_trung = tong_dong_ban_dau - len(df)
-    st.session_state['so_dong_trung'] = so_dong_trung
-    
+    st.session_state['so_dong_trung'] = tong_ban_dau - len(df)
+
     money_cols = ['Tổng tiền hàng', 'Khách cần trả', 'Khách đã trả', 'Đơn giá', 'Thành tiền']
     for col in money_cols:
         if col in df.columns:
-            df[col] = df[col].apply(parse_money)
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+
+    return df
+
+@st.cache_data(ttl=300)
+def load_the_kho():
+    """Load toàn bộ bảng the_kho từ Supabase"""
+    all_rows = []
+    batch = 1000
+    offset = 0
+    while True:
+        res = supabase.table("the_kho").select("*").range(offset, offset + batch - 1).execute()
+        rows = res.data
+        if not rows:
+            break
+        all_rows.extend(rows)
+        if len(rows) < batch:
+            break
+        offset += batch
+
+    df = pd.DataFrame(all_rows)
+
+    numeric_kho = [
+        "Tồn đầu kì", "Giá trị đầu kì", "Nhập NCC", "Giá trị nhập NCC",
+        "Xuất bán", "Giá trị xuất bán", "Tồn cuối kì", "Giá trị cuối kì"
+    ]
+    for col in numeric_kho:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+
     return df
 
 # ==========================================
@@ -82,9 +127,9 @@ def module_hoa_don():
         bg_color = "#28a745" if status == "Hoàn thành" else "#dc3545"
         ten_kh = row.get('Tên khách hàng', 'Khách lẻ')
         sdt = row.get('Điện thoại', 'N/A')
-        
+
         header = f"🧾 **{inv_code}** — {row.get('Thời gian', '')} | **{ten_kh}** ({sdt})"
-        
+
         with st.expander(header, expanded=True):
             st.markdown(f"""
                 <div style="display: flex; justify-content: flex-end; margin-top: -40px;">
@@ -93,49 +138,49 @@ def module_hoa_don():
                     </span>
                 </div>
             """, unsafe_allow_html=True)
-            
+
             c1, c2 = st.columns(2)
             c1.metric("Tổng tiền hàng", f"{row.get('Tổng tiền hàng', 0):,.0f} đ")
             c2.metric("Thực tế trả", f"{row.get('Khách đã trả', 0):,.0f} đ")
-            
+
             cols = ['Mã hàng', 'Tên hàng', 'Số lượng', 'Đơn giá', 'Thành tiền', 'Ghi chú hàng hóa']
             df_view = inv_data[[c for c in cols if c in inv_data.columns]].copy()
-            
+
             for c in ['Đơn giá', 'Thành tiền']:
                 if c in df_view.columns:
                     df_view[c] = df_view[c].apply(lambda x: f"{x:,.0f} đ")
-                    
-            with st.expander(" Xem chi tiết hàng hóa", expanded=False):
+
+            with st.expander("📋 Xem chi tiết hàng hóa", expanded=False):
                 st.dataframe(df_view, use_container_width=True, hide_index=True)
 
     def xu_ly_danh_sach_hoa_don(res):
         res_active = res[res['Trạng thái'] != 'Đã hủy']
         res_canceled = res[res['Trạng thái'] == 'Đã hủy']
-        
+
         if not res_active.empty:
             for code in res_active['Mã hóa đơn'].unique():
                 hien_thi_hoa_don(res_active[res_active['Mã hóa đơn'] == code], code)
-                
+
         if not res_canceled.empty:
             so_luong_huy = len(res_canceled['Mã hóa đơn'].unique())
-            st.markdown("<br>", unsafe_allow_html=True) 
+            st.markdown("<br>", unsafe_allow_html=True)
             with st.expander(f"🗑️ Xem các hóa đơn Đã hủy ({so_luong_huy})", expanded=False):
                 for code in res_canceled['Mã hóa đơn'].unique():
                     hien_thi_hoa_don(res_canceled[res_canceled['Mã hóa đơn'] == code], code)
 
     try:
-        raw_data = load_data(SHEET_URL)
-        list_chi_nhanh = raw_data['Chi nhánh'].unique().tolist()
+        raw_data = load_hoa_don()
+        list_chi_nhanh = raw_data['Chi nhánh'].dropna().unique().tolist()
         selected_branches = st.multiselect("Chi nhánh:", options=list_chi_nhanh, default=list_chi_nhanh)
 
         if st.session_state.get('so_dong_trung', 0) > 0:
-            st.warning(f"⚠️ **Cảnh báo dữ liệu:** Phát hiện {st.session_state['so_dong_trung']} hóa đơn lỗi.")
+            st.warning(f"⚠️ **Cảnh báo dữ liệu:** Phát hiện {st.session_state['so_dong_trung']} dòng trùng lặp.")
 
         data = raw_data[raw_data['Chi nhánh'].isin(selected_branches)].copy()
         data['SĐT_Search'] = data['Điện thoại'].fillna('').str.replace(r'\D+', '', regex=True)
 
         tab1, tab2, tab3 = st.tabs(["📞 Số điện thoại", "🧾 Mã Hóa Đơn", "📅 Ngày tháng"])
-        
+
         with tab1:
             search_phone = st.text_input("Nhập số điện thoại:", key="in_phone")
             if search_phone:
@@ -144,7 +189,8 @@ def module_hoa_don():
                 if not res.empty:
                     st.info(f"Khách hàng: **{res.iloc[0].get('Tên khách hàng', 'Khách lẻ')}**")
                     xu_ly_danh_sach_hoa_don(res)
-                else: st.warning("Không tìm thấy số điện thoại.")
+                else:
+                    st.warning("Không tìm thấy số điện thoại.")
 
         with tab2:
             search_inv = st.text_input("Nhập mã (Ví dụ: 1007 hoặc HD011007):", key="in_inv")
@@ -153,7 +199,8 @@ def module_hoa_don():
                 res = data[data['Mã hóa đơn'].str.upper().str.endswith(query, na=False)]
                 if not res.empty:
                     xu_ly_danh_sach_hoa_don(res)
-                else: st.warning("Không tìm thấy mã hóa đơn.")
+                else:
+                    st.warning("Không tìm thấy mã hóa đơn.")
 
         with tab3:
             search_date = st.text_input("Nhập ngày/tháng (Ví dụ: 14/04/2026):", key="in_date")
@@ -162,7 +209,9 @@ def module_hoa_don():
                 if not res.empty:
                     st.success(f"Tìm thấy {len(res['Mã hóa đơn'].unique())} hóa đơn.")
                     xu_ly_danh_sach_hoa_don(res)
-                else: st.warning("Không có dữ liệu trong thời gian này.")
+                else:
+                    st.warning("Không có dữ liệu trong thời gian này.")
+
     except Exception as e:
         st.error(f"Lỗi tải dữ liệu Hóa đơn: {e}")
 
@@ -170,28 +219,34 @@ def module_hoa_don():
 # MODULE 2: THẺ KHO
 # ==========================================
 def module_the_kho():
-    if not THE_KHO_URL:
-        st.info("💡 Bạn chưa cấu hình THE_KHO_URL trong Secrets. Hãy xuất báo cáo thẻ kho từ KiotViet, tạo file Google Sheets và thêm link vào để tính năng này hoạt động.")
-        return
-        
     try:
-        data_kho = load_data(THE_KHO_URL)
+        data_kho = load_the_kho()
+
+        if data_kho.empty:
+            st.info("💡 Chưa có dữ liệu thẻ kho trong database.")
+            return
+
         search_ma = st.text_input("🔍 Nhập Mã hàng hóa cần kiểm tra (Ví dụ: CASIO-01):").strip().upper()
-        
+
         if search_ma:
-            # Tìm kiếm gần đúng theo mã hàng
             res = data_kho[data_kho['Mã hàng'].str.upper().str.contains(search_ma, na=False)]
-            
+
             if not res.empty:
-                st.success(f"Tìm thấy lịch sử thẻ kho cho: **{res.iloc[0].get('Tên hàng', search_ma)}**")
-                # Hiển thị bảng dữ liệu lịch sử xuất/nhập
-                cols_view = ['Thời gian', 'Mã chứng từ', 'Loại giao dịch', 'Số lượng', 'Tồn kho', 'Chi nhánh']
-                # Lọc các cột có tồn tại trong file Excel
+                st.success(f"Tìm thấy **{len(res)}** dòng cho: **{res.iloc[0].get('Tên hàng', search_ma)}**")
+
+                cols_view = ['Chi nhánh', 'Mã hàng', 'Tên hàng', 'Tồn đầu kì', 'Nhập NCC',
+                             'Xuất bán', 'Tồn cuối kì', 'Giá trị cuối kì']
                 cols_view = [c for c in cols_view if c in res.columns]
-                
-                st.dataframe(res[cols_view], use_container_width=True, hide_index=True)
+
+                df_view = res[cols_view].copy()
+                for c in ['Giá trị cuối kì', 'Giá trị đầu kì']:
+                    if c in df_view.columns:
+                        df_view[c] = df_view[c].apply(lambda x: f"{x:,.0f} đ")
+
+                st.dataframe(df_view, use_container_width=True, hide_index=True)
             else:
-                st.warning("Không tìm thấy lịch sử biến động cho mã hàng này.")
+                st.warning("Không tìm thấy mã hàng này.")
+
     except Exception as e:
         st.error(f"Lỗi tải dữ liệu Thẻ kho: {e}")
 

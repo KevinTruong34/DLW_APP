@@ -735,7 +735,6 @@ def module_hang_hoa():
                          if row_m.get("_con","") else row_m.get("_cha",""))
             gb = int(row_m.get("gia_ban", 0) or 0)
 
-            # Card
             extra_parts = []
             if pd.notna(row_m.get("thuong_hieu","")) and str(row_m.get("thuong_hieu","")).strip():
                 extra_parts.append(f"Thương hiệu: {row_m['thuong_hieu']}")
@@ -743,65 +742,73 @@ def module_hang_hoa():
                 extra_parts.append(f"Bảo hành: {row_m['bao_hanh']}")
             extra_str = " · ".join(extra_parts)
 
-            vach_str = f"<span style='color:#888;'>· {vach}</span>" \
-                       if vach and vach != ma_display else ""
-            nhom_str = f"<div style='font-size:0.75rem;color:#aaa;margin-top:2px;'>{nhom_full}</div>" \
-                       if nhom_full else ""
-            extra_html = f"<div style='font-size:0.78rem;color:#666;margin-top:4px;'>{extra_str}</div>" \
-                         if extra_str else ""
+            vach_str   = f" · {vach}" if vach and vach != ma_display else ""
+            nhom_html  = f"<div style='font-size:0.75rem;color:#aaa;margin-top:1px;'>{nhom_full}</div>" if nhom_full else ""
+            extra_html = f"<div style='font-size:0.78rem;color:#666;margin-top:6px;'>{extra_str}</div>" if extra_str else ""
+            gb_html    = f"<div style='margin-top:10px;font-size:0.75rem;color:#888;'>Giá bán</div>" \
+                         f"<div style='font-size:1.1rem;font-weight:700;color:#1a1a2e;'>" \
+                         f"{'—' if not gb else f'{gb:,} đ'}</div>"
 
-            c_main, c_ton, c_close = st.columns([5, 2, 1])
-            with c_main:
+            # Card trắng ôm hết thông tin + giá
+            c_card, c_close = st.columns([8, 1])
+            with c_card:
                 st.markdown(
-                    f"<div style='background:#fff;border:1px solid #e8e8e8;"
-                    f"border-radius:12px;padding:12px 14px;'>"
-                    f"<div style='font-weight:700;font-size:1rem;color:#1a1a2e;'>"
+                    f"<div style='background:#fff;border:1px solid #e0e0e0;"
+                    f"border-radius:12px;padding:14px 16px;'>"
+                    f"<div style='font-weight:700;font-size:1.05rem;color:#1a1a2e;'>"
                     f"{row_m['ten_hang']}</div>"
-                    f"{nhom_str}"
-                    f"<div style='margin-top:8px;'>"
+                    f"{nhom_html}"
+                    f"<div style='margin-top:10px;'>"
                     f"<span style='font-family:monospace;font-size:0.95rem;font-weight:700;"
-                    f"background:#f4f6fa;padding:3px 10px;border-radius:6px;color:#1a1a2e;'>"
-                    f"{ma_display}</span> {vach_str}</div>"
+                    f"background:#f4f6fa;padding:4px 10px;border-radius:6px;color:#1a1a2e;'>"
+                    f"{ma_display}</span>"
+                    f"<span style='font-size:0.82rem;color:#999;margin-left:8px;'>{vach_str}</span>"
+                    f"</div>"
                     f"{extra_html}"
+                    f"{gb_html}"
                     f"</div>",
                     unsafe_allow_html=True)
-            with c_ton:
-                st.metric("Giá bán", f"{gb:,} đ" if gb else "—")
             with c_close:
-                st.markdown("<div style='padding-top:12px;'>", unsafe_allow_html=True)
+                st.markdown("<div style='padding-top:10px;'>", unsafe_allow_html=True)
                 if st.button("✕", key="btn_close", help="Đóng"):
                     st.session_state.pop("hh_ma_chon", None); st.rerun()
                 st.markdown("</div>", unsafe_allow_html=True)
 
-            # ── Tồn kho tất cả chi nhánh, highlight CN hiện tại ──
+            # ── Tồn kho LUÔN đủ 3 chi nhánh, highlight CN hiện tại ──
+            st.markdown(
+                "<div style='font-size:0.82rem;font-weight:600;"
+                "color:#555;margin:10px 0 6px;'>Tồn kho chi nhánh</div>",
+                unsafe_allow_html=True)
             try:
                 all_kho  = load_the_kho(branches_key=tuple(ALL_BRANCHES))
-                rows_kho = all_kho[all_kho["Mã hàng"] == ma_chon] \
-                           if not all_kho.empty else pd.DataFrame()
-                if not rows_kho.empty:
-                    st.markdown(
-                        "<div style='font-size:0.82rem;font-weight:600;"
-                        "color:#555;margin:10px 0 6px;'>Tồn kho chi nhánh</div>",
-                        unsafe_allow_html=True)
-                    cn_cols = st.columns(len(rows_kho))
-                    for idx, (_, kr) in enumerate(rows_kho.iterrows()):
-                        with cn_cols[idx]:
-                            cn_name  = kr["Chi nhánh"]
-                            ton      = int(kr.get("Tồn cuối kì", 0))
-                            is_cur   = (cn_name == active_cn)
-                            clr      = "#1a7f37" if ton > 5 else ("#cf4c2c" if ton > 0 else "#aaa")
-                            border   = "2px solid #e63946" if is_cur else "1px solid #e8e8e8"
-                            bg       = "#fff8f8" if is_cur else "#fff"
-                            icon     = "📍 " if is_cur else ""
-                            st.markdown(
-                                f"<div style='text-align:center;padding:10px 6px;"
-                                f"border:{border};border-radius:10px;background:{bg};'>"
-                                f"<div style='font-size:0.7rem;color:#777;white-space:nowrap;"
-                                f"overflow:hidden;text-overflow:ellipsis;'>"
-                                f"{icon}{CN_SHORT.get(cn_name, cn_name)}</div>"
-                                f"<div style='font-size:1.4rem;font-weight:700;color:{clr};'>"
-                                f"{ton:,}</div></div>",
-                                unsafe_allow_html=True)
+                # Build dict mặc định 0 cho tất cả chi nhánh
+                branch_tons = {cn: 0 for cn in ALL_BRANCHES}
+                if not all_kho.empty:
+                    rows_kho = all_kho[all_kho["Mã hàng"] == ma_chon]
+                    for _, kr in rows_kho.iterrows():
+                        cn = kr.get("Chi nhánh","")
+                        if cn in branch_tons:
+                            branch_tons[cn] = int(kr.get("Tồn cuối kì", 0))
+
+                # Luôn render đúng 3 cột
+                cn_cols = st.columns(3)
+                for idx, cn_name in enumerate(ALL_BRANCHES):
+                    with cn_cols[idx]:
+                        ton    = branch_tons[cn_name]
+                        is_cur = (cn_name == active_cn)
+                        clr    = "#1a7f37" if ton > 5 else ("#cf4c2c" if ton > 0 else "#aaa")
+                        border = "2px solid #e63946" if is_cur else "1px solid #e8e8e8"
+                        bg     = "#fff8f8" if is_cur else "#fff"
+                        icon   = "📍 " if is_cur else ""
+                        st.markdown(
+                            f"<div style='text-align:center;padding:10px 4px;"
+                            f"border:{border};border-radius:10px;background:{bg};'>"
+                            f"<div style='font-size:0.68rem;color:#777;"
+                            f"overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'>"
+                            f"{icon}{CN_SHORT.get(cn_name, cn_name)}</div>"
+                            f"<div style='font-size:1.4rem;font-weight:700;color:{clr};'>"
+                            f"{ton:,}</div></div>",
+                            unsafe_allow_html=True)
             except Exception:
                 pass
 
@@ -1180,19 +1187,17 @@ initials  = "".join(w[0].upper() for w in ho_ten.split()[:2]) if ho_ten else "?"
 role_lbl  = {"admin":"Admin","ke_toan":"Kế toán","nhan_vien":"Nhân viên"}.get(
     user.get("role",""), "")
 
-# [nav menu ——————————] [↺] [avatar]
-col_nav, col_rel, col_avatar = st.columns([7, 1, 1])
+# ── Hàng 1: menu nav (toàn chiều rộng) ──
+menu = ["📊 Tổng quan", "🧾 Hóa đơn", "📦 Hàng hóa"]
+if is_admin(): menu.append("⚙️ Quản trị")
+page = st.radio("nav", menu, horizontal=True, label_visibility="collapsed")
 
-with col_nav:
-    menu = ["📊 Tổng quan", "🧾 Hóa đơn", "📦 Hàng hóa"]
-    if is_admin(): menu.append("⚙️ Quản trị")
-    page = st.radio("nav", menu, horizontal=True, label_visibility="collapsed")
+# ── Hàng 2: reload + avatar (50% / 50%) ──
+col_rel, col_avatar = st.columns([1, 1])
 
 with col_rel:
-    st.markdown("<div style='padding-top:4px;'>", unsafe_allow_html=True)
-    if st.button("↺", use_container_width=True, help="Tải lại dữ liệu"):
+    if st.button("↺  Tải lại", use_container_width=True, help="Tải lại dữ liệu"):
         st.cache_data.clear(); st.rerun()
-    st.markdown("</div>", unsafe_allow_html=True)
 
 with col_avatar:
     with st.popover(initials, use_container_width=True):

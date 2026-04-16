@@ -8,7 +8,7 @@ import bcrypt
 import uuid
 
 # ==========================================
-# PHIEN BAN: 13.2 — Fix lag hang hoa + nhom hang 2 cap
+# PHIEN BAN: 13.3 — Master hang hoa + UX + mobile fix
 # ==========================================
 
 st.set_page_config(page_title="Watch Store", layout="wide")
@@ -21,6 +21,10 @@ header, footer, #stDecoration,
 [data-testid="stHeader"],
 [data-testid="stToolbar"],
 [data-testid="stElementToolbar"] { display: none !important; }
+
+/* ── Mobile overflow fix ── */
+html, body { overflow-x: hidden !important; max-width: 100vw !important; }
+*, *::before, *::after { box-sizing: border-box; }
 
 /* ── Layout ── */
 .block-container { padding: 0.75rem 1rem 1rem 1rem !important; }
@@ -342,9 +346,23 @@ def load_the_kho(branches_key: tuple):
     return df
 
 
-# ==========================================
-# MODULE: TỔNG QUAN
-# ==========================================
+@st.cache_data(ttl=600)
+def load_hang_hoa() -> pd.DataFrame:
+    """Master data sản phẩm — cache 10 phút (ít thay đổi hơn tồn kho)."""
+    rows, batch, offset = [], 1000, 0
+    while True:
+        res = supabase.table("hang_hoa").select("*") \
+            .range(offset, offset + batch - 1).execute()
+        if not res.data: break
+        rows.extend(res.data)
+        if len(res.data) < batch: break
+        offset += batch
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows)
+    if "gia_ban" in df.columns:
+        df["gia_ban"] = pd.to_numeric(df["gia_ban"], errors="coerce").fillna(0)
+    return df
 
 def module_tong_quan():
     user   = get_user()
@@ -538,44 +556,20 @@ def module_hoa_don():
 
 
 # ==========================================
-# MODULE: HÀNG HÓA (v13.2)
+# MODULE: HÀNG HÓA (v13.3)
 # ==========================================
 
-def _parse_nhom_hoa(data: pd.DataFrame):
-    """
-    Phân tích nhóm hàng cha/con từ cột 'Nhóm hàng'.
-    KiotViet export thường có dạng 'Cha > Con' hoặc 'Cha/Con'.
-    Trả về (series_cha, series_con, has_hierarchy).
-    """
-    if "Nhóm hàng" not in data.columns:
-        return None, None, False
-
-    nhom = data["Nhóm hàng"].fillna("")
-
-    # Thử tách theo " > " trước, rồi "/"
-    for sep in [" > ", "/"]:
-        if nhom.str.contains(sep, regex=False).any():
-            parts  = nhom.str.split(sep, n=1, expand=True)
-            cha    = parts[0].str.strip()
-            con    = parts[1].str.strip() if 1 in parts.columns else pd.Series([""] * len(data))
-            return cha, con, True
-
-    # Không có phân cấp — toàn bộ là cha
-    return nhom, pd.Series([""] * len(data), index=data.index), False
+def _normalize(text: str) -> str:
+    """Fuzzy search: bỏ space/dash/dot → 'F 94' khớp 'F94'."""
+    import re
+    return re.sub(r"[\s\-_./]", "", str(text)).upper()
 
 
 def module_hang_hoa():
-    """
-    v13.2 — Hàng hóa:
-    - st.dataframe cho danh sách (không lag)
-    - Lọc nhóm hàng 2 cấp cha/con
-    - Panel chi tiết riêng bên dưới (chỉ render 1 sản phẩm tại 1 thời điểm)
-    """
     try:
         active     = get_active_branch()
         accessible = get_accessible_branches()
 
-        # ── Chi nhánh (ke_toan/admin xem nhiều) ──
         if is_ke_toan_or_admin() and len(accessible) > 1:
             view_branches = st.multiselect(
                 "Chi nhánh:", accessible, default=[active],
@@ -585,143 +579,190 @@ def module_hang_hoa():
         else:
             view_branches = [active]
 
-        data = load_the_kho(branches_key=tuple(view_branches))
-        if data.empty:
-            st.info("Chưa có dữ liệu tồn kho tại chi nhánh này."); return
+        master  = load_hang_hoa()
+        the_kho = load_the_kho(branches_key=tuple(view_branches))
+        has_master = not master.empty
 
-        # ── Parse nhóm hàng cha/con ──
-        cha_series, con_series, has_hier = _parse_nhom_hoa(data)
-        data = data.copy()
-        data["_nhom_cha"] = cha_series if cha_series is not None else ""
-        data["_nhom_con"] = con_series if con_series is not None else ""
+        if not has_master and the_kho.empty:
+            st.info("Chưa có dữ liệu. Vào Quản trị → Upload để tải lên."); return
 
-        # ── Filters: search + nhóm cha + nhóm con ──
-        col_s, col_c1, col_c2 = st.columns([3, 2, 2])
+        # ── Build working dataframe ──
+        if has_master and not the_kho.empty:
+            kho_agg = the_kho.groupby("Mã hàng", as_index=False).agg(
+                Ton_cuoi=("Tồn cuối kì","sum"), Ton_dau=("Tồn đầu kì","sum"),
+                Nhap=("Nhập NCC","sum"), Xuat=("Xuất bán","sum"),
+            )
+            df = master.merge(kho_agg, left_on="ma_hang", right_on="Mã hàng", how="left")
+            df["Ton_cuoi"] = df["Ton_cuoi"].fillna(0).astype(int)
+        elif has_master:
+            df = master.copy(); df["Ton_cuoi"] = 0
+            df["Ton_dau"] = 0; df["Nhap"] = 0; df["Xuat"] = 0
+        else:
+            # Fallback: chỉ có the_kho
+            df = the_kho.groupby(["Mã hàng","Tên hàng"], as_index=False).agg(
+                Ton_cuoi=("Tồn cuối kì","sum"), Ton_dau=("Tồn đầu kì","sum"),
+                Nhap=("Nhập NCC","sum"), Xuat=("Xuất bán","sum"),
+            )
+            df["ma_hang"]    = df["Mã hàng"]
+            df["ma_vach"]    = df["Mã hàng"]
+            df["ten_hang"]   = df["Tên hàng"]
+            df["nhom_hang"]  = the_kho.groupby("Mã hàng")["Nhóm hàng"].first().reindex(df["Mã hàng"]).values \
+                               if "Nhóm hàng" in the_kho.columns else ""
+            df["thuong_hieu"]= ""; df["gia_ban"] = 0; df["bao_hanh"] = ""
+
+        # Parse nhóm >> cha/con (KiotViet format)
+        nhom_col = df.get("nhom_hang", pd.Series([""] * len(df)))
+        split = nhom_col.fillna("").str.split(">>", n=1, expand=True)
+        df["_cha"] = split[0].str.strip()
+        df["_con"] = split[1].str.strip() if 1 in split.columns else ""
+        df["_con"] = df["_con"].fillna("")
+
+        # Normalize cho fuzzy search
+        df["_norm_ma"]   = df["ma_hang"].apply(_normalize)
+        df["_norm_vach"] = df.get("ma_vach", df["ma_hang"]).apply(
+            lambda x: _normalize(x) if pd.notna(x) else "")
+        df["_norm_ten"]  = df["ten_hang"].apply(_normalize)
+
+        # ── Bộ lọc ──
+        cha_list = sorted([c for c in df["_cha"].dropna().unique() if c])
+        col_s, col_cha, col_con = st.columns([3, 2, 2])
         with col_s:
             keyword = st.text_input("", key="hh_search",
-                placeholder="Tìm theo mã hoặc tên hàng...")
-        with col_c1:
-            nhom_cha_list = sorted(data["_nhom_cha"].dropna().unique().tolist())
-            nhom_cha_list = [n for n in nhom_cha_list if n]
-            cha_chon = st.selectbox(
-                "Nhóm cha:", ["Tất cả"] + nhom_cha_list,
+                placeholder="Tìm mã hàng, mã vạch hoặc tên...")
+        with col_cha:
+            cha_chon = st.selectbox("Nhóm cha:", ["Tất cả"] + cha_list,
                 key="hh_cha", label_visibility="collapsed")
-        with col_c2:
-            if has_hier and cha_chon != "Tất cả":
-                nhom_con_list = sorted(
-                    data[data["_nhom_cha"] == cha_chon]["_nhom_con"]
-                    .dropna().unique().tolist())
-                nhom_con_list = [n for n in nhom_con_list if n]
-                con_chon = st.selectbox(
-                    "Nhóm con:", ["Tất cả"] + nhom_con_list,
+        with col_con:
+            if cha_chon != "Tất cả":
+                con_list = sorted([c for c in
+                    df[df["_cha"]==cha_chon]["_con"].dropna().unique() if c])
+                con_chon = st.selectbox("Nhóm con:", ["Tất cả"] + con_list,
                     key="hh_con", label_visibility="collapsed")
             else:
-                st.selectbox("Nhóm con:", ["—"], key="hh_con_dis",
-                             disabled=True, label_visibility="collapsed")
+                st.selectbox("Nhóm con:", ["—"], disabled=True,
+                    key="hh_con_dis", label_visibility="collapsed")
                 con_chon = "Tất cả"
 
-        # ── Lọc ──
-        filtered = data.copy()
-        if keyword.strip():
-            kw = keyword.strip().upper()
+        # ── Áp dụng filter ──
+        filtered = df.copy()
+        kw = _normalize(keyword) if keyword.strip() else ""
+        if kw:
             filtered = filtered[
-                filtered["Mã hàng"].str.upper().str.contains(kw, na=False) |
-                filtered["Tên hàng"].str.upper().str.contains(kw, na=False)
-            ]
+                filtered["_norm_ma"].str.contains(kw, na=False) |
+                filtered["_norm_vach"].str.contains(kw, na=False) |
+                filtered["_norm_ten"].str.contains(kw, na=False)]
         if cha_chon != "Tất cả":
-            filtered = filtered[filtered["_nhom_cha"] == cha_chon]
-        if con_chon != "Tất cả" and has_hier:
-            filtered = filtered[filtered["_nhom_con"] == con_chon]
+            filtered = filtered[filtered["_cha"] == cha_chon]
+        if con_chon != "Tất cả":
+            filtered = filtered[filtered["_con"] == con_chon]
 
         if filtered.empty:
             st.warning("Không tìm thấy hàng hóa phù hợp."); return
 
-        # ── Tổng hợp theo mã hàng ──
-        agg = filtered.groupby(["Mã hàng","Tên hàng"], as_index=False).agg(
-            Nhom_cha=("_nhom_cha",   "first"),
-            Nhom_con=("_nhom_con",   "first"),
-            Ton_dau =("Tồn đầu kì",  "sum"),
-            Nhap    =("Nhập NCC",    "sum"),
-            Xuat    =("Xuất bán",    "sum"),
-            Ton_cuoi=("Tồn cuối kì", "sum"),
-        ).sort_values("Ton_cuoi", ascending=False).reset_index(drop=True)
+        # ── Gợi ý nhanh (top 4 khi có keyword) ──
+        if kw and len(filtered) > 1:
+            top4 = filtered.head(4)
+            st.caption("Gợi ý:")
+            g_cols = st.columns(len(top4))
+            for idx, (_, r) in enumerate(top4.iterrows()):
+                with g_cols[idx]:
+                    if st.button(str(r["ma_hang"]), key=f"gợi_{idx}",
+                                 use_container_width=True):
+                        st.session_state["hh_ma_chon"] = r["ma_hang"]
+                        st.rerun()
 
-        # Nhóm hiển thị: nếu có con thì "Cha > Con", không thì chỉ "Cha"
-        agg["Nhóm hàng"] = agg.apply(
-            lambda r: f"{r['Nhom_cha']} > {r['Nhom_con']}"
-                      if r['Nhom_con'] else r['Nhom_cha'], axis=1)
+        # ── Bảng danh sách ──
+        filtered = filtered.sort_values("Ton_cuoi", ascending=False).reset_index(drop=True)
 
-        st.caption(
-            f"**{len(agg)}** mặt hàng · {', '.join(view_branches)}"
-            + (f" · Nhóm: {cha_chon}" if cha_chon != "Tất cả" else "")
-        )
+        avail_cols = {"ma_hang":"Mã hàng","ma_vach":"Mã vạch",
+                      "ten_hang":"Tên hàng","_cha":"Nhóm hàng","Ton_cuoi":"Tồn kho"}
+        avail = {k:v for k,v in avail_cols.items() if k in filtered.columns}
+        disp  = filtered[list(avail.keys())].rename(columns=avail).copy()
+        disp["Tồn kho"] = disp["Tồn kho"].astype(int)
 
-        # ══════════════════════════════════════════════
-        # BẢNG DANH SÁCH — dùng st.dataframe (1 widget,
-        # không lag dù có hàng trăm sản phẩm)
-        # ══════════════════════════════════════════════
-        display_df = agg[["Mã hàng","Tên hàng","Nhóm hàng","Ton_cuoi"]].copy()
-        display_df = display_df.rename(columns={"Ton_cuoi": "Tồn kho"})
-        display_df["Tồn kho"] = display_df["Tồn kho"].astype(int)
+        st.caption(f"**{len(disp)}** mặt hàng · {', '.join(view_branches)}"
+                   + (f" · {cha_chon}" if cha_chon!="Tất cả" else ""))
 
-        st.dataframe(
-            display_df,
-            use_container_width=True,
-            hide_index=True,
+        event = st.dataframe(
+            disp, use_container_width=True, hide_index=True,
+            on_select="rerun", selection_mode="single-row", key="hh_table",
             column_config={
-                "Mã hàng":    st.column_config.TextColumn("Mã hàng",    width="small"),
-                "Tên hàng":   st.column_config.TextColumn("Tên hàng",   width="large"),
-                "Nhóm hàng":  st.column_config.TextColumn("Nhóm hàng",  width="medium"),
-                "Tồn kho":    st.column_config.NumberColumn("Tồn kho",  width="small",
-                                  format="%d"),
+                "Mã hàng":   st.column_config.TextColumn("Mã hàng",  width="small"),
+                "Mã vạch":   st.column_config.TextColumn("Mã vạch",  width="small"),
+                "Tên hàng":  st.column_config.TextColumn("Tên hàng", width="large"),
+                "Nhóm hàng": st.column_config.TextColumn("Nhóm",    width="medium"),
+                "Tồn kho":   st.column_config.NumberColumn("Tồn kho",width="small", format="%d"),
             },
-            height=min(400, 38 + len(display_df) * 35),
+            height=min(420, 42 + len(disp) * 35),
         )
 
-        # ══════════════════════════════════════════════
-        # PANEL CHI TIẾT — chỉ render khi chọn mã hàng
-        # Tách biệt hoàn toàn với bảng → không lag
-        # ══════════════════════════════════════════════
-        st.markdown("---")
-        st.markdown("**Chi tiết sản phẩm**")
+        # Lưu row được chọn
+        sel = event.selection.rows
+        if sel:
+            st.session_state["hh_ma_chon"] = disp.iloc[sel[0]]["Mã hàng"]
 
-        ma_list    = agg["Mã hàng"].tolist()
-        ten_list   = agg["Tên hàng"].tolist()
-        label_list = [f"{m}  —  {t}" for m, t in zip(ma_list, ten_list)]
+        # ── Nút trạng thái + Panel chi tiết ──
+        ma_chon = st.session_state.get("hh_ma_chon")
+        if ma_chon and ma_chon not in disp["Mã hàng"].values:
+            ma_chon = None; st.session_state.pop("hh_ma_chon", None)
 
-        chon = st.selectbox(
-            "Chọn sản phẩm:", ["— Chọn để xem chi tiết —"] + label_list,
-            key="hh_detail_sel", label_visibility="collapsed")
-
-        if chon != "— Chọn để xem chi tiết —":
-            ma_chon = chon.split("  —  ")[0].strip()
-            row_agg = agg[agg["Mã hàng"] == ma_chon].iloc[0]
-            detail  = filtered[filtered["Mã hàng"] == ma_chon]
-
-            # Tên + nhóm
-            st.markdown(f"#### {row_agg['Tên hàng']}")
-            st.caption(f"`{ma_chon}`  ·  {row_agg['Nhóm hàng']}")
-
-            if len(view_branches) > 1:
-                # Nhiều chi nhánh → hiện từng chi nhánh
-                for _, dr in detail.iterrows():
-                    cn = dr.get("Chi nhánh","")
-                    st.markdown(f"**{cn}**")
-                    d1,d2,d3,d4 = st.columns(4)
-                    d1.metric("Tồn đầu kỳ", f"{int(dr.get('Tồn đầu kì',0)):,}")
-                    d2.metric("Nhập NCC",   f"{int(dr.get('Nhập NCC',0)):,}")
-                    d3.metric("Xuất bán",   f"{int(dr.get('Xuất bán',0)):,}")
-                    d4.metric("Tồn cuối kỳ",f"{int(dr.get('Tồn cuối kì',0)):,}")
-                    st.markdown(
-                        "<hr style='margin:6px 0;border-color:#f0f0f0;'>",
-                        unsafe_allow_html=True)
+        col_btn, _ = st.columns([3, 5])
+        with col_btn:
+            if ma_chon:
+                ten_chon = filtered[filtered["ma_hang"]==ma_chon]["ten_hang"].iloc[0] \
+                           if not filtered[filtered["ma_hang"]==ma_chon].empty else ma_chon
+                st.button(f"Đang xem: {ten_chon}", type="primary",
+                    use_container_width=True, disabled=True, key="btn_xem")
             else:
-                dr = detail.iloc[0]
-                d1,d2,d3,d4 = st.columns(4)
-                d1.metric("Tồn đầu kỳ", f"{int(dr.get('Tồn đầu kì',0)):,}")
-                d2.metric("Nhập NCC",   f"{int(dr.get('Nhập NCC',0)):,}")
-                d3.metric("Xuất bán",   f"{int(dr.get('Xuất bán',0)):,}")
-                d4.metric("Tồn cuối kỳ",f"{int(dr.get('Tồn cuối kì',0)):,}")
+                st.button("← Chọn một dòng để xem chi tiết",
+                    use_container_width=True, disabled=True, key="btn_placeholder")
+
+        if ma_chon:
+            row_m = filtered[filtered["ma_hang"] == ma_chon].iloc[0]
+            st.markdown("---")
+
+            c_name, c_price = st.columns([3, 1])
+            with c_name:
+                st.markdown(f"### {row_m['ten_hang']}")
+                nhom_full = (f"{row_m['_cha']} > {row_m['_con']}"
+                             if row_m.get("_con","") else row_m.get("_cha",""))
+                st.caption(
+                    f"`{row_m['ma_hang']}`"
+                    + (f"  ·  Mã vạch: `{row_m.get('ma_vach','')}`"
+                       if pd.notna(row_m.get("ma_vach","")) and
+                          str(row_m.get("ma_vach","")) != str(row_m["ma_hang"]) else "")
+                    + (f"  ·  {nhom_full}" if nhom_full else ""))
+            with c_price:
+                gb = int(row_m.get("gia_ban", 0) or 0)
+                st.metric("Giá bán", f"{gb:,} đ" if gb else "—")
+
+            extra = []
+            if pd.notna(row_m.get("thuong_hieu","")) and str(row_m.get("thuong_hieu","")).strip():
+                extra.append(f"Thương hiệu: **{row_m['thuong_hieu']}**")
+            if pd.notna(row_m.get("bao_hanh","")) and str(row_m.get("bao_hanh","")).strip():
+                extra.append(f"Bảo hành: {row_m['bao_hanh']}")
+            if extra:
+                st.caption("  ·  ".join(extra))
+
+            st.markdown("**Tồn kho**")
+            if not the_kho.empty:
+                rows_kho = the_kho[the_kho["Mã hàng"] == ma_chon]
+                if not rows_kho.empty:
+                    for _, dr in rows_kho.iterrows():
+                        if len(view_branches) > 1:
+                            st.markdown(f"**{dr.get('Chi nhánh','')}**")
+                        d1,d2,d3,d4 = st.columns(4)
+                        d1.metric("Tồn đầu kỳ", f"{int(dr.get('Tồn đầu kì',0)):,}")
+                        d2.metric("Nhập NCC",   f"{int(dr.get('Nhập NCC',0)):,}")
+                        d3.metric("Xuất bán",   f"{int(dr.get('Xuất bán',0)):,}")
+                        d4.metric("Tồn cuối kỳ",f"{int(dr.get('Tồn cuối kì',0)):,}")
+                        if len(view_branches) > 1:
+                            st.markdown("<hr style='margin:4px 0;border-color:#f0f0f0;'>",
+                                unsafe_allow_html=True)
+                else:
+                    st.info("Chưa có dữ liệu tồn kho tháng này.")
+            else:
+                st.metric("Tồn kho (master)", f"{int(row_m.get('Ton_cuoi',0)):,}")
 
     except Exception as e:
         st.error(f"Lỗi tải Hàng hóa: {e}")
@@ -825,8 +866,78 @@ def module_quan_tri():
         hien_thi_dashboard()
 
     with tab_up:
-        s1,s2 = st.tabs(["Thẻ kho","Hóa đơn"])
+        s1, s2, s3 = st.tabs(["Hàng hóa (master)","Thẻ kho","Hóa đơn"])
+
         with s1:
+            st.caption("File **Danh sách sản phẩm** từ KiotViet (.xlsx) — upload một lần, cập nhật khi có sản phẩm mới.")
+            up = st.file_uploader("Chọn file:", type=["xlsx","xls"], key="up_hh")
+            if up:
+                try:
+                    df = pd.read_excel(up)
+                    st.success(f"Đọc được {len(df)} dòng")
+                    # Map cột KiotViet → hang_hoa
+                    col_map = {
+                        "Mã hàng":          "ma_hang",
+                        "Mã vạch":          "ma_vach",
+                        "Tên hàng":         "ten_hang",
+                        "Nhóm hàng(3 Cấp)": "nhom_hang",
+                        "Thương hiệu":      "thuong_hieu",
+                        "Giá bán":          "gia_ban",
+                        "Bảo hành":         "bao_hanh",
+                        "Đang kinh doanh":  "dang_kd",
+                    }
+                    miss = [c for c in ["Mã hàng","Tên hàng"] if c not in df.columns]
+                    if miss:
+                        st.error(f"Thiếu cột bắt buộc: {', '.join(miss)}")
+                    else:
+                        # Chỉ lấy cột có trong file
+                        avail = {k:v for k,v in col_map.items() if k in df.columns}
+                        df_out = df[list(avail.keys())].rename(columns=avail).copy()
+                        # Parse nhóm cha/con
+                        if "nhom_hang" in df_out.columns:
+                            split = df_out["nhom_hang"].fillna("").str.split(">>", n=1, expand=True)
+                            df_out["nhom_cha"] = split[0].str.strip()
+                            df_out["nhom_con"] = split[1].str.strip() if 1 in split.columns else ""
+                            df_out["nhom_con"] = df_out["nhom_con"].fillna("")
+                        # Clean
+                        df_out["ma_hang"]  = df_out["ma_hang"].astype(str).str.strip()
+                        df_out["ten_hang"] = df_out["ten_hang"].astype(str).str.strip()
+                        if "gia_ban" in df_out.columns:
+                            df_out["gia_ban"] = pd.to_numeric(df_out["gia_ban"], errors="coerce").fillna(0).astype(int)
+                        if "dang_kd" in df_out.columns:
+                            df_out["dang_kd"] = df_out["dang_kd"].fillna(1).astype(bool)
+                        df_out = df_out.where(pd.notnull(df_out), None)
+                        for col in df_out.columns:
+                            df_out[col] = df_out[col].apply(
+                                lambda x: int(x) if isinstance(x, (np.integer,)) else
+                                          float(x) if isinstance(x, (np.floating,)) else x)
+
+                        st.info(f"{len(df_out)} sản phẩm sẽ được upsert (thêm mới hoặc cập nhật)")
+                        with st.expander("Xem trước"):
+                            st.dataframe(df_out.head(), use_container_width=True, hide_index=True)
+
+                        if st.button("Upload Hàng hóa", key="btn_up_hh", type="primary"):
+                            with st.spinner("Đang upload..."):
+                                records = df_out.to_dict(orient="records")
+                                total, ok = len(records), 0
+                                prog = st.progress(0, text="Đang upload...")
+                                for i in range(0, total, 500):
+                                    try:
+                                        supabase.table("hang_hoa").upsert(
+                                            records[i:i+500],
+                                            on_conflict="ma_hang"
+                                        ).execute()
+                                        ok += len(records[i:i+500])
+                                        prog.progress(min(ok/total,1.0), text=f"{ok}/{total}...")
+                                    except Exception as e:
+                                        st.error(f"Batch {i}: {e}")
+                                prog.empty()
+                                if ok == total:
+                                    st.success(f"✅ Upsert {ok} sản phẩm thành công!")
+                                    st.cache_data.clear()
+                except Exception as e:
+                    st.error(f"Lỗi: {e}")
+        with s2:
             st.caption("File **Xuất nhập tồn chi tiết** từ KiotViet (.xlsx)")
             up = st.file_uploader("Chọn file:", type=["xlsx","xls"], key="up_kho")
             if up:
@@ -867,7 +978,7 @@ def module_quan_tri():
                                     st.success(f"Upload {ok} dòng thành công!"); st.cache_data.clear()
                 except Exception as e: st.error(f"Lỗi: {e}")
 
-        with s2:
+        with s3:
             st.caption("File **Danh sách hóa đơn** từ KiotViet (.xlsx)")
             up = st.file_uploader("Chọn file:", type=["xlsx","xls"], key="up_hd")
             if up:

@@ -15,79 +15,120 @@ st.set_page_config(page_title="Watch Store", layout="wide")
 
 st.markdown("""
 <style>
-/* ── Ẩn chrome mặc định của Streamlit ── */
-header, footer, #stDecoration,
-.stAppDeployButton,
-[data-testid="stHeader"],
-[data-testid="stToolbar"],
-[data-testid="stElementToolbar"] { display: none !important; }
+/* ══════════════════════════════════════════
+   PHIEN BAN: 14.0 — New UI Theme
+   ══════════════════════════════════════════ */
 
-/* ── Mobile overflow fix ── */
+/* ── Ẩn chrome Streamlit ── */
+header, footer, #stDecoration, .stAppDeployButton,
+[data-testid="stHeader"], [data-testid="stToolbar"],
+[data-testid="stElementToolbar"], [data-testid="stDecoration"]
+{ display: none !important; }
+
+/* ── Base ── */
 html, body { overflow-x: hidden !important; max-width: 100vw !important; }
 *, *::before, *::after { box-sizing: border-box; }
-
-/* ── Ngăn bảng dataframe cuộn trang khi vuốt trên mobile ── */
-[data-testid="stDataFrame"] > div {
-    touch-action: pan-x pan-y !important;
-    overscroll-behavior: contain !important;
-}
-iframe { touch-action: pan-x pan-y; }
+.stApp { background: #f5f6f8 !important; }
 
 /* ── Layout ── */
-.block-container { padding: 0.75rem 0.75rem 1rem 0.75rem !important; }
+.block-container {
+    padding: 0.6rem 0.8rem 1.5rem 0.8rem !important;
+    max-width: 900px !important;
+}
 
 /* ── Metric ── */
-[data-testid="stMetricValue"] { font-size: 1.3rem !important; }
-[data-testid="stMetricLabel"] { font-size: 0.82rem !important; color: #666; }
+[data-testid="stMetricValue"] { font-size: 1.25rem !important; font-weight: 700 !important; }
+[data-testid="stMetricLabel"] { font-size: 0.78rem !important; color: #888; }
 
-/* ── Bảng hàng hóa ── */
-.hang-hoa-row {
-    padding: 10px 12px;
-    border-bottom: 1px solid #f0f0f0;
-    cursor: pointer;
-    font-size: 0.9rem;
-    line-height: 1.4;
-}
-.hang-hoa-row:hover { background: #fafafa; }
-.ma-hang  { color: #666; font-size: 0.78rem; }
-.ten-hang { font-weight: 600; color: #222; }
-.nhom-hang-tag {
-    display: inline-block;
-    background: #f0f4ff;
-    color: #4a6fa5;
-    border-radius: 4px;
-    padding: 1px 6px;
-    font-size: 0.72rem;
-    margin-top: 2px;
-}
-.ton-kho-badge {
-    font-size: 1.1rem;
-    font-weight: 700;
-    color: #1a7f37;
-    text-align: right;
-}
-.ton-kho-badge.low { color: #cf4c2c; }
-.ton-kho-badge.zero { color: #999; }
-
-/* ── Nav pills ── */
-div[data-testid="stHorizontalBlock"] > div > div[data-testid="stRadio"] label {
-    font-size: 0.88rem;
-}
-
-/* ── Mobile responsive ── */
-@media (max-width: 640px) {
-    .block-container { padding: 0.5rem !important; }
-    [data-testid="stMetricValue"] { font-size: 1.1rem !important; }
-}
-
-/* ── Input search lớn hơn ── */
+/* ── Search input ── */
 [data-testid="stTextInput"] input {
-    font-size: 1rem !important;
-    padding: 0.5rem 0.75rem !important;
+    font-size: 0.95rem !important;
+    padding: 0.55rem 0.75rem !important;
+    border-radius: 8px !important;
+    border: 1px solid #e0e0e0 !important;
+    background: #fff !important;
 }
 
-/* ── Ẩn label "Phân hệ" ── */
+/* ── Buttons: primary = red like KiotViet ── */
+[data-testid="stBaseButton-primary"] {
+    background: #e63946 !important;
+    border: none !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+}
+[data-testid="stBaseButton-primary"]:hover {
+    background: #c1121f !important;
+}
+[data-testid="stBaseButton-secondary"] {
+    border-radius: 8px !important;
+    border: 1px solid #ddd !important;
+    background: #fff !important;
+}
+
+/* ── Tabs ── */
+[data-testid="stTabs"] [data-testid="stTab"] {
+    font-size: 0.88rem !important;
+    font-weight: 500 !important;
+}
+[data-testid="stTabs"] [data-testid="stTab"][aria-selected="true"] {
+    color: #e63946 !important;
+    border-bottom-color: #e63946 !important;
+}
+
+/* ── Radio nav ── */
 [data-testid="stRadio"] > label:first-child { display: none; }
+[data-testid="stRadio"] label { font-size: 0.88rem !important; }
+[data-testid="stRadio"] [data-testid="stMarkdownContainer"] p {
+    font-size: 0.88rem !important;
+}
+
+/* ── Dataframe: contain scroll trên mobile ── */
+[data-testid="stDataFrame"] { border-radius: 8px !important; overflow: hidden !important; }
+[data-testid="stDataFrame"] > div { overscroll-behavior: contain !important; }
+iframe { touch-action: pan-y; }
+
+/* ── Expander ── */
+[data-testid="stExpander"] {
+    border: 1px solid #e8e8e8 !important;
+    border-radius: 8px !important;
+    background: #fff !important;
+}
+
+/* ── Divider ── */
+hr { border-color: #ebebeb !important; margin: 8px 0 !important; }
+
+/* ── Caption ── */
+[data-testid="stCaptionContainer"] { color: #888 !important; font-size: 0.78rem !important; }
+
+/* ── Info/Warning/Success ── */
+[data-testid="stAlert"] { border-radius: 8px !important; }
+
+/* ── Mobile ── */
+@media (max-width: 640px) {
+    .block-container { padding: 0.4rem 0.5rem 1rem 0.5rem !important; }
+    [data-testid="stMetricValue"] { font-size: 1.05rem !important; }
+}
+
+/* ── Card utility (dùng trong markdown) ── */
+.ws-card {
+    background: #fff;
+    border: 1px solid #e8e8e8;
+    border-radius: 12px;
+    padding: 14px 16px;
+    margin: 8px 0;
+}
+.ws-tag {
+    display: inline-block;
+    background: #fff0f1;
+    color: #e63946;
+    border-radius: 20px;
+    padding: 2px 10px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+.ws-badge-green { color: #1a7f37; font-weight: 700; font-size: 1.1rem; }
+.ws-badge-red   { color: #cf4c2c; font-weight: 700; font-size: 1.1rem; }
+.ws-badge-gray  { color: #aaa;    font-weight: 700; font-size: 1.1rem; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -575,33 +616,35 @@ def _normalize(text: str) -> str:
 
 def module_hang_hoa():
     """
-    v13.4:
-    - Detail panel hiển thị TRÊN bảng
-    - HTML table thay st.dataframe → không có iframe, không conflict scroll mobile
-    - Auto-select khi filter còn 1 kết quả
-    - Selection qua suggestion buttons
+    v14.0 — UI theo mockup:
+    - Detail card trên, bảng dưới
+    - st.dataframe on_select (click row → detail)
+    - 10 hàng hiển thị, scroll nội bộ
+    - Tồn kho: highlight chi nhánh hiện tại
+    - Bỏ suggestion buttons
     """
     try:
         active     = get_active_branch()
         accessible = get_accessible_branches()
 
+        # ── Chi nhánh filter ──
         if is_ke_toan_or_admin() and len(accessible) > 1:
             view_branches = st.multiselect(
                 "Chi nhánh:", accessible, default=[active],
                 key="hh_cn", label_visibility="collapsed")
-            if not view_branches:
-                st.warning("Chọn ít nhất một chi nhánh."); return
+            if not view_branches: st.warning("Chọn ít nhất một chi nhánh."); return
         else:
             view_branches = [active]
 
+        # ── Load data ──
         master   = load_hang_hoa()
         the_kho  = load_the_kho(branches_key=tuple(view_branches))
         has_master = not master.empty
 
         if not has_master and the_kho.empty:
-            st.info("Chưa có dữ liệu. Vào Quản trị → Upload để tải lên."); return
+            st.info("Chưa có dữ liệu. Vào ⚙️ Quản trị → Upload để tải lên."); return
 
-        # ── Build dataframe ──
+        # ── Build df ──
         if has_master and not the_kho.empty:
             kho_agg = the_kho.groupby("Mã hàng", as_index=False).agg(
                 Ton_cuoi=("Tồn cuối kì","sum"))
@@ -612,46 +655,47 @@ def module_hang_hoa():
         else:
             df = the_kho.groupby(["Mã hàng","Tên hàng"], as_index=False).agg(
                 Ton_cuoi=("Tồn cuối kì","sum"))
-            df["ma_hang"]   = df["Mã hàng"]; df["ma_vach"] = df["Mã hàng"]
-            df["ten_hang"]  = df["Tên hàng"]
-            nhom_col_fb = the_kho.groupby("Mã hàng")["Nhóm hàng"].first() \
-                          if "Nhóm hàng" in the_kho.columns else pd.Series(dtype=str)
-            df["nhom_hang"] = nhom_col_fb.reindex(df["Mã hàng"]).values
-            df["thuong_hieu"]=""; df["gia_ban"]=0; df["bao_hanh"]=""
+            df["ma_hang"]=""; df["ma_vach"]=""; df["ten_hang"]=df["Tên hàng"]
+            df["nhom_hang"]=""; df["thuong_hieu"]=""; df["gia_ban"]=0; df["bao_hanh"]=""
+            df["ma_hang"] = df["Mã hàng"]; df["ma_vach"] = df["Mã hàng"]
 
         # Parse nhóm cha/con
         nhom_col = df["nhom_hang"].fillna("") if "nhom_hang" in df.columns \
                    else pd.Series([""] * len(df))
         split = nhom_col.str.split(">>", n=1, expand=True)
         df["_cha"] = split[0].str.strip()
-        df["_con"] = split[1].str.strip() if 1 in split.columns else ""
-        df["_con"] = df["_con"].fillna("")
+        df["_con"] = (split[1].str.strip() if 1 in split.columns else "").fillna("")
 
-        # Normalize fuzzy
+        # Normalize
         df["_norm_ma"]   = df["ma_hang"].apply(_normalize)
         df["_norm_vach"] = df.get("ma_vach", df["ma_hang"]).apply(
             lambda x: _normalize(x) if pd.notna(x) else "")
         df["_norm_ten"]  = df["ten_hang"].apply(_normalize)
 
-        # ── Filters ──
+        # ══════════════════════════════════════════
+        # SEARCH + FILTER (1 hàng)
+        # ══════════════════════════════════════════
         cha_list = sorted([c for c in df["_cha"].dropna().unique() if c])
-        col_s, col_cha, col_con = st.columns([3, 2, 2])
+
+        col_s, col_f = st.columns([5, 1])
         with col_s:
             keyword = st.text_input("", key="hh_search",
-                placeholder="Tìm mã hàng, mã vạch hoặc tên...")
-        with col_cha:
-            cha_chon = st.selectbox("Nhóm cha:", ["Tất cả"] + cha_list,
-                key="hh_cha", label_visibility="collapsed")
-        with col_con:
-            if cha_chon != "Tất cả":
-                con_list = sorted([c for c in
-                    df[df["_cha"]==cha_chon]["_con"].dropna().unique() if c])
-                con_chon = st.selectbox("Nhóm con:", ["Tất cả"] + con_list,
-                    key="hh_con", label_visibility="collapsed")
-            else:
-                st.selectbox("Nhóm con:", ["—"], disabled=True,
-                    key="hh_con_dis", label_visibility="collapsed")
-                con_chon = "Tất cả"
+                placeholder="🔍  Tìm mã hàng, mã vạch hoặc tên...")
+        with col_f:
+            # Popover lọc nhóm hàng
+            with st.popover("⊞ Lọc", use_container_width=True):
+                cha_chon = st.selectbox("Nhóm hàng:", ["Tất cả"] + cha_list,
+                    key="hh_cha", label_visibility="collapsed")
+                if cha_chon != "Tất cả":
+                    con_list = sorted([c for c in
+                        df[df["_cha"]==cha_chon]["_con"].dropna().unique() if c])
+                    con_chon = st.selectbox("Nhóm con:", ["Tất cả"] + con_list,
+                        key="hh_con", label_visibility="collapsed")
+                else:
+                    con_chon = "Tất cả"
+        # Đọc lại giá trị filter (đã được lưu vào session từ popover)
+        cha_chon = st.session_state.get("hh_cha", "Tất cả")
+        con_chon = st.session_state.get("hh_con", "Tất cả")
 
         # ── Apply filter ──
         filtered = df.copy()
@@ -671,171 +715,151 @@ def module_hang_hoa():
         if filtered.empty:
             st.warning("Không tìm thấy hàng hóa phù hợp."); return
 
-        # ── Auto-select khi chỉ còn 1 kết quả ──
+        # Auto-select khi filter còn đúng 1 kết quả
         if len(filtered) == 1:
             st.session_state["hh_ma_chon"] = filtered.iloc[0]["ma_hang"]
 
-        # ── Suggestion buttons (top 4 khi có keyword) ──
-        if kw and 1 < len(filtered) <= 20:
-            top4 = filtered.head(4)
-            st.caption("Gợi ý — chọn để xem chi tiết:")
-            g_cols = st.columns(len(top4))
-            for idx, (_, r) in enumerate(top4.iterrows()):
-                with g_cols[idx]:
-                    if st.button(str(r["ma_hang"]), key=f"gợi_{idx}",
-                                 use_container_width=True):
-                        st.session_state["hh_ma_chon"] = r["ma_hang"]
-                        st.rerun()
-        elif kw and len(filtered) > 20:
-            st.caption(f"Tìm thấy {len(filtered)} kết quả — hãy lọc hẹp hơn để thấy gợi ý.")
-
-        # ── Validate ma_chon vẫn còn trong filtered ──
+        # Validate ma_chon
         ma_chon = st.session_state.get("hh_ma_chon")
         if ma_chon and ma_chon not in filtered["ma_hang"].values:
-            ma_chon = None
-            st.session_state.pop("hh_ma_chon", None)
+            ma_chon = None; st.session_state.pop("hh_ma_chon", None)
 
-        # ══════════════════════════════════════════════════
-        # DETAIL PANEL — hiển thị TRÊN bảng khi đã chọn
-        # ══════════════════════════════════════════════════
+        # ══════════════════════════════════════════
+        # DETAIL CARD (trên bảng, khi đã chọn)
+        # ══════════════════════════════════════════
         if ma_chon:
-            rows_match = filtered[filtered["ma_hang"] == ma_chon]
-            if rows_match.empty:
-                st.session_state.pop("hh_ma_chon", None); st.rerun()
-            row_m = rows_match.iloc[0]
-
-            # Header card
-            st.markdown(
-                f"<div style='background:#f0f4ff;border:1px solid #d0d9f0;"
-                f"border-radius:12px;padding:14px 16px;margin:10px 0;'>",
-                unsafe_allow_html=True)
-
-            c_close, c_name, c_price = st.columns([1, 4, 2])
-            with c_close:
-                if st.button("✕", key="btn_close_detail", help="Đóng chi tiết"):
-                    st.session_state.pop("hh_ma_chon", None); st.rerun()
-            with c_name:
-                st.markdown(f"**{row_m['ten_hang']}**")
-                nhom_full = (f"{row_m['_cha']} > {row_m['_con']}"
-                             if row_m.get("_con","") else row_m.get("_cha",""))
-                if nhom_full: st.caption(nhom_full)
-            with c_price:
-                gb = int(row_m.get("gia_ban", 0) or 0)
-                st.metric("Giá bán", f"{gb:,} đ" if gb else "—")
-
-            st.markdown("</div>", unsafe_allow_html=True)
-
-            # Mã hàng nổi bật
+            row_m = filtered[filtered["ma_hang"] == ma_chon].iloc[0]
             ma_display = str(row_m["ma_hang"])
-            vach = str(row_m.get("ma_vach","") or "")
-            vach_part = f" &nbsp;·&nbsp; Mã vạch: <b>{vach}</b>" \
-                        if vach and vach != ma_display else ""
-            st.markdown(
-                f"<div style='margin:4px 0 8px 0;'>"
-                f"<span style='font-size:1.1rem;font-weight:700;font-family:monospace;"
-                f"background:#f4f6fa;padding:5px 12px;border-radius:6px;color:#1a1a2e;'>"
-                f"{ma_display}</span>"
-                f"<span style='font-size:0.85rem;color:#555;margin-left:10px;'>{vach_part}</span>"
-                f"</div>",
-                unsafe_allow_html=True)
+            vach       = str(row_m.get("ma_vach","") or "")
+            nhom_full  = (f"{row_m['_cha']} › {row_m['_con']}"
+                         if row_m.get("_con","") else row_m.get("_cha",""))
+            gb = int(row_m.get("gia_ban", 0) or 0)
 
-            # Thương hiệu / Bảo hành
-            extra = []
+            # Card
+            extra_parts = []
             if pd.notna(row_m.get("thuong_hieu","")) and str(row_m.get("thuong_hieu","")).strip():
-                extra.append(f"Thương hiệu: **{row_m['thuong_hieu']}**")
+                extra_parts.append(f"Thương hiệu: {row_m['thuong_hieu']}")
             if pd.notna(row_m.get("bao_hanh","")) and str(row_m.get("bao_hanh","")).strip():
-                extra.append(f"Bảo hành: {row_m['bao_hanh']}")
-            if extra: st.caption("  ·  ".join(extra))
+                extra_parts.append(f"Bảo hành: {row_m['bao_hanh']}")
+            extra_str = " · ".join(extra_parts)
 
-            # Tồn kho tất cả chi nhánh
-            st.caption("**Tồn kho các chi nhánh**")
+            vach_str = f"<span style='color:#888;'>· {vach}</span>" \
+                       if vach and vach != ma_display else ""
+            nhom_str = f"<div style='font-size:0.75rem;color:#aaa;margin-top:2px;'>{nhom_full}</div>" \
+                       if nhom_full else ""
+            extra_html = f"<div style='font-size:0.78rem;color:#666;margin-top:4px;'>{extra_str}</div>" \
+                         if extra_str else ""
+
+            c_main, c_ton, c_close = st.columns([5, 2, 1])
+            with c_main:
+                st.markdown(
+                    f"<div style='background:#fff;border:1px solid #e8e8e8;"
+                    f"border-radius:12px;padding:12px 14px;'>"
+                    f"<div style='font-weight:700;font-size:1rem;color:#1a1a2e;'>"
+                    f"{row_m['ten_hang']}</div>"
+                    f"{nhom_str}"
+                    f"<div style='margin-top:8px;'>"
+                    f"<span style='font-family:monospace;font-size:0.95rem;font-weight:700;"
+                    f"background:#f4f6fa;padding:3px 10px;border-radius:6px;color:#1a1a2e;'>"
+                    f"{ma_display}</span> {vach_str}</div>"
+                    f"{extra_html}"
+                    f"</div>",
+                    unsafe_allow_html=True)
+            with c_ton:
+                st.metric("Giá bán", f"{gb:,} đ" if gb else "—")
+            with c_close:
+                st.markdown("<div style='padding-top:12px;'>", unsafe_allow_html=True)
+                if st.button("✕", key="btn_close", help="Đóng"):
+                    st.session_state.pop("hh_ma_chon", None); st.rerun()
+                st.markdown("</div>", unsafe_allow_html=True)
+
+            # ── Tồn kho tất cả chi nhánh, highlight CN hiện tại ──
             try:
                 all_kho  = load_the_kho(branches_key=tuple(ALL_BRANCHES))
                 rows_kho = all_kho[all_kho["Mã hàng"] == ma_chon] \
                            if not all_kho.empty else pd.DataFrame()
                 if not rows_kho.empty:
-                    cols_cn = st.columns(len(rows_kho))
+                    st.markdown(
+                        "<div style='font-size:0.82rem;font-weight:600;"
+                        "color:#555;margin:10px 0 6px;'>Tồn kho chi nhánh</div>",
+                        unsafe_allow_html=True)
+                    cn_cols = st.columns(len(rows_kho))
                     for idx, (_, kr) in enumerate(rows_kho.iterrows()):
-                        with cols_cn[idx]:
-                            ton = int(kr.get("Tồn cuối kì", 0))
-                            clr = "#1a7f37" if ton > 5 else ("#cf4c2c" if ton > 0 else "#999")
+                        with cn_cols[idx]:
+                            cn_name  = kr["Chi nhánh"]
+                            ton      = int(kr.get("Tồn cuối kì", 0))
+                            is_cur   = (cn_name == active_cn)
+                            clr      = "#1a7f37" if ton > 5 else ("#cf4c2c" if ton > 0 else "#aaa")
+                            border   = "2px solid #e63946" if is_cur else "1px solid #e8e8e8"
+                            bg       = "#fff8f8" if is_cur else "#fff"
+                            icon     = "📍 " if is_cur else ""
                             st.markdown(
-                                f"<div style='text-align:center;padding:8px 4px;"
-                                f"border:1px solid #e8e8e8;border-radius:8px;background:#fff;'>"
-                                f"<div style='font-size:0.7rem;color:#777;'>"
-                                f"{CN_SHORT.get(kr['Chi nhánh'], kr['Chi nhánh'])}</div>"
-                                f"<div style='font-size:1.3rem;font-weight:700;color:{clr};'>"
+                                f"<div style='text-align:center;padding:10px 6px;"
+                                f"border:{border};border-radius:10px;background:{bg};'>"
+                                f"<div style='font-size:0.7rem;color:#777;white-space:nowrap;"
+                                f"overflow:hidden;text-overflow:ellipsis;'>"
+                                f"{icon}{CN_SHORT.get(cn_name, cn_name)}</div>"
+                                f"<div style='font-size:1.4rem;font-weight:700;color:{clr};'>"
                                 f"{ton:,}</div></div>",
                                 unsafe_allow_html=True)
-                else:
-                    st.caption("Chưa có dữ liệu tồn kho tháng này.")
             except Exception:
                 pass
 
-            st.markdown("<hr style='margin:12px 0 8px 0;border-color:#e8e8e8;'>",
-                        unsafe_allow_html=True)
+            st.markdown("<hr style='margin:12px 0 6px;'>", unsafe_allow_html=True)
 
-        # ══════════════════════════════════════════════════
-        # HTML TABLE — không iframe, không scroll conflict
-        # Chỉ hiển thị tối đa 50 dòng (user phải filter)
-        # Tap vào mã hàng → sẽ dùng search để chọn
-        # ══════════════════════════════════════════════════
-        MAX_ROWS = 50
-        show_df  = filtered.head(MAX_ROWS)
-
-        count_label = (
-            f"**{len(filtered)}** mặt hàng"
-            + (f" — hiển thị {MAX_ROWS} đầu tiên, lọc thêm để thu hẹp"
-               if len(filtered) > MAX_ROWS else "")
+        # ══════════════════════════════════════════
+        # BẢNG HÀNG HÓA — st.dataframe on_select
+        # 10 hàng cố định, scroll nội bộ
+        # ══════════════════════════════════════════
+        total = len(filtered)
+        filter_label = (f"{cha_chon}" if cha_chon != "Tất cả" else "")
+        st.caption(
+            f"**{total}** sản phẩm"
+            + (f" · {filter_label}" if filter_label else "")
             + f" · {', '.join(view_branches)}"
-            + (f" · {cha_chon}" if cha_chon != "Tất cả" else "")
+            + (" — lọc thêm để thu hẹp" if total > 100 else "")
         )
-        st.caption(count_label)
 
-        # Build HTML table
-        rows_html = ""
-        for _, r in show_df.iterrows():
-            ma   = str(r["ma_hang"])
-            vach = str(r.get("ma_vach","") or "")
-            ten  = str(r["ten_hang"])
-            ton  = int(r["Ton_cuoi"])
-            clr  = "#1a7f37" if ton > 5 else ("#cf4c2c" if ton > 0 else "#aaa")
-            # Highlight nếu đang được chọn
-            bg   = "#eef2ff" if ma == (ma_chon or "") else "transparent"
-            rows_html += (
-                f"<tr style='background:{bg};border-bottom:1px solid #f0f0f0;'>"
-                f"<td style='padding:8px 6px;font-family:monospace;font-size:0.82rem;"
-                f"color:#444;white-space:nowrap;'>{ma}</td>"
-                f"<td style='padding:8px 6px;font-size:0.8rem;color:#888;"
-                f"white-space:nowrap;'>{vach if vach!=ma else '—'}</td>"
-                f"<td style='padding:8px 6px;font-size:0.88rem;color:#222;'>{ten}</td>"
-                f"<td style='padding:8px 6px;font-weight:700;color:{clr};"
-                f"text-align:right;white-space:nowrap;'>{ton:,}</td>"
-                f"</tr>"
-            )
+        # Bảng hiển thị: Tên hàng | Mã hàng | Mã vạch | Tồn kho
+        disp_cols = {"ten_hang":"Tên hàng","ma_hang":"Mã hàng","Ton_cuoi":"Tồn kho"}
+        if "ma_vach" in filtered.columns:
+            disp_cols = {"ten_hang":"Tên hàng","ma_hang":"Mã hàng",
+                         "ma_vach":"Mã vạch","Ton_cuoi":"Tồn kho"}
+        avail = {k:v for k,v in disp_cols.items() if k in filtered.columns}
+        disp  = filtered[list(avail.keys())].rename(columns=avail).copy()
+        disp["Tồn kho"] = disp["Tồn kho"].astype(int)
 
-        table_html = f"""
-        <div style="overflow-x:auto;border:1px solid #e8e8e8;border-radius:8px;">
-        <table style="width:100%;border-collapse:collapse;font-size:0.88rem;">
-          <thead>
-            <tr style="background:#f7f8fa;border-bottom:2px solid #e0e0e0;">
-              <th style="padding:9px 6px;text-align:left;color:#555;font-weight:600;
-                         white-space:nowrap;">Mã hàng</th>
-              <th style="padding:9px 6px;text-align:left;color:#555;font-weight:600;
-                         white-space:nowrap;">Mã vạch</th>
-              <th style="padding:9px 6px;text-align:left;color:#555;font-weight:600;">Tên hàng</th>
-              <th style="padding:9px 6px;text-align:right;color:#555;font-weight:600;
-                         white-space:nowrap;">Tồn kho</th>
-            </tr>
-          </thead>
-          <tbody>{rows_html}</tbody>
-        </table>
-        </div>
-        <div style="font-size:0.75rem;color:#aaa;margin-top:4px;">
-          Gõ mã hàng vào ô tìm để xem chi tiết
-        </div>
-        """
-        st.markdown(table_html, unsafe_allow_html=True)
+        ROW_H  = 35
+        HEADER = 42
+        N_ROWS = 10
+        tbl_h  = HEADER + N_ROWS * ROW_H   # 392px = 10 hàng cố định
+
+        event = st.dataframe(
+            disp,
+            use_container_width=True,
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row",
+            key="hh_table",
+            column_config={
+                "Tên hàng": st.column_config.TextColumn("Tên hàng", width="large"),
+                "Mã hàng":  st.column_config.TextColumn("Mã hàng",  width="small"),
+                "Mã vạch":  st.column_config.TextColumn("Mã vạch",  width="small"),
+                "Tồn kho":  st.column_config.NumberColumn("Tồn", width="small", format="%d"),
+            },
+            height=tbl_h,
+        )
+
+        # Row selection → cập nhật ma_chon
+        sel = event.selection.rows
+        if sel and sel[0] < len(disp):
+            new_ma = disp.iloc[sel[0]]["Mã hàng"]
+            if new_ma != ma_chon:
+                st.session_state["hh_ma_chon"] = new_ma
+                st.rerun()
+
+        if not ma_chon:
+            st.caption("↑ Chọn một dòng để xem chi tiết sản phẩm")
 
     except Exception as e:
         st.error(f"Lỗi tải Hàng hóa: {e}")
@@ -1143,61 +1167,66 @@ active_cn = get_active_branch()
 sel_cns   = get_selectable_branches()
 cn_short  = CN_SHORT.get(active_cn, active_cn[:6])  # tên ngắn cho nút
 
-# Layout: [menu rộng] [đổi CN compact] [reload compact] [avatar]
-col_nav, col_cn, col_rel, col_avatar = st.columns([5, 2, 1, 1])
+# ══════════════════════════════════════════
+# NAVIGATION  v14.0
+# ══════════════════════════════════════════
+
+user      = get_user()
+active_cn = get_active_branch()
+sel_cns   = get_selectable_branches()
+cn_short  = CN_SHORT.get(active_cn, active_cn[:8])
+ho_ten    = user.get("ho_ten","") if user else ""
+initials  = "".join(w[0].upper() for w in ho_ten.split()[:2]) if ho_ten else "?"
+role_lbl  = {"admin":"Admin","ke_toan":"Kế toán","nhan_vien":"Nhân viên"}.get(
+    user.get("role",""), "")
+
+# [nav menu ——————————] [↺] [avatar]
+col_nav, col_rel, col_avatar = st.columns([7, 1, 1])
 
 with col_nav:
-    menu = ["Tổng quan","Hóa đơn","Hàng hóa"]
-    if is_admin(): menu.append("Quản trị")
+    menu = ["📊 Tổng quan", "🧾 Hóa đơn", "📦 Hàng hóa"]
+    if is_admin(): menu.append("⚙️ Quản trị")
     page = st.radio("nav", menu, horizontal=True, label_visibility="collapsed")
 
-with col_cn:
-    # Nút đổi chi nhánh thông minh:
-    # - Chỉ 1 CN → ẩn nút
-    # - 2 CN → click để toggle ngay (không cần màn hình chọn)
-    # - 3+ CN → click về màn hình chọn
-    if len(sel_cns) == 2:
-        other_cn = [c for c in sel_cns if c != active_cn][0]
-        other_short = CN_SHORT.get(other_cn, other_cn[:6])
-        if st.button(f"⇄ {cn_short}", use_container_width=True,
-                     help=f"Chuyển sang {other_cn}"):
-            st.session_state["active_chi_nhanh"] = other_cn
-            st.rerun()
-    elif len(sel_cns) > 2:
-        if st.button(f"⇄ {cn_short}", use_container_width=True,
-                     help="Đổi chi nhánh"):
-            del st.session_state["active_chi_nhanh"]
-            st.rerun()
-    else:
-        # Chỉ 1 chi nhánh — hiện tên, không có nút
-        st.markdown(
-            f"<div style='padding-top:8px;font-size:0.85rem;"
-            f"color:#555;text-align:center;'>{cn_short}</div>",
-            unsafe_allow_html=True)
-
 with col_rel:
-    if st.button("↺", use_container_width=True, help="Reload dữ liệu"):
+    st.markdown("<div style='padding-top:4px;'>", unsafe_allow_html=True)
+    if st.button("↺", use_container_width=True, help="Tải lại dữ liệu"):
         st.cache_data.clear(); st.rerun()
+    st.markdown("</div>", unsafe_allow_html=True)
 
 with col_avatar:
-    # Avatar tròn + popover thông tin tài khoản
-    ho_ten   = user.get("ho_ten","") if user else ""
-    initials = "".join(w[0].upper() for w in ho_ten.split()[:2]) if ho_ten else "?"
-    role_lbl = {"admin":"Admin","ke_toan":"Kế toán","nhan_vien":"Nhân viên"}.get(
-        user.get("role",""), "")
-
     with st.popover(initials, use_container_width=True):
-        st.markdown(f"**{ho_ten}**")
-        st.caption(f"{role_lbl}  ·  `{user.get('username','')}`")
-        st.caption(f"Chi nhánh: {active_cn}")
+        st.markdown(
+            f"<div style='text-align:center;padding:8px 0 4px;'>"
+            f"<div style='font-size:1.1rem;font-weight:700;'>{ho_ten}</div>"
+            f"<div style='font-size:0.8rem;color:#888;'>{role_lbl}</div>"
+            f"<div style='font-size:0.78rem;color:#aaa;margin-top:2px;'>"
+            f"📍 {active_cn}</div>"
+            f"</div>",
+            unsafe_allow_html=True)
         st.markdown("---")
-        if st.button("Đăng xuất", type="primary", use_container_width=True,
-                     key="btn_logout_pop"):
+
+        # Đổi chi nhánh ngay trong popover
+        if len(sel_cns) > 1:
+            st.caption("Đổi chi nhánh:")
+            for cn in sel_cns:
+                is_active = (cn == active_cn)
+                lbl = f"✓ {cn}" if is_active else cn
+                if st.button(lbl, key=f"sw_cn_{cn}", use_container_width=True,
+                             type="primary" if is_active else "secondary",
+                             disabled=is_active):
+                    st.session_state["active_chi_nhanh"] = cn
+                    st.rerun()
+            st.markdown("---")
+
+        if st.button("🚪 Đăng xuất", use_container_width=True, key="btn_logout_pop"):
             do_logout(); st.rerun()
 
-st.markdown("<hr style='margin:4px 0 14px 0;'>", unsafe_allow_html=True)
+# strip icon từ page value để routing
+page_clean = page.split(" ", 1)[1] if " " in page else page
+st.markdown("<hr style='margin:4px 0 10px 0;'>", unsafe_allow_html=True)
 
-if page == "Tổng quan":   module_tong_quan()
-elif page == "Hóa đơn":   module_hoa_don()
-elif page == "Hàng hóa":  module_hang_hoa()
-elif page == "Quản trị":  module_quan_tri()
+if page_clean == "Tổng quan":   module_tong_quan()
+elif page_clean == "Hóa đơn":   module_hoa_don()
+elif page_clean == "Hàng hóa":  module_hang_hoa()
+elif page_clean == "Quản trị":  module_quan_tri()

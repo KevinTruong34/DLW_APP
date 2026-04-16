@@ -26,8 +26,15 @@ header, footer, #stDecoration,
 html, body { overflow-x: hidden !important; max-width: 100vw !important; }
 *, *::before, *::after { box-sizing: border-box; }
 
+/* ── Ngăn bảng dataframe cuộn trang khi vuốt trên mobile ── */
+[data-testid="stDataFrame"] > div {
+    touch-action: pan-x pan-y !important;
+    overscroll-behavior: contain !important;
+}
+iframe { touch-action: pan-x pan-y; }
+
 /* ── Layout ── */
-.block-container { padding: 0.75rem 1rem 1rem 1rem !important; }
+.block-container { padding: 0.75rem 0.75rem 1rem 0.75rem !important; }
 
 /* ── Metric ── */
 [data-testid="stMetricValue"] { font-size: 1.3rem !important; }
@@ -675,7 +682,7 @@ def module_hang_hoa():
         filtered = filtered.sort_values("Ton_cuoi", ascending=False).reset_index(drop=True)
 
         avail_cols = {"ma_hang":"Mã hàng","ma_vach":"Mã vạch",
-                      "ten_hang":"Tên hàng","_cha":"Nhóm hàng","Ton_cuoi":"Tồn kho"}
+                      "ten_hang":"Tên hàng","Ton_cuoi":"Tồn kho"}
         avail = {k:v for k,v in avail_cols.items() if k in filtered.columns}
         disp  = filtered[list(avail.keys())].rename(columns=avail).copy()
         disp["Tồn kho"] = disp["Tồn kho"].astype(int)
@@ -687,13 +694,12 @@ def module_hang_hoa():
             disp, use_container_width=True, hide_index=True,
             on_select="rerun", selection_mode="single-row", key="hh_table",
             column_config={
-                "Mã hàng":   st.column_config.TextColumn("Mã hàng",  width="small"),
-                "Mã vạch":   st.column_config.TextColumn("Mã vạch",  width="small"),
-                "Tên hàng":  st.column_config.TextColumn("Tên hàng", width="large"),
-                "Nhóm hàng": st.column_config.TextColumn("Nhóm",    width="medium"),
-                "Tồn kho":   st.column_config.NumberColumn("Tồn kho",width="small", format="%d"),
+                "Mã hàng":  st.column_config.TextColumn("Mã hàng",  width="small"),
+                "Mã vạch":  st.column_config.TextColumn("Mã vạch",  width="small"),
+                "Tên hàng": st.column_config.TextColumn("Tên hàng", width="medium"),
+                "Tồn kho":  st.column_config.NumberColumn("Tồn",    width="small", format="%d"),
             },
-            height=min(420, 42 + len(disp) * 35),
+            height=min(320, 42 + len(disp) * 35),
         )
 
         # Lưu row được chọn — kiểm tra bounds trước
@@ -725,21 +731,33 @@ def module_hang_hoa():
             row_m = rows_match.iloc[0]
             st.markdown("---")
 
+            # ── Header: tên + giá ──
             c_name, c_price = st.columns([3, 1])
             with c_name:
                 st.markdown(f"### {row_m['ten_hang']}")
                 nhom_full = (f"{row_m['_cha']} > {row_m['_con']}"
                              if row_m.get("_con","") else row_m.get("_cha",""))
-                st.caption(
-                    f"`{row_m['ma_hang']}`"
-                    + (f"  ·  Mã vạch: `{row_m.get('ma_vach','')}`"
-                       if pd.notna(row_m.get("ma_vach","")) and
-                          str(row_m.get("ma_vach","")) != str(row_m["ma_hang"]) else "")
-                    + (f"  ·  {nhom_full}" if nhom_full else ""))
+                if nhom_full:
+                    st.caption(nhom_full)
             with c_price:
                 gb = int(row_m.get("gia_ban", 0) or 0)
                 st.metric("Giá bán", f"{gb:,} đ" if gb else "—")
 
+            # ── Mã hàng nổi bật ──
+            ma_display  = str(row_m["ma_hang"])
+            vach = str(row_m.get("ma_vach","") or "")
+            vach_display = f"  ·  Mã vạch: **{vach}**" if vach and vach != ma_display else ""
+            st.markdown(
+                f"<div style='background:#f4f6fa;border-radius:8px;padding:10px 14px;"
+                f"margin:6px 0 10px 0;display:inline-block;'>"
+                f"<span style='font-size:1rem;font-weight:700;color:#1a1a2e;"
+                f"letter-spacing:0.5px;font-family:monospace;'>{ma_display}</span>"
+                f"</div>",
+                unsafe_allow_html=True)
+            if vach_display:
+                st.caption(vach_display)
+
+            # ── Thông tin thêm ──
             extra = []
             if pd.notna(row_m.get("thuong_hieu","")) and str(row_m.get("thuong_hieu","")).strip():
                 extra.append(f"Thương hiệu: **{row_m['thuong_hieu']}**")
@@ -748,25 +766,38 @@ def module_hang_hoa():
             if extra:
                 st.caption("  ·  ".join(extra))
 
-            st.markdown("**Tồn kho**")
-            if not the_kho.empty:
-                rows_kho = the_kho[the_kho["Mã hàng"] == ma_chon]
+            # ── Tồn kho TẤT CẢ chi nhánh (load riêng, không phụ thuộc view_branches) ──
+            st.markdown("**Tồn kho các chi nhánh**")
+            try:
+                all_kho = load_the_kho(branches_key=tuple(ALL_BRANCHES))
+                rows_kho = all_kho[all_kho["Mã hàng"] == ma_chon] if not all_kho.empty else pd.DataFrame()
                 if not rows_kho.empty:
-                    for _, dr in rows_kho.iterrows():
-                        if len(view_branches) > 1:
-                            st.markdown(f"**{dr.get('Chi nhánh','')}**")
-                        d1,d2,d3,d4 = st.columns(4)
-                        d1.metric("Tồn đầu kỳ", f"{int(dr.get('Tồn đầu kì',0)):,}")
-                        d2.metric("Nhập NCC",   f"{int(dr.get('Nhập NCC',0)):,}")
-                        d3.metric("Xuất bán",   f"{int(dr.get('Xuất bán',0)):,}")
-                        d4.metric("Tồn cuối kỳ",f"{int(dr.get('Tồn cuối kì',0)):,}")
-                        if len(view_branches) > 1:
-                            st.markdown("<hr style='margin:4px 0;border-color:#f0f0f0;'>",
+                    # Hiển thị dạng bảng gọn: Chi nhánh | Tồn cuối kỳ
+                    kho_disp = rows_kho[["Chi nhánh","Tồn cuối kì"]].copy()
+                    kho_disp["Tồn cuối kì"] = kho_disp["Tồn cuối kì"].astype(int)
+                    kho_disp = kho_disp.rename(columns={"Tồn cuối kì": "Tồn kho"})
+
+                    # Render dạng card gọn thay vì bảng
+                    cols_cn = st.columns(len(kho_disp))
+                    for idx, (_, kr) in enumerate(kho_disp.iterrows()):
+                        with cols_cn[idx]:
+                            cn_name = kr["Chi nhánh"]
+                            ton_val = int(kr["Tồn kho"])
+                            color = "#1a7f37" if ton_val > 5 else ("#cf4c2c" if ton_val > 0 else "#999")
+                            st.markdown(
+                                f"<div style='text-align:center;padding:10px 4px;border:1px solid #eee;"
+                                f"border-radius:8px;background:#fafafa;'>"
+                                f"<div style='font-size:0.72rem;color:#666;margin-bottom:4px;"
+                                f"white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'>"
+                                f"{CN_SHORT.get(cn_name, cn_name)}</div>"
+                                f"<div style='font-size:1.4rem;font-weight:700;color:{color};'>"
+                                f"{ton_val:,}</div>"
+                                f"</div>",
                                 unsafe_allow_html=True)
                 else:
                     st.info("Chưa có dữ liệu tồn kho tháng này.")
-            else:
-                st.metric("Tồn kho (master)", f"{int(row_m.get('Ton_cuoi',0)):,}")
+            except Exception:
+                st.info("Không thể tải tồn kho.")
 
     except Exception as e:
         st.error(f"Lỗi tải Hàng hóa: {e}")
@@ -1072,9 +1103,10 @@ def module_quan_tri():
 user      = get_user()
 active_cn = get_active_branch()
 sel_cns   = get_selectable_branches()
+cn_short  = CN_SHORT.get(active_cn, active_cn[:6])  # tên ngắn cho nút
 
-# Header: [nav] [chi nhánh + đổi] [reload | logout]
-col_nav, col_cn, col_act = st.columns([4, 2, 1])
+# Layout: [menu rộng] [đổi CN compact] [reload compact] [avatar]
+col_nav, col_cn, col_rel, col_avatar = st.columns([5, 2, 1, 1])
 
 with col_nav:
     menu = ["Tổng quan","Hóa đơn","Hàng hóa"]
@@ -1082,21 +1114,50 @@ with col_nav:
     page = st.radio("nav", menu, horizontal=True, label_visibility="collapsed")
 
 with col_cn:
-    st.markdown(
-        f"<div style='padding-top:6px;font-size:0.9rem;color:#444;'>"
-        f"<b>{active_cn}</b></div>",
-        unsafe_allow_html=True)
-    if len(sel_cns) > 1:
-        if st.button("Đổi chi nhánh", use_container_width=True):
-            del st.session_state["active_chi_nhanh"]; st.rerun()
+    # Nút đổi chi nhánh thông minh:
+    # - Chỉ 1 CN → ẩn nút
+    # - 2 CN → click để toggle ngay (không cần màn hình chọn)
+    # - 3+ CN → click về màn hình chọn
+    if len(sel_cns) == 2:
+        other_cn = [c for c in sel_cns if c != active_cn][0]
+        other_short = CN_SHORT.get(other_cn, other_cn[:6])
+        if st.button(f"⇄ {cn_short}", use_container_width=True,
+                     help=f"Chuyển sang {other_cn}"):
+            st.session_state["active_chi_nhanh"] = other_cn
+            st.rerun()
+    elif len(sel_cns) > 2:
+        if st.button(f"⇄ {cn_short}", use_container_width=True,
+                     help="Đổi chi nhánh"):
+            del st.session_state["active_chi_nhanh"]
+            st.rerun()
+    else:
+        # Chỉ 1 chi nhánh — hiện tên, không có nút
+        st.markdown(
+            f"<div style='padding-top:8px;font-size:0.85rem;"
+            f"color:#555;text-align:center;'>{cn_short}</div>",
+            unsafe_allow_html=True)
 
-with col_act:
-    if st.button("Reload", use_container_width=True):
+with col_rel:
+    if st.button("↺", use_container_width=True, help="Reload dữ liệu"):
         st.cache_data.clear(); st.rerun()
-    if st.button("Đăng xuất", use_container_width=True):
-        do_logout(); st.rerun()
 
-st.markdown("<hr style='margin:4px 0 16px 0;'>", unsafe_allow_html=True)
+with col_avatar:
+    # Avatar tròn + popover thông tin tài khoản
+    ho_ten   = user.get("ho_ten","") if user else ""
+    initials = "".join(w[0].upper() for w in ho_ten.split()[:2]) if ho_ten else "?"
+    role_lbl = {"admin":"Admin","ke_toan":"Kế toán","nhan_vien":"Nhân viên"}.get(
+        user.get("role",""), "")
+
+    with st.popover(initials, use_container_width=True):
+        st.markdown(f"**{ho_ten}**")
+        st.caption(f"{role_lbl}  ·  `{user.get('username','')}`")
+        st.caption(f"Chi nhánh: {active_cn}")
+        st.markdown("---")
+        if st.button("Đăng xuất", type="primary", use_container_width=True,
+                     key="btn_logout_pop"):
+            do_logout(); st.rerun()
+
+st.markdown("<hr style='margin:4px 0 14px 0;'>", unsafe_allow_html=True)
 
 if page == "Tổng quan":   module_tong_quan()
 elif page == "Hóa đơn":   module_hoa_don()

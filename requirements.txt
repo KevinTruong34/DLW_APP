@@ -1,6 +1,7 @@
 streamlit
 pandas
-supabase
 plotly
-openpyxl
+supabase
 bcrypt
+openpyxl
+streamlit-cookies-controller

@@ -266,7 +266,23 @@ def _get_cookie_controller():
 
 
 def get_token_from_cookie():
-    """Lấy token từ cookie. Fallback sang URL nếu cookie chưa có (migration)."""
+    """
+    Lấy token từ cookie.
+    Dùng st.context.cookies (đọc từ HTTP request header, đồng bộ, có ngay)
+    thay vì CookieController.get() (bị async, trả None lần đầu).
+    Fallback sang URL param nếu cookie chưa có (migration từ phiên cũ).
+    """
+    # 1. Đọc từ st.context.cookies — reliable, đồng bộ
+    try:
+        cookies_dict = st.context.cookies
+        if cookies_dict and COOKIE_NAME in cookies_dict:
+            val = cookies_dict[COOKIE_NAME]
+            if val:
+                return str(val)
+    except Exception:
+        pass
+
+    # 2. Fallback: thử CookieController (có thể đã sync)
     ctrl = _get_cookie_controller()
     if ctrl is not None:
         try:
@@ -275,7 +291,8 @@ def get_token_from_cookie():
                 return str(val)
         except Exception:
             pass
-    # Fallback: token vẫn còn trong URL từ phiên cũ → migrate về cookie
+
+    # 3. Migrate từ URL cũ
     url_token = st.query_params.get("token")
     if url_token:
         return url_token
@@ -283,23 +300,26 @@ def get_token_from_cookie():
 
 
 def save_token_to_cookie(token: str):
-    """Lưu token vào cookie HttpOnly (qua JS). Không đặt vào URL."""
+    """Lưu token vào cookie. Không đặt vào URL."""
     ctrl = _get_cookie_controller()
     if ctrl is None:
-        # Fallback tạm — nếu thư viện chưa cài, dùng URL (cảnh báo)
+        # Không có thư viện cookie → fallback URL (sẽ warning ở UI)
         st.query_params["token"] = token
         return
     try:
         expires = datetime.utcnow() + timedelta(days=COOKIE_EXPIRY_DAYS)
+        # Lưu ý:
+        # - Không dùng secure=True (Streamlit Cloud tự upgrade HTTPS, nhưng local HTTP sẽ fail)
+        # - same_site="lax" chống CSRF cơ bản mà vẫn cho phép navigation bình thường
         ctrl.set(
             COOKIE_NAME, token,
             expires=expires,
-            secure=True,       # chỉ gửi qua HTTPS
-            same_site="lax",   # chống CSRF cơ bản
+            same_site="lax",
             path="/",
         )
-    except Exception:
-        # Best-effort fallback
+    except Exception as e:
+        # Best-effort fallback về URL nếu cookie set bị lỗi (không im lặng)
+        st.warning(f"Không lưu được cookie: {e}. Dùng fallback URL.")
         st.query_params["token"] = token
 
 
@@ -492,6 +512,10 @@ def show_login():
                     token = create_session_token(user["id"])
                     st.session_state["user"] = user
                     save_token_to_cookie(token)
+                    # Delay ngắn để cookie kịp được ghi vào browser
+                    # trước khi rerun (cookie-controller cần 1 vòng JS exchange)
+                    import time
+                    time.sleep(0.3)
                     st.rerun()
 
 
@@ -540,11 +564,12 @@ def show_branch_selection():
 # SESSION RESTORE
 # ==========================================
 
-if "user" not in st.session_state:
-    # Khởi tạo cookie controller TRƯỚC để nó có cơ hội sync từ browser
-    ctrl = _get_cookie_controller()
+# Khởi tạo cookie controller SỚM ở top-level để nó có nhiều chu kỳ rerun
+# để sync cookie từ browser. KHÔNG đặt trong nhánh if.
+_ctrl = _get_cookie_controller()
 
-    # Đọc token — ưu tiên cookie, fallback URL (migration)
+if "user" not in st.session_state:
+    # Đọc token — ưu tiên cookie, fallback URL (migration từ phiên cũ)
     token = get_token_from_cookie()
 
     if token:
@@ -558,24 +583,8 @@ if "user" not in st.session_state:
         else:
             # Token invalid/expired → dọn sạch
             clear_token_cookie()
-    else:
-        # Không tìm thấy token — có thể do cookie controller chưa ready sau F5.
-        # Pattern: cookie controller trả None ở lần chạy đầu tiên, nhưng nó tự
-        # trigger rerun sau khi nhận được cookie từ browser. Ta chờ tối đa 2 lần.
-        attempts = int(st.session_state.get("_cookie_wait", 0))
-        if ctrl is not None and attempts < 2:
-            st.session_state["_cookie_wait"] = attempts + 1
-            # Show UI chờ + trigger rerun sau một khoảng ngắn để cookie kịp sync
-            with st.spinner("Đang khôi phục phiên đăng nhập..."):
-                import time
-                time.sleep(0.25)
-            st.rerun()
-        else:
-            # Đã chờ đủ 2 lần mà vẫn không có cookie → thật sự chưa login
-            st.session_state.pop("_cookie_wait", None)
-else:
-    # Đã login xong — dọn counter chờ cookie
-    st.session_state.pop("_cookie_wait", None)
+    # Nếu không có token → show login form (bình thường)
+    # KHÔNG chặn/đợi gì thêm — cookie-controller tự trigger rerun khi cần
 
 if "user" not in st.session_state:
     show_first_run() if is_first_run() else show_login()

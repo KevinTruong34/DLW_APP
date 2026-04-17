@@ -541,7 +541,12 @@ def show_branch_selection():
 # ==========================================
 
 if "user" not in st.session_state:
+    # Khởi tạo cookie controller TRƯỚC để nó có cơ hội sync từ browser
+    ctrl = _get_cookie_controller()
+
+    # Đọc token — ưu tiên cookie, fallback URL (migration)
     token = get_token_from_cookie()
+
     if token:
         user = restore_session(token)
         if user:
@@ -553,6 +558,24 @@ if "user" not in st.session_state:
         else:
             # Token invalid/expired → dọn sạch
             clear_token_cookie()
+    else:
+        # Không tìm thấy token — có thể do cookie controller chưa ready sau F5.
+        # Pattern: cookie controller trả None ở lần chạy đầu tiên, nhưng nó tự
+        # trigger rerun sau khi nhận được cookie từ browser. Ta chờ tối đa 2 lần.
+        attempts = int(st.session_state.get("_cookie_wait", 0))
+        if ctrl is not None and attempts < 2:
+            st.session_state["_cookie_wait"] = attempts + 1
+            # Show UI chờ + trigger rerun sau một khoảng ngắn để cookie kịp sync
+            with st.spinner("Đang khôi phục phiên đăng nhập..."):
+                import time
+                time.sleep(0.25)
+            st.rerun()
+        else:
+            # Đã chờ đủ 2 lần mà vẫn không có cookie → thật sự chưa login
+            st.session_state.pop("_cookie_wait", None)
+else:
+    # Đã login xong — dọn counter chờ cookie
+    st.session_state.pop("_cookie_wait", None)
 
 if "user" not in st.session_state:
     show_first_run() if is_first_run() else show_login()

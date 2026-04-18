@@ -1326,10 +1326,37 @@ SUGGEST_LIMIT    = 5     # Giới hạn 5 sản phẩm gợi ý
 
 
 def _gen_ma_phieu() -> str:
-    """Sinh mã phiếu CH + YYMMDD + 4 hex random (12 ký tự, giống KiotViet)."""
-    today = datetime.now().strftime("%y%m%d")
-    rand  = uuid.uuid4().hex[:4].upper()
-    return f"CH{today}{rand}"
+    """
+    Sinh mã phiếu serial tăng dần: CH000001, CH000002, ...
+    Query max hiện tại trong DB rồi +1.
+
+    Race condition: nếu 2 user tạo cùng lúc cùng ra 1 mã → INSERT lỗi
+    do UNIQUE INDEX → _submit_phieu sẽ retry với mã mới.
+    """
+    try:
+        # Lấy tất cả ma_phieu bắt đầu bằng "CH" + 6 số
+        res = supabase.table("phieu_chuyen_kho") \
+            .select("ma_phieu") \
+            .like("ma_phieu", "CH______") \
+            .order("ma_phieu", desc=True) \
+            .limit(1) \
+            .execute()
+
+        if res.data:
+            last_ma = res.data[0]["ma_phieu"]
+            # Parse số từ "CH000123" → 123
+            try:
+                last_num = int(last_ma[2:])
+            except (ValueError, IndexError):
+                last_num = 0
+        else:
+            last_num = 0
+
+        next_num = last_num + 1
+        return f"CH{next_num:06d}"
+    except Exception:
+        # Fallback an toàn: nếu query fail, dùng timestamp (ít khả năng trùng)
+        return f"CH{datetime.now().strftime('%y%m%d')}{uuid.uuid4().hex[:4].upper()}"
 
 
 def _update_trang_thai_phieu(ma_phieu: str, trang_thai_moi: str,
@@ -2076,7 +2103,6 @@ def _submit_phieu(tu_cn: str, toi_cn: str, nguoi_tao: str, ghi_chu: str,
 
     try:
         with st.spinner("Đang xử lý..."):
-            ma_phieu = editing_ma or _gen_ma_phieu()
             now_iso  = datetime.now().isoformat()
 
             tong_sl    = sum(it["so_luong"] for it in items)
@@ -2086,10 +2112,10 @@ def _submit_phieu(tu_cn: str, toi_cn: str, nguoi_tao: str, ghi_chu: str,
             # Khi sửa: giữ nguyên trạng thái "Phiếu tạm" (chỉ phiếu tạm mới sửa được)
             trang_thai = "Phiếu tạm"
 
-            records = []
-            for it in items:
-                records.append({
-                    "ma_phieu":         ma_phieu,
+            def _build_records(ma):
+                """Build records với ma_phieu cho sẵn."""
+                return [{
+                    "ma_phieu":         ma,
                     "loai_phieu":       IN_APP_MARKER,
                     "tu_chi_nhanh":     tu_cn,
                     "toi_chi_nhanh":    toi_cn,
@@ -2112,11 +2138,13 @@ def _submit_phieu(tu_cn: str, toi_cn: str, nguoi_tao: str, ghi_chu: str,
                     "gia_chuyen":       int(it["gia_ban"]),
                     "thanh_tien_chuyen":int(it["so_luong"] * it["gia_ban"]),
                     "thanh_tien_nhan":  0,
-                })
+                } for it in items]
 
             if editing_ma:
+                # Sửa phiếu: dùng luôn ma cũ, DELETE + INSERT
                 _delete_phieu_rows(editing_ma)
-                supabase.table("phieu_chuyen_kho").insert(records).execute()
+                supabase.table("phieu_chuyen_kho").insert(_build_records(editing_ma)).execute()
+                ma_phieu = editing_ma
                 msg = f"💾 Đã cập nhật phiếu **{ma_phieu}**!"
                 log_action(
                     "PHIEU_UPDATE",
@@ -2124,7 +2152,33 @@ def _submit_phieu(tu_cn: str, toi_cn: str, nguoi_tao: str, ghi_chu: str,
                     f"sl={tong_sl} items={tong_mat}"
                 )
             else:
-                supabase.table("phieu_chuyen_kho").insert(records).execute()
+                # Tạo mới: retry nếu duplicate (race condition hiếm gặp)
+                ma_phieu = None
+                last_err = None
+                for attempt in range(3):
+                    try_ma = _gen_ma_phieu()
+                    try:
+                        supabase.table("phieu_chuyen_kho").insert(_build_records(try_ma)).execute()
+                        ma_phieu = try_ma
+                        break
+                    except Exception as e:
+                        last_err = e
+                        err_str = str(e).lower()
+                        # Chỉ retry nếu là duplicate key error
+                        if "duplicate" in err_str or "unique" in err_str:
+                            _logger.warning(
+                                f"PHIEU_RETRY — attempt={attempt+1} ma={try_ma} "
+                                f"(race condition, thử lại)"
+                            )
+                            continue
+                        # Lỗi khác → raise ngay, không retry
+                        raise
+
+                if ma_phieu is None:
+                    raise RuntimeError(
+                        f"Không sinh được mã phiếu sau 3 lần thử: {last_err}"
+                    )
+
                 msg = f"✓ Tạo phiếu **{ma_phieu}** thành công!"
                 log_action(
                     "PHIEU_CREATE",

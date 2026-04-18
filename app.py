@@ -8,13 +8,6 @@ import numpy as np
 import bcrypt
 import uuid
 
-# Cookie manager — dùng streamlit-cookies-manager (có .ready() để chờ sync)
-try:
-    from streamlit_cookies_manager import EncryptedCookieManager
-    _HAS_COOKIE_LIB = True
-except ImportError:
-    _HAS_COOKIE_LIB = False
-
 # ==========================================
 # PHIEN BAN: 15.0 — Fix UI + Tao phieu chuyen
 # ==========================================
@@ -243,104 +236,43 @@ ARCHIVED_MARKER = "Chuyển hàng (App - đã đồng bộ)"
 
 
 # ==========================================
-# COOKIE-BASED SESSION (streamlit-cookies-manager)
+# SESSION TOKEN (URL-based — đơn giản, ổn định)
 # ==========================================
 #
-# Pattern chuẩn của thư viện:
-#   1. Khởi tạo EncryptedCookieManager ở top-level
-#   2. Check cookies.ready() → nếu chưa sẵn sàng: st.stop() → rerun kế sẽ có
-#   3. Đọc/ghi như dict: cookies['key'], cookies['key'] = val
-#   4. Ghi xong cần cookies.save() để commit ngay (nếu không sẽ commit ở rerun kế)
+# Security notes:
+# - Token UUID4 128-bit — không đoán được
+# - Session trong DB expire sau 3 ngày (giảm từ 30 ngày)
+# - Logout xóa session khỏi DB → token cũ không dùng được kể cả khi lộ
+# - Rủi ro: token lộ qua URL share/screenshot/history → mitigation là
+#   expiry ngắn + khuyến cáo nhân viên không share URL.
 
-COOKIE_PREFIX   = "watchstore/"
-COOKIE_TOKEN    = "session_token"
-COOKIE_BRANCH   = "active_branch"
-# Password dùng để encrypt cookie content (nhúng trong code như bạn chọn)
-# Random 32 bytes hex — attacker không decrypt/fake được cookie
-COOKIE_PASSWORD = "a7f3c891e2b4d6f0e8a9c5b7d3f1e4a6c8b0d2f4e6a8c0b2d4f6e8a0c2b4d6f8"
+SESSION_EXPIRY_DAYS = 3
 
-def _get_cookie_manager():
-    """Lấy (hoặc khởi tạo) EncryptedCookieManager singleton."""
-    if not _HAS_COOKIE_LIB:
-        return None
-    if "_cm" not in st.session_state:
-        try:
-            st.session_state["_cm"] = EncryptedCookieManager(
-                prefix=COOKIE_PREFIX,
-                password=COOKIE_PASSWORD,
-            )
-        except Exception:
-            return None
-    return st.session_state["_cm"]
+def get_token_from_url():
+    """Đọc session token từ URL query params."""
+    return st.query_params.get("token")
 
 
-def get_token_from_cookie():
-    """Đọc session token từ cookie. Fallback sang URL (migration từ phiên cũ)."""
-    cm = _get_cookie_manager()
-    if cm is not None and cm.ready():
-        val = cm.get(COOKIE_TOKEN)
-        if val:
-            return str(val)
-    # Migration từ URL param (phiên cũ)
-    url_token = st.query_params.get("token")
-    if url_token:
-        return url_token
-    return None
+def save_token_to_url(token: str):
+    """Lưu token vào URL query params."""
+    st.query_params["token"] = token
 
 
-def get_branch_from_cookie():
-    """Đọc chi nhánh đã chọn từ cookie."""
-    cm = _get_cookie_manager()
-    if cm is not None and cm.ready():
-        val = cm.get(COOKIE_BRANCH)
-        if val:
-            return str(val)
-    return None
+def save_branch_to_url(branch: str):
+    """Lưu chi nhánh vào URL query params."""
+    st.query_params["branch"] = branch
 
 
-def save_token_to_cookie(token: str):
-    """Lưu token vào cookie (sẽ commit trên rerun kế)."""
-    cm = _get_cookie_manager()
-    if cm is None or not cm.ready():
-        # Không có thư viện hoặc chưa sẵn sàng → fallback URL (tạm)
-        st.query_params["token"] = token
-        return
-    cm[COOKIE_TOKEN] = token
+def get_branch_from_url():
+    """Đọc chi nhánh từ URL query params."""
+    return st.query_params.get("branch")
 
 
-def save_branch_to_cookie(branch: str):
-    """Lưu chi nhánh vào cookie."""
-    cm = _get_cookie_manager()
-    if cm is None or not cm.ready():
-        return
-    cm[COOKIE_BRANCH] = branch
-
-
-def commit_cookies():
-    """Force-save các cookie đang pending (dùng sau khi login/đổi CN)."""
-    cm = _get_cookie_manager()
-    if cm is not None and cm.ready():
-        try:
-            cm.save()
-        except Exception:
-            pass
-
-
-def clear_token_cookie():
-    """Xóa cookie session khi logout."""
-    cm = _get_cookie_manager()
-    if cm is not None and cm.ready():
-        try:
-            if COOKIE_TOKEN in cm:
-                del cm[COOKIE_TOKEN]
-            if COOKIE_BRANCH in cm:
-                del cm[COOKIE_BRANCH]
-            cm.save()
-        except Exception:
-            pass
-    # Dọn URL param nếu còn sót
-    if "token" in st.query_params:
-        del st.query_params["token"]
+def clear_session_params():
+    """Xóa token + branch khỏi URL khi logout."""
+    for k in ("token", "branch"):
+        if k in st.query_params:
+            del st.query_params[k]
 
 
 # ==========================================
@@ -401,7 +333,7 @@ def create_session_token(nv_id):
     supabase.table("sessions").insert({
         "token": token,
         "nhan_vien_id": nv_id,
-        "expires_at": (datetime.utcnow() + timedelta(days=30)).isoformat()
+        "expires_at": (datetime.utcnow() + timedelta(days=SESSION_EXPIRY_DAYS)).isoformat()
     }).execute()
     return token
 
@@ -444,9 +376,9 @@ def do_login(username, password):
         return None, f"Lỗi hệ thống: {e}"
 
 def do_logout():
-    token = get_token_from_cookie()
+    token = get_token_from_url()
     if token: delete_session(token)
-    clear_token_cookie()
+    clear_session_params()
     st.session_state.clear()
 
 
@@ -509,7 +441,7 @@ def show_login():
     Lợi ích:
     - Gộp login + chọn CN thành 1 flow liền mạch
     - Không lộ danh sách chi nhánh với người không có tài khoản
-    - Sau khi xong, lưu cả token + chi nhánh vào cookie để F5 khôi phục đủ
+    - Sau khi xong, lưu cả token + chi nhánh vào URL để F5 khôi phục đủ
     """
     st.title("Đăng nhập")
 
@@ -572,17 +504,14 @@ def show_login():
 
 
 def _finalize_login(user: dict, branch: str):
-    """Hoàn tất login: tạo session, lưu cookie cho token + chi nhánh."""
+    """Hoàn tất login: tạo session, lưu token + chi nhánh vào URL."""
     token = create_session_token(user["id"])
     st.session_state["user"] = user
     st.session_state["active_chi_nhanh"] = branch
     st.session_state.pop("_pending_user", None)
 
-    save_token_to_cookie(token)
-    save_branch_to_cookie(branch)
-    # Force-save ngay lập tức để cookie có mặt trong browser
-    # trước khi rerun (quan trọng: tránh race condition).
-    commit_cookies()
+    save_token_to_url(token)
+    save_branch_to_url(branch)
 
     st.rerun()
 
@@ -591,53 +520,38 @@ def _finalize_login(user: dict, branch: str):
 # SESSION RESTORE
 # ==========================================
 
-# Khởi tạo cookie manager TOP-LEVEL. Nếu chưa ready (lần đầu F5),
-# stop cho Streamlit tự rerun — lần kế sẽ có cookie.
-_cm = _get_cookie_manager()
-if _cm is not None and not _cm.ready():
-    # Hiện spinner cho user biết đang load thay vì blank screen
-    with st.spinner("Đang tải..."):
-        st.stop()
-
 if "user" not in st.session_state:
-    # Đọc token — ưu tiên cookie, fallback URL (migration từ phiên cũ)
-    token = get_token_from_cookie()
+    # Đọc token từ URL
+    token = get_token_from_url()
 
     if token:
         user = restore_session(token)
         if user:
             st.session_state["user"] = user
-            # Migrate: nếu token còn trong URL → chuyển sang cookie + xóa URL
-            if "token" in st.query_params:
-                save_token_to_cookie(token)
-                commit_cookies()
-                del st.query_params["token"]
-
-            # Khôi phục chi nhánh từ cookie (nếu có và hợp lệ)
-            saved_branch = get_branch_from_cookie()
+            # Khôi phục chi nhánh từ URL (nếu có và hợp lệ)
+            saved_branch = get_branch_from_url()
             if saved_branch:
                 accessible = (ALL_BRANCHES if user.get("role") == "admin"
                              else user.get("chi_nhanh_list", []))
                 if saved_branch in accessible:
                     st.session_state["active_chi_nhanh"] = saved_branch
         else:
-            # Token invalid/expired → dọn sạch
-            clear_token_cookie()
+            # Token invalid/expired → dọn sạch URL
+            clear_session_params()
 
 if "user" not in st.session_state:
     show_first_run() if is_first_run() else show_login()
     st.stop()
 
-# Nếu user đã login nhưng chưa có active_chi_nhanh (edge case: cookie chi
-# nhánh bị mất hoặc chi nhánh đã bị xóa khỏi quyền) → hiện form chọn lại
+# Nếu user đã login nhưng chưa có active_chi_nhanh (edge case: chi nhánh
+# trong URL không hợp lệ hoặc đã bị xóa khỏi quyền) → hiện form chọn lại
 if "active_chi_nhanh" not in st.session_state:
     user = get_user()
     branches = (ALL_BRANCHES if user.get("role") == "admin"
                else user.get("chi_nhanh_list", []))
     if len(branches) == 1:
         st.session_state["active_chi_nhanh"] = branches[0]
-        save_branch_to_cookie(branches[0])
-        commit_cookies()
+        save_branch_to_url(branches[0])
         st.rerun()
     elif branches:
         st.markdown(
@@ -652,8 +566,7 @@ if "active_chi_nhanh" not in st.session_state:
             if st.button(branch, key=f"re_cn_{i}",
                         use_container_width=True, type="secondary"):
                 st.session_state["active_chi_nhanh"] = branch
-                save_branch_to_cookie(branch)
-                commit_cookies()
+                save_branch_to_url(branch)
                 st.rerun()
         st.markdown("<br>", unsafe_allow_html=True)
         if st.button("Đăng xuất", key="re_logout",
@@ -2623,8 +2536,7 @@ with col_avatar:
                              type="primary" if is_active_cn else "secondary",
                              disabled=is_active_cn):
                     st.session_state["active_chi_nhanh"] = cn
-                    save_branch_to_cookie(cn)
-                    commit_cookies()
+                    save_branch_to_url(cn)
                     # reset giỏ tạo phiếu khi đổi CN
                     st.session_state.pop("ck_items", None)
                     st.rerun()

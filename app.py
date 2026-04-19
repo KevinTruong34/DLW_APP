@@ -1,8 +1,61 @@
  (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
 diff --git a/app.py b/app.py
-index d9528834cff8a9049d94e9232deb4b9d3d41a27a..fb4ed5b8712da69f0894603339736060997d3100 100644
+index d9528834cff8a9049d94e9232deb4b9d3d41a27a..918ab12178d807371a729d1b2f0f9adf39854501 100644
 --- a/app.py
 +++ b/app.py
+@@ -14,51 +14,51 @@ import logging
+ # ==========================================
+ # Format: [thời gian] [level] [user@chi_nhanh] action: chi tiết
+ logging.basicConfig(
+     level=logging.INFO,
+     format="%(asctime)s [%(levelname)s] %(message)s",
+     datefmt="%Y-%m-%d %H:%M:%S",
+ )
+ _logger = logging.getLogger("watchstore")
+ 
+ 
+ def log_action(action: str, detail: str = "", level: str = "info"):
+     """
+     Ghi log hành động của user.
+     Prefix tự động [username@chi_nhanh] để biết ai làm gì.
+     """
+     user = st.session_state.get("user") or {}
+     cn   = st.session_state.get("active_chi_nhanh", "-")
+     username = user.get("username", "anonymous")
+     prefix = f"[{username}@{cn}]"
+     msg = f"{prefix} {action}"
+     if detail:
+         msg += f" — {detail}"
+     getattr(_logger, level, _logger.info)(msg)
+ 
+ # ==========================================
+-# PHIEN BAN: 15.0 — Fix UI + Tao phieu chuyen
++# PHIEN BAN: 15.1 — Hotfix deploy (clean app.py header)
+ # ==========================================
+ 
+ st.set_page_config(page_title="Watch Store", layout="wide")
+ 
+ st.markdown("""
+ <style>
+ /* ══════════════════════════════════════════
+    PHIEN BAN: 15.0 — Force light theme
+    ══════════════════════════════════════════ */
+ 
+ /* ── FORCE LIGHT MODE (fix Edge dark stuck) ── */
+ :root {
+     color-scheme: light only !important;
+     --bg-main: #f5f6f8;
+     --bg-card: #ffffff;
+     --text-main: #1a1a2e;
+     --text-muted: #888;
+     --border: #e8e8e8;
+     --accent: #e63946;
+ }
+ html, body, .stApp, [data-testid="stAppViewContainer"] {
+     background: #f5f6f8 !important;
+     color: #1a1a2e !important;
+     color-scheme: light only !important;
+ }
 @@ -877,50 +877,391 @@ def load_phieu_chuyen_kho(branches_key: tuple = None):
      if not all_rows:
          return pd.DataFrame()

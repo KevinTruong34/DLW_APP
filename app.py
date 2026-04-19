@@ -1171,7 +1171,7 @@ def module_kiem_ke():
                     else:
                         st.error(msg)
 
-with tab_scan:
+    with tab_scan:
         try:
             df = load_phieu_kiem_ke(tuple(accessible))
             if df.empty:
@@ -1285,6 +1285,45 @@ with tab_scan:
                                     else: st.error(msg)
         except Exception as e:
             st.error(f"Lỗi màn hình quét kiểm kê: {e}")
+
+    with tab_approve:
+        if not is_admin():
+            st.info("Chỉ admin có quyền duyệt phiếu kiểm kê.")
+        else:
+            try:
+                df = load_phieu_kiem_ke(tuple(accessible))
+                pending = df[df["trang_thai"] == "Chờ duyệt admin"].copy() if (not df.empty and "trang_thai" in df.columns) else pd.DataFrame()
+                if pending.empty:
+                    st.info("Không có phiếu chờ duyệt.")
+                else:
+                    opts = [f"{r['ma_phieu_kk']} · {r.get('chi_nhanh','')} · {r.get('nhom_cha','')}" for _, r in pending.iterrows()]
+                    picked = st.selectbox("Phiếu chờ duyệt:", opts, key="kk_pending_pick")
+                    ma_phieu = picked.split(" · ")[0]
+                    lines = _kk_get_lines(ma_phieu)
+                    if not lines.empty:
+                        lines["Lệch Dự Kiến"] = lines["sl_thuc_te"] - lines["ton_snapshot"]
+                        view = lines.rename(columns={
+                            "ma_hang": "Mã Hàng", "ten_hang": "Tên Hàng", 
+                            "ton_snapshot": "Tồn Kho", "sl_thuc_te": "SL Thực Tế"
+                        })
+                        cols = ["Mã Hàng", "Tên Hàng", "Tồn Kho", "SL Thực Tế", "Lệch Dự Kiến"]
+                        cols = [c for c in cols if c in view.columns]
+                        st.dataframe(view[cols], use_container_width=True, hide_index=True, height=320)
+                        st.warning("Lưu ý: Rà soát kỹ trước khi duyệt.")
+                        
+                        c_left, c_right = st.columns(2)
+                        with c_left:
+                            if st.button("Duyệt & chốt phiếu", type="primary", use_container_width=True):
+                                ok, msg = _kk_approve(ma_phieu)
+                                if ok: st.success(msg); st.rerun()
+                                else: st.error(msg)
+                        with c_right:
+                            if st.button("🗑️ Hủy / Xóa phiếu", type="secondary", use_container_width=True):
+                                ok, msg = _kk_cancel_phieu(ma_phieu)
+                                if ok: st.success(msg); st.rerun()
+                                else: st.error(msg)
+            except Exception as e:
+                st.error(f"Lỗi màn hình duyệt phiếu: {e}")
 def module_tong_quan():
     """
     Tổng quan — welcome + tóm tắt nhanh.

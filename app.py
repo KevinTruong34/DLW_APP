@@ -683,11 +683,11 @@ def load_stock_deltas() -> dict:
 
     deltas = {}
     for r in rows:
-        tt  = str(r.get("trang_thai", "") or "")
-        mh  = str(r.get("ma_hang", "") or "")
+        tt  = str(r.get("trang_thai", "") or "").strip()
+        mh  = str(r.get("ma_hang", "") or "").strip()
         sl  = int(r.get("so_luong_chuyen", 0) or 0)
-        tu  = str(r.get("tu_chi_nhanh", "") or "")
-        toi = str(r.get("toi_chi_nhanh", "") or "")
+        tu  = str(r.get("tu_chi_nhanh", "") or "").strip()
+        toi = str(r.get("toi_chi_nhanh", "") or "").strip()
 
         if not mh or sl <= 0:
             continue
@@ -784,11 +784,59 @@ def load_the_kho(branches_key: tuple):
     try:
         deltas = load_stock_deltas()
         if deltas and "Mã hàng" in df.columns and "Chi nhánh" in df.columns:
+            # Strip whitespace trên keys để match chính xác
+            df["_ma_key"] = df["Mã hàng"].astype(str).str.strip()
+            df["_cn_key"] = df["Chi nhánh"].astype(str).str.strip()
+
             def _apply_delta(row):
-                return deltas.get((str(row["Mã hàng"]), row["Chi nhánh"]), 0)
+                return deltas.get((row["_ma_key"], row["_cn_key"]), 0)
             df["_delta"] = df.apply(_apply_delta, axis=1)
             df["Tồn cuối kì"] = (df["Tồn cuối kì"] + df["_delta"]).astype(int)
-            df = df.drop(columns=["_delta"])
+
+            # Tìm các (mã, CN) có delta nhưng KHÔNG có dòng trong the_kho
+            # → phải thêm dòng mới để tồn kho tăng lên
+            existing_keys = set(zip(df["_ma_key"], df["_cn_key"]))
+            # Chỉ xét các CN đang load (branches_key)
+            load_cns_set = set(branches_key)
+
+            # Lookup tên hàng từ master để fill khi tạo row mới
+            try:
+                master = load_hang_hoa()
+                name_map = (dict(zip(master["Mã hàng"].astype(str),
+                                     master["Tên hàng"].astype(str)))
+                           if not master.empty else {})
+            except Exception:
+                name_map = {}
+
+            new_rows = []
+            for (mh, cn), dlt in deltas.items():
+                if cn not in load_cns_set:
+                    continue  # CN không load → bỏ qua
+                if (mh, cn) in existing_keys:
+                    continue  # đã có, đã áp delta ở trên
+                if dlt == 0:
+                    continue
+                # Tạo dòng mới cho (mã, CN) chưa tồn tại
+                new_rows.append({
+                    "Mã hàng":       mh,
+                    "Chi nhánh":     cn,
+                    "Tên hàng":      name_map.get(mh, ""),
+                    "Tồn đầu kì":    0,
+                    "Tồn cuối kì":   int(dlt),   # delta thành tồn luôn
+                    "Nhập NCC":      0,
+                    "Xuất bán":      0,
+                    "Giá trị đầu kì":  0,
+                    "Giá trị nhập NCC": 0,
+                    "Giá trị xuất bán": 0,
+                    "Giá trị cuối kì": 0,
+                    "_ma_key":       mh,
+                    "_cn_key":       cn,
+                    "_delta":        int(dlt),
+                })
+            if new_rows:
+                df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
+
+            df = df.drop(columns=["_delta", "_ma_key", "_cn_key"])
     except Exception:
         pass
 
@@ -1820,17 +1868,29 @@ def _render_phieu_card(df_phieu: pd.DataFrame, ma_phieu: str, gia_ban_map: dict)
             # Form nhập người nhận (chỉ hiện khi đã bấm "Nhận hàng")
             if st.session_state.get(f"pending_nhan_{ma_phieu}"):
                 st.markdown("---")
+                # Auto-fill tên user hiện tại
                 default_nn = (get_user() or {}).get("ho_ten", "")
                 nn_key = f"nn_input_{ma_phieu}"
                 if nn_key not in st.session_state:
                     st.session_state[nn_key] = default_nn
                 st.text_input("Người nhận:", key=nn_key,
                              placeholder="Tên người nhận hàng")
+
+                # Checkbox xác nhận — chống bấm nhầm
+                chk_key = f"chk_nhan_{ma_phieu}"
+                confirmed = st.checkbox(
+                    "Tôi xác nhận đã kiểm tra và nhận đủ hàng",
+                    key=chk_key
+                )
+
                 c_ok, c_cancel = st.columns([2, 1])
                 with c_ok:
                     if st.button("✓ Xác nhận nhận hàng",
                                 key=f"confirm_nhan_{ma_phieu}",
-                                type="primary", use_container_width=True):
+                                type="primary", use_container_width=True,
+                                disabled=not confirmed,
+                                help=("Tick ô xác nhận ở trên trước"
+                                      if not confirmed else None)):
                         nn = st.session_state.get(nn_key, "").strip()
                         if not nn:
                             st.error("Vui lòng nhập người nhận.")
@@ -1842,6 +1902,7 @@ def _render_phieu_card(df_phieu: pd.DataFrame, ma_phieu: str, gia_ban_map: dict)
                                           f"ma={ma_phieu} tu={tu_cn} toi={toi_cn} nguoi_nhan={nn}")
                                 st.session_state.pop(f"pending_nhan_{ma_phieu}", None)
                                 st.session_state.pop(nn_key, None)
+                                st.session_state.pop(chk_key, None)
                                 st.success(f"✓ Đã nhận hàng cho phiếu {ma_phieu}")
                                 st.rerun()
                             except Exception as e:
@@ -1851,6 +1912,7 @@ def _render_phieu_card(df_phieu: pd.DataFrame, ma_phieu: str, gia_ban_map: dict)
                                 use_container_width=True):
                         st.session_state.pop(f"pending_nhan_{ma_phieu}", None)
                         st.session_state.pop(nn_key, None)
+                        st.session_state.pop(chk_key, None)
                         st.rerun()
         else:
             # Không có action nào khả dụng → hint
@@ -2047,10 +2109,10 @@ def _tao_phieu_chuyen():
         total_gb = 0
         has_overflow = False  # Track có item nào vượt tồn không
 
-        # Container có scroll khi giỏ > 6 items (mỗi item ~60px cao, 6 items ~350px)
+        # Container có scroll khi giỏ > 3 items (mỗi item ~60px cao)
         n_items = len(st.session_state["ck_items"])
-        if n_items > 6:
-            cart_container = st.container(height=350)
+        if n_items > 3:
+            cart_container = st.container(height=240)
         else:
             cart_container = st.container()
 

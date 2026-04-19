@@ -1171,7 +1171,7 @@ def module_kiem_ke():
                     else:
                         st.error(msg)
 
-    with tab_scan:
+with tab_scan:
         try:
             df = load_phieu_kiem_ke(tuple(accessible))
             if df.empty:
@@ -1204,12 +1204,11 @@ def module_kiem_ke():
                         else:
                             st.warning(msg)
 
-                   lines = _kk_get_lines(ma_phieu)
+                    lines = _kk_get_lines(ma_phieu)
                     if not lines.empty:
                         view = lines.copy()
                         view["Lệch Tạm"] = view["sl_thuc_te"] - view["ton_snapshot"]
                         
-                        # Giữ lại cột 'id' để map với database nhưng sẽ ẩn đi trên UI
                         rename_map = {
                             "id": "ID", "ma_hang": "Mã Hàng", "ma_vach": "Mã Vạch", "ten_hang": "Tên Hàng",
                             "ton_snapshot": "Tồn Kho", "sl_quet": "SL Quét", "sl_thuc_te": "SL Thực Tế"
@@ -1218,7 +1217,6 @@ def module_kiem_ke():
                         cols = ["ID", "Mã Hàng", "Mã Vạch", "Tên Hàng", "Tồn Kho", "SL Quét", "SL Thực Tế", "Lệch Tạm"]
                         cols = [c for c in cols if c in view.columns]
                         
-                        # Khởi tạo Data Editor
                         editor_key = f"kk_editor_{ma_phieu}"
                         st.caption("💡 *Mẹo: Nháy đúp vào ô thuộc cột **SL Thực Tế ✏️** để sửa trực tiếp.*")
                         edited_df = st.data_editor(
@@ -1228,7 +1226,7 @@ def module_kiem_ke():
                             key=editor_key,
                             height=360,
                             column_config={
-                                "ID": None, # Ẩn cột ID
+                                "ID": None,
                                 "Mã Hàng": st.column_config.TextColumn(disabled=True),
                                 "Mã Vạch": st.column_config.TextColumn(disabled=True),
                                 "Tên Hàng": st.column_config.TextColumn(disabled=True),
@@ -1244,7 +1242,6 @@ def module_kiem_ke():
                             }
                         )
 
-                        # Bắt sự kiện có thay đổi chưa lưu
                         changes = st.session_state.get(editor_key, {}).get("edited_rows", {})
                         if changes:
                             st.warning("⚠️ Bảng có thay đổi chưa lưu. Hãy bấm 'Lưu các dòng đã sửa' trước khi làm việc khác!")
@@ -1272,7 +1269,6 @@ def module_kiem_ke():
                             st.metric("Tổng lệch tuyệt đối", f"{lech}")
 
                         st.markdown("---")
-                        # Ẩn nút Hoàn Thành nếu đang có thay đổi chưa lưu để tránh lỗi mất data
                         if not changes:
                             c_left, c_right = st.columns(2)
                             with c_left:
@@ -1287,6 +1283,9 @@ def module_kiem_ke():
                                         st.session_state.pop("kk_active_ma", None)
                                         st.success(msg); st.rerun()
                                     else: st.error(msg)
+        except Exception as e:
+            st.error(f"Lỗi màn hình quét kiểm kê: {e}")
+            
 def module_tong_quan():
     """
     Tổng quan — welcome + tóm tắt nhanh.

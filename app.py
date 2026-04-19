@@ -1,5 +1,4 @@
- (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
-diff --git a/app.py b/app.py
+import streamlit as stdiff --git a/app.py b/app.py
 index d9528834cff8a9049d94e9232deb4b9d3d41a27a..918ab12178d807371a729d1b2f0f9adf39854501 100644
 --- a/app.py
 +++ b/app.py

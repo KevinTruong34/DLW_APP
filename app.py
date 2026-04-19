@@ -1285,7 +1285,6 @@ with tab_scan:
                                     else: st.error(msg)
         except Exception as e:
             st.error(f"Lỗi màn hình quét kiểm kê: {e}")
-            
 def module_tong_quan():
     """
     Tổng quan — welcome + tóm tắt nhanh.

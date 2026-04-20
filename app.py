@@ -3200,32 +3200,30 @@ def module_quan_tri():
                         st.info(f"{df['Mã hóa đơn'].nunique()} hóa đơn · {', '.join(df['Chi nhánh'].unique())}")
                         with st.expander("Xem trước"):
                             st.dataframe(df.head(), use_container_width=True, hide_index=True)
-                        if st.button("Upload hóa đơn", key="btn_up_hd", type="primary"):
+                        if st.button("Upload Hóa đơn", key="btn_up_hd", type="primary"):
                             with st.spinner("Đang xử lý..."):
-                                for col in df.columns:
-                                    if df[col].dtype=="object":
-                                        df[col] = df[col].astype(str).str.replace("\n"," ",regex=False).str.strip()
-                                        df.loc[df[col]=="nan",col] = None
-                                for col in ["Tổng tiền hàng","Khách cần trả","Khách đã trả","Đơn giá","Thành tiền"]:
-                                    if col in df.columns:
-                                        df[col] = pd.to_numeric(df[col],errors="coerce").fillna(0).astype(int)
-                                records = df.where(pd.notnull(df),None).to_dict(orient="records")
-                                for r in records:
-                                    for k,v in r.items():
-                                        if isinstance(v,np.integer): r[k]=int(v)
-                                        elif isinstance(v,np.floating): r[k]=float(v)
-                                total,ok = len(records),0
-                                prog = st.progress(0,text="Đang upload...")
-                                for i in range(0,total,500):
+                                
+                                # === CHÈN 2 DÒNG LÀM SẠCH NaN TẠI ĐÂY ===
+                                import numpy as np
+                                df = df.astype(object).where(pd.notna(df), None)
+                                # ========================================
+
+                                records = df.to_dict(orient="records")
+                                total = len(records)
+                                prog = st.progress(0, text="Đang đẩy lên database...")
+                                ok = 0
+                                for i in range(0, total, 500):
                                     try:
                                         supabase.table("hoa_don").insert(records[i:i+500]).execute()
-                                        ok+=len(records[i:i+500])
-                                        prog.progress(min(ok/total,1.0),text=f"{ok}/{total}...")
-                                    except Exception as e: st.error(f"Batch {i}: {e}")
+                                        ok += len(records[i:i+500])
+                                        prog.progress(min(ok/total, 1.0), text=f"{ok}/{total}...")
+                                    except Exception as e: 
+                                        st.error(f"Batch {i}: {e}")
                                 prog.empty()
-                                if ok==total:
+                                if ok == total:
                                     log_action("UPLOAD_HOA_DON", f"rows={ok}")
-                                    st.success(f"Upload {ok} dòng thành công!"); st.cache_data.clear()
+                                    st.success(f"Upload {ok} dòng thành công!")
+                                    st.cache_data.clear()
                 except Exception as e: st.error(f"Lỗi: {e}")
 
         with s4:

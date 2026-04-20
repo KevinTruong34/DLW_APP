@@ -940,7 +940,26 @@ def _kk_get_lines(ma_phieu: str) -> pd.DataFrame:
     for col in ["ton_snapshot", "sl_quet", "sl_thuc_te", "ton_ky_vong_luc_duyet", "chenh_lech"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
-    return df
+    # Sắp xếp: hàng vừa quét (sl_quet > 0) lên đầu, sau đó theo updated_at mới nhất
+    if "updated_at" in df.columns:
+        df["updated_at"] = pd.to_datetime(df["updated_at"], errors="coerce")
+        df = df.sort_values(["sl_quet", "updated_at"], ascending=[False, False])
+    else:
+        df = df.sort_values("sl_quet", ascending=False)
+    return df.reset_index(drop=True)
+
+
+def _kk_complete(ma_phieu: str) -> tuple[bool, str]:
+    """Nhân viên hoàn thành quét → chuyển phiếu sang Chờ duyệt admin."""
+    try:
+        supabase.table("phieu_kiem_ke").update({
+            "trang_thai": "Chờ duyệt admin",
+        }).eq("ma_phieu_kk", ma_phieu).execute()
+        st.cache_data.clear()
+        log_action("KIEMKE_COMPLETE", f"ma={ma_phieu}")
+        return True, f"Phiếu {ma_phieu} đã chuyển sang Chờ duyệt admin."
+    except Exception as e:
+        return False, f"Lỗi hoàn thành phiếu: {e}"
 
 
 def _kk_gen_ma_phieu() -> str:
@@ -969,9 +988,16 @@ def _kk_build_scope_rows(chi_nhanh: str, nhom_hang_chon: str) -> tuple[list, str
     df = master.merge(kho_map, left_on="ma_hang", right_on="Mã hàng", how="left")
     df["ton"] = pd.to_numeric(df["ton"], errors="coerce").fillna(0).astype(int)
 
-    # Lọc theo nhóm hàng (dùng startswith để bắt được cả nhóm con)
+    # Hỗ trợ đa nhóm: nhom_hang_chon có thể là "A|B|C"
     nhom_col = df["nhom_hang"].fillna("") if "nhom_hang" in df.columns else pd.Series([""] * len(df))
-    df = df[(nhom_col.str.startswith(nhom_hang_chon)) & (df["ton"] > 0)].copy()
+    nhom_list = [x.strip() for x in nhom_hang_chon.split("|") if x.strip()]
+    mask = pd.Series([False] * len(df), index=df.index)
+    for nhom in nhom_list:
+        if ">>" in nhom:
+            mask = mask | (nhom_col == nhom)
+        else:
+            mask = mask | (nhom_col == nhom) | nhom_col.str.startswith(nhom + " >>")
+    df = df[mask & (df["ton"] > 0)].copy()
     
     if df.empty:
         return [], f"Nhóm **{nhom_hang_chon}** không có hàng tồn > 0 tại chi nhánh này."
@@ -1182,24 +1208,29 @@ def module_kiem_ke():
             if not nhom_cha_list:
                 st.warning("Không tìm thấy dữ liệu nhóm hàng.")
             else:
-                c1, c2 = st.columns(2)
-                with c1:
-                    nhom_cha = st.selectbox("1. Chọn Nhóm Cha:", nhom_cha_list)
-                
-                with c2:
-                    # Lọc tự động Nhóm Con theo Nhóm Cha đã chọn
-                    con_list = sorted([str(x) for x in master[master["_cha"] == nhom_cha]["_con"].unique() if str(x)])
-                    nhom_con_opts = ["-- Tất cả nhóm con --"] + con_list
-                    nhom_con = st.selectbox("2. Chọn Nhóm Con:", nhom_con_opts)
+                # Build danh sách phẳng: gồm cả nhóm cha và nhóm con "Cha >> Con"
+                nhom_flat = []
+                for cha in nhom_cha_list:
+                    nhom_flat.append(cha)
+                    con_list = sorted([str(x) for x in master[master["_cha"] == cha]["_con"].unique() if str(x)])
+                    for con in con_list:
+                        nhom_flat.append(f"{cha} >> {con}")
 
-                # Nối chuỗi để đẩy vào query
-                if nhom_con != "-- Tất cả nhóm con --":
-                    nhom_chon = f"{nhom_cha} >> {nhom_con}"
+                nhom_chon_list = st.multiselect(
+                    "Chọn nhóm hàng kiểm kê (có thể chọn nhiều):",
+                    options=nhom_flat,
+                    placeholder="Chọn ít nhất 1 nhóm..."
+                )
+
+                if nhom_chon_list:
+                    st.caption(f"Đã chọn: {', '.join(nhom_chon_list)}")
+                    # Lưu dưới dạng chuỗi phân cách "|" để truyền vào hàm tạo phiếu
+                    nhom_chon = "|".join(nhom_chon_list)
                 else:
-                    nhom_chon = nhom_cha
+                    nhom_chon = ""
 
-                ghi_chu = st.text_area("Ghi chú phiếu:", key="kk_ghi_chu_create", placeholder=f"Sẽ kiểm kê: {nhom_chon}")
-                if st.button("Tạo phiếu kiểm kê", type="primary", use_container_width=True):
+                ghi_chu = st.text_area("Ghi chú phiếu:", key="kk_ghi_chu_create", placeholder="Ghi chú đợt kiểm kê...")
+                if st.button("Tạo phiếu kiểm kê", type="primary", use_container_width=True, disabled=not nhom_chon):
                     ok, msg = _kk_create_phieu(cn_create, nhom_chon, ghi_chu)
                     if ok:
                         st.session_state["kk_active_ma"] = msg
@@ -1299,13 +1330,14 @@ def module_kiem_ke():
 
                         st.markdown("---")
                         c1, c2, c3 = st.columns(3)
-                        with c1: st.metric("Số SKU", f"{len(view)}")
+                        with c1: st.metric("Tổng tồn", f"{int(view['Tồn Kho'].sum())}")
                         with c2: st.metric("Tổng quét", f"{int(view['SL Quét'].sum())}")
-                        with c3: 
-                            lech = int(view["Lệch Tạm"].abs().sum())
-                            st.metric("Tổng lệch tuyệt đối", f"{lech}")
+                        with c3:
+                            lech = int(view["Lệch Tạm"].sum())
+                            st.metric("Tổng chênh lệch", f"{lech:+d}")
 
                         st.markdown("---")
+                        # Nút Hủy luôn hiển thị (không phụ thuộc vào changes)
                         if not changes:
                             c_left, c_right = st.columns(2)
                             with c_left:
@@ -1320,6 +1352,14 @@ def module_kiem_ke():
                                         st.session_state.pop("kk_active_ma", None)
                                         st.success(msg); st.rerun()
                                     else: st.error(msg)
+                        else:
+                            # Khi có thay đổi chưa lưu: chỉ hiện nút Hủy, ẩn Hoàn thành
+                            if st.button("🗑️ Hủy phiếu này", type="secondary", use_container_width=True, key="kk_cancel_pending"):
+                                ok, msg = _kk_cancel_phieu(ma_phieu)
+                                if ok:
+                                    st.session_state.pop("kk_active_ma", None)
+                                    st.success(msg); st.rerun()
+                                else: st.error(msg)
         except Exception as e:
             st.error(f"Lỗi màn hình quét kiểm kê: {e}")
 

@@ -1273,6 +1273,7 @@ def module_kiem_ke():
                             st.warning(msg)
 
                     lines = _kk_get_lines(ma_phieu)
+                    st.caption(f"DEBUG: {len(lines)} dòng — cột: {list(lines.columns) if not lines.empty else 'rỗng'}")
                     if not lines.empty:
                         view = lines.copy()
                         view["Lệch Tạm"] = view["sl_thuc_te"] - view["ton_snapshot"]

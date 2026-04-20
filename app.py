@@ -3203,27 +3203,54 @@ def module_quan_tri():
                         if st.button("Upload Hóa đơn", key="btn_up_hd", type="primary"):
                             with st.spinner("Đang xử lý..."):
                                 
-                                # === CHÈN 2 DÒNG LÀM SẠCH NaN TẠI ĐÂY ===
                                 import numpy as np
-                                df = df.astype(object).where(pd.notna(df), None)
-                                # ========================================
+                                import pandas as pd
 
-                                records = df.to_dict(orient="records")
-                                total = len(records)
-                                prog = st.progress(0, text="Đang đẩy lên database...")
-                                ok = 0
-                                for i in range(0, total, 500):
-                                    try:
-                                        supabase.table("hoa_don").insert(records[i:i+500]).execute()
-                                        ok += len(records[i:i+500])
-                                        prog.progress(min(ok/total, 1.0), text=f"{ok}/{total}...")
-                                    except Exception as e: 
-                                        st.error(f"Batch {i}: {e}")
-                                prog.empty()
-                                if ok == total:
-                                    log_action("UPLOAD_HOA_DON", f"rows={ok}")
-                                    st.success(f"Upload {ok} dòng thành công!")
-                                    st.cache_data.clear()
+                                # 1. FIX LỖI TIMESTAMP: Ép tất cả cột ngày tháng thành chuỗi (String)
+                                for col in df.columns:
+                                    if pd.api.types.is_datetime64_any_dtype(df[col]):
+                                        df[col] = df[col].dt.strftime('%Y-%m-%d %H:%M:%S')
+                                
+                                # 2. FIX LỖI NaN: Chuyển các ô trống thành None (NULL)
+                                df = df.astype(object).where(pd.notna(df), None)
+
+                                # 3. LOGIC CHỐNG TRÙNG LẶP: Quét mã Hóa đơn đã có trên Supabase
+                                ma_hd_list = df['Mã hóa đơn'].dropna().unique().tolist()
+                                existing_mads = set()
+                                
+                                # Cắt nhỏ từng cụm 200 mã để hỏi Supabase (tránh lỗi URL quá dài)
+                                for i in range(0, len(ma_hd_list), 200):
+                                    batch_mads = ma_hd_list[i:i+200]
+                                    res = supabase.table("hoa_don").select("Mã hóa đơn").in_("Mã hóa đơn", batch_mads).execute()
+                                    if res.data:
+                                        for r in res.data:
+                                            existing_mads.add(r["Mã hóa đơn"])
+                                            
+                                # Lọc bỏ các dòng thuộc hóa đơn đã tồn tại
+                                if existing_mads:
+                                    df = df[~df['Mã hóa đơn'].isin(existing_mads)]
+                                    st.info(f"Đã bỏ qua {len(existing_mads)} mã hóa đơn bị trùng.")
+                                
+                                # 4. UPLOAD DỮ LIỆU MỚI
+                                if df.empty:
+                                    st.warning("Tất cả hóa đơn trong file đều đã tồn tại trên hệ thống!")
+                                else:
+                                    records = df.to_dict(orient="records")
+                                    total = len(records)
+                                    prog = st.progress(0, text=f"Đang đẩy lên {total} dòng dữ liệu mới...")
+                                    ok = 0
+                                    for i in range(0, total, 500):
+                                        try:
+                                            supabase.table("hoa_don").insert(records[i:i+500]).execute()
+                                            ok += len(records[i:i+500])
+                                            prog.progress(min(ok/total, 1.0), text=f"{ok}/{total}...")
+                                        except Exception as e: 
+                                            st.error(f"Batch {i}: {e}")
+                                    prog.empty()
+                                    if ok == total:
+                                        log_action("UPLOAD_HOA_DON", f"rows={ok}")
+                                        st.success(f"Upload {ok} dòng mới thành công!")
+                                        st.cache_data.clear()
                 except Exception as e: st.error(f"Lỗi: {e}")
 
         with s4:

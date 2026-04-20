@@ -18,6 +18,7 @@
 app.py              # Single-file ~3000 dòng, chứa toàn bộ logic
 requirements.txt    # Dependencies (đã làm sạch các lib cookie đã thất bại)
 CLAUDE.md           # Behavioral guidelines: think-before-code, simplicity, surgical changes
+
 ## 3. Trạng thái Hiện tại
 
 **Bảng Supabase đang dùng:**
@@ -29,6 +30,8 @@ CLAUDE.md           # Behavioral guidelines: think-before-code, simplicity, surg
 - `the_kho` — snapshot tồn (upload định kỳ từ KiotViet)
 - `hoa_don` — hóa đơn bán (upload từ KiotViet, có 4 cột phương thức TT)
 - `phieu_chuyen_kho` — vừa chứa phiếu KiotViet (prefix `TRF...`) vừa phiếu App (prefix `CH000001`...). Có column `nguoi_nhan` (mới thêm). UNIQUE INDEX trên `(ma_phieu, ma_hang)`.
+- `phieu_kiem_ke` — (MỚI) chứa thông tin header đợt kiểm kê.
+- `phieu_kiem_ke_chi_tiet` — (MỚI) chứa chi tiết từng mã hàng, số lượng quét và chênh lệch.
 
 **Module đã chạy mượt:**
 - Đăng nhập + chọn CN (URL-based session)
@@ -45,7 +48,7 @@ CLAUDE.md           # Behavioral guidelines: think-before-code, simplicity, surg
 - Nút "Kết sổ" trong Quản trị chuyển `loai_phieu` → `"Chuyển hàng (App - đã đồng bộ)"` → ngừng tính delta (sau khi upload the_kho mới từ KiotViet).
 - Logic `_apply_delta` biết tự tạo dòng mới trong DataFrame khi (mã, CN đích) chưa có trong the_kho.
 
-**Logging:** `log_action(action, detail, level)` ghi stdout với prefix `[user@CN]`. Actions: LOGIN_OK/FAIL, LOGOUT, PHIEU_CREATE/UPDATE/CONFIRM/RECEIVE/CANCEL/ARCHIVE/RESTORE, STOCK_VALIDATION_FAIL, UPLOAD_*, DATA_DELETE.
+**Logging:** `log_action(action, detail, level)` ghi stdout với prefix `[user@CN]`. Actions: LOGIN_OK/FAIL, LOGOUT, PHIEU_CREATE/UPDATE/CONFIRM/RECEIVE/CANCEL/ARCHIVE/RESTORE, STOCK_VALIDATION_FAIL, UPLOAD_*, DATA_DELETE, KIEMKE_CREATE/APPROVE/CANCEL.
 
 ## 4. Quy ước Code
 
@@ -65,9 +68,18 @@ CLAUDE.md           # Behavioral guidelines: think-before-code, simplicity, surg
 
 **Vietnamese UX:** toàn bộ UI + error messages tiếng Việt. User không technical.
 
-## 5. Vấn đề Đang kẹt
+## 5. Vấn đề Đang kẹt & Tech Debt
 
-**KHÔNG có blocker hiện tại.** Phiên làm việc kết thúc với **mọi tính năng chạy mượt** sau khi fix critical bug về delta tồn kho (CN đích không nhận hàng khi mã hàng chưa từng có ở đó).
+**VẤN ĐỀ HIỆN TẠI (Module Kiểm kê MVP vừa cài đặt nhưng chưa hoàn thiện):**
+Cần khắc phục các vấn đề UX/UI sau trước khi đưa vào test thực tế:
+1. **Tab Danh sách phiếu:** Các cột tiêu đề và định dạng ngày giờ chi tiết đang ở format hệ thống, rất khó đọc.
+2. **Tab Tạo phiếu:** - Thiếu hiển thị preview "mã phiếu" chuẩn bị tạo để user dễ xác định.
+   - Chức năng tìm nhóm hàng còn hạn chế: Cần hỗ trợ chọn sâu xuống "Nhóm con" (VD: Đồng hồ đeo tay >> Casio, Citizen...) giống như chức năng lọc ở module Hàng hóa.
+3. **Tab Quét kiểm kê:**
+   - Cần bổ sung nút "Hủy phiếu" cho toàn bộ role để xử lý rác dữ liệu do tạo nhầm phiếu nhiều lần.
+   - Các cột tiêu đề của bảng chi tiết đang khó đọc.
+   - **Critical UX:** Cần một giải pháp "gọn" để có thể chỉnh sửa thủ công cột "SL quét" trong bảng, phòng trường hợp nhân viên quét lố tay và không thể quay lại.
+4. **Tab Duyệt Admin:** Đang thiếu nút "Hủy phiếu" dành riêng cho quyền Admin xử lý.
 
 **Technical debt cần dọn sau (không gấp):**
 - `DEBT-01`: 4 phiếu format cũ chưa migrate (CH260417...), regex SQL không đủ rộng. Low priority — test data, sẽ xóa khi go-live.
@@ -75,12 +87,7 @@ CLAUDE.md           # Behavioral guidelines: think-before-code, simplicity, surg
 - `DEBT-03`: `hien_thi_dashboard()` orphan sau khi xóa tab Doanh số. Giữ để tái dùng khi làm module Báo cáo.
 
 **Roadmap dài hạn đã thống nhất (thay thế KiotViet từng bước):**
-1. **Module Kiểm kê** (ưu tiên cao) — quét mã vạch 2D USB (keyboard emulator), pattern `on_change` + auto-focus JS
+1. **Module Kiểm kê** (Ưu tiên cao - Đang kẹt ở khâu tinh chỉnh UX/UI như trên)
 2. **Module Nhập hàng + NCC**
 3. **Module Bán hàng (POS)** — TÁCH RA APP STREAMLIT RIÊNG để cache/tốc độ không đụng nhau, nhưng dùng chung Supabase DB
 4. **Sổ quỹ, Cân bằng kho, Báo cáo**
-
-**User preferences quan trọng:**
-- Giao tiếp trực tiếp, pushback khi cần
-- Mobile-first (Edge trên điện thoại)
-- Ghét over-engineer; khi sửa lỗi đẻ ra vấn đề mới → dừng lại, note lại để giải quyết sau

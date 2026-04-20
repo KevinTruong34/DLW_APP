@@ -1224,7 +1224,8 @@ def module_kiem_ke():
                 nhom_chon_list = st.multiselect(
                     "Chọn nhóm hàng kiểm kê (có thể chọn nhiều):",
                     options=nhom_flat,
-                    placeholder="Chọn ít nhất 1 nhóm..."
+                    placeholder="Chọn ít nhất 1 nhóm...",
+                    key=f"kk_nhom_select_{st.session_state.get('kk_create_count', 0)}"
                 )
 
                 if nhom_chon_list:
@@ -1234,11 +1235,13 @@ def module_kiem_ke():
                 else:
                     nhom_chon = ""
 
-                ghi_chu = st.text_area("Ghi chú phiếu:", key="kk_ghi_chu_create", placeholder="Ghi chú đợt kiểm kê...")
+                ghi_chu = st.text_area("Ghi chú phiếu:", key=f"kk_ghi_chu_{st.session_state.get('kk_create_count', 0)}", placeholder="Ghi chú đợt kiểm kê...")
                 if st.button("Tạo phiếu kiểm kê", type="primary", use_container_width=True, disabled=not nhom_chon):
                     ok, msg = _kk_create_phieu(cn_create, nhom_chon, ghi_chu)
                     if ok:
                         st.session_state["kk_active_ma"] = msg
+                        # Tăng counter để reset multiselect và text_area
+                        st.session_state["kk_create_count"] = st.session_state.get("kk_create_count", 0) + 1
                         st.success(f"Đã tạo phiếu {msg}.")
                         st.rerun()
                     else:

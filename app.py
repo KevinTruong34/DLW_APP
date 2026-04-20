@@ -36,7 +36,7 @@ def log_action(action: str, detail: str = "", level: str = "info"):
     getattr(_logger, level, _logger.info)(msg)
 
 # ==========================================
-# PHIEN BAN: 15.1 — Hotfix deploy (clean app.py header)
+# PHIEN BAN: 15.0 — Fix UI + Tao phieu chuyen
 # ==========================================
 
 st.set_page_config(page_title="Watch Store", layout="wide")
@@ -898,366 +898,6 @@ def get_gia_ban_map() -> dict:
         return {}
     return dict(zip(hh["ma_hang"].astype(str), hh["gia_ban"].fillna(0).astype(int)))
 
-# ==========================================
-# MODULE: KIỂM KÊ — MVP v1
-# Workflow: Nháp/Đang kiểm → Chờ duyệt admin → Đã duyệt
-# ==========================================
-
-@st.cache_data(ttl=120)
-def load_phieu_kiem_ke(branches_key: tuple = None) -> pd.DataFrame:
-    rows, batch, offset = [], 1000, 0
-    while True:
-        # Một số môi trường có thể chưa có created_at (schema cũ) → fallback không order
-        q = supabase.table("phieu_kiem_ke").select("*")
-        try:
-            q = q.order("created_at", desc=True)
-        except Exception:
-            pass
-        res = q.range(offset, offset + batch - 1).execute()
-        if not res.data:
-            break
-        rows.extend(res.data)
-        if len(res.data) < batch:
-            break
-        offset += batch
-
-    if not rows:
-        return pd.DataFrame()
-    df = pd.DataFrame(rows)
-    if branches_key and "chi_nhanh" in df.columns:
-        df = df[df["chi_nhanh"].isin(list(branches_key))].reset_index(drop=True)
-    if "created_at" in df.columns:
-        df["_created"] = pd.to_datetime(df["created_at"], errors="coerce")
-    return df
-
-
-def _kk_get_lines(ma_phieu: str) -> pd.DataFrame:
-    res = supabase.table("phieu_kiem_ke_chi_tiet").select("*") \
-        .eq("ma_phieu_kk", ma_phieu).execute()
-    if not res.data:
-        return pd.DataFrame()
-    df = pd.DataFrame(res.data)
-    for col in ["ton_snapshot", "sl_quet", "sl_thuc_te", "ton_ky_vong_luc_duyet", "chenh_lech"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
-    return df
-
-
-def _kk_gen_ma_phieu() -> str:
-    try:
-        res = supabase.table("phieu_kiem_ke").select("ma_phieu_kk") \
-            .like("ma_phieu_kk", "KK______").order("ma_phieu_kk", desc=True).limit(1).execute()
-        if res.data:
-            try:
-                num = int(str(res.data[0]["ma_phieu_kk"])[2:]) + 1
-            except Exception:
-                num = 1
-        else:
-            num = 1
-        return f"KK{num:06d}"
-    except Exception:
-        return f"KK{datetime.now().strftime('%y%m%d')}{uuid.uuid4().hex[:4].upper()}"
-
-
-def _kk_build_scope_rows(chi_nhanh: str, nhom_cha: str) -> tuple[list, str]:
-    master = load_hang_hoa()
-    kho = load_the_kho(branches_key=(chi_nhanh,))
-    if master.empty or kho.empty:
-        return [], "Chưa đủ dữ liệu master/thẻ kho để tạo phiếu kiểm kê."
-
-    # Chuẩn hóa cột bắt buộc từ master
-    required = {"ma_hang", "ten_hang", "nhom_hang"}
-    miss = [c for c in required if c not in master.columns]
-    if miss:
-        return [], f"Thiếu cột trong master hàng hóa: {', '.join(miss)}"
-
-    if "ma_vach" not in master.columns:
-        master["ma_vach"] = master["ma_hang"]
-
-    # Join tồn kho theo mã
-    kho_map = kho.groupby("Mã hàng", as_index=False).agg(ton=("Tồn cuối kì", "sum"))
-    df = master.merge(kho_map, left_on="ma_hang", right_on="Mã hàng", how="left")
-    df["ton"] = pd.to_numeric(df["ton"], errors="coerce").fillna(0).astype(int)
-
-    nhom_col = df["nhom_hang"].fillna("") if "nhom_hang" in df.columns else pd.Series([""] * len(df))
-    split = nhom_col.str.split(">>", n=1, expand=True)
-    df["_cha"] = split[0].fillna("").str.strip()
-    df = df[(df["_cha"] == nhom_cha) & (df["ton"] > 0)].copy()
-    if df.empty:
-        return [], f"Nhóm **{nhom_cha}** không có hàng tồn > 0 tại chi nhánh này."
-
-    # Chống lỗi duplicate key khi 1 mã hàng xuất hiện nhiều dòng trong master
-    df = df.sort_values("ton", ascending=False).drop_duplicates(subset=["ma_hang"], keep="first")
-
-    rows = []
-    for _, r in df.iterrows():
-        rows.append({
-            "ma_hang": str(r.get("ma_hang", "") or ""),
-            "ma_vach": str(r.get("ma_vach", "") or ""),
-            "ten_hang": str(r.get("ten_hang", "") or ""),
-            "nhom_hang": str(r.get("nhom_hang", "") or ""),
-            "ton_snapshot": int(r.get("ton", 0) or 0),
-            "sl_quet": 0,
-            "sl_thuc_te": 0,
-            "ton_ky_vong_luc_duyet": 0,
-            "chenh_lech": 0,
-            "trang_thai_dong": "Đang kiểm",
-        })
-    return rows, ""
-
-
-def _kk_create_phieu(chi_nhanh: str, nhom_cha: str, ghi_chu: str) -> tuple[bool, str]:
-    rows, err = _kk_build_scope_rows(chi_nhanh, nhom_cha)
-    if err:
-        return False, err
-
-    ma = _kk_gen_ma_phieu()
-    user = get_user() or {}
-    try:
-        supabase.table("phieu_kiem_ke").insert({
-            "ma_phieu_kk": ma,
-            "chi_nhanh": chi_nhanh,
-            "trang_thai": "Đang kiểm",
-            "nhom_cha": nhom_cha,
-            "ghi_chu": ghi_chu.strip(),
-            "created_by": user.get("ho_ten", ""),
-            "created_at": datetime.now().isoformat(),
-            "completed_at": None,
-            "approved_by": None,
-            "approved_at": None,
-        }).execute()
-
-        payload = []
-        for r in rows:
-            p = dict(r)
-            p["ma_phieu_kk"] = ma
-            payload.append(p)
-        for i in range(0, len(payload), 500):
-            supabase.table("phieu_kiem_ke_chi_tiet").insert(payload[i:i+500]).execute()
-        st.cache_data.clear()
-        log_action("KIEMKE_CREATE", f"ma={ma} cn={chi_nhanh} nhom={nhom_cha} rows={len(rows)}")
-        return True, ma
-    except Exception as e:
-        return False, f"Lỗi tạo phiếu kiểm kê: {e}"
-
-
-def _kk_scan_plus_one(ma_phieu: str, code: str) -> tuple[bool, str]:
-    code = str(code or "").strip()
-    if not code:
-        return False, "Mã quét rỗng."
-    code_n = _normalize(code)
-    try:
-        rows = supabase.table("phieu_kiem_ke_chi_tiet") \
-            .select("id,ma_hang,ma_vach,sl_quet,sl_thuc_te") \
-            .eq("ma_phieu_kk", ma_phieu).execute().data or []
-        hit = None
-        for r in rows:
-            mh = _normalize(str(r.get("ma_hang", "") or ""))
-            mv = _normalize(str(r.get("ma_vach", "") or ""))
-            if code_n and (code_n == mh or code_n == mv):
-                hit = r
-                break
-        if not hit:
-            return False, f"Không tìm thấy mã trong phạm vi phiếu: {code}"
-
-        sl_quet = int(hit.get("sl_quet", 0) or 0) + 1
-        sl_tt = int(hit.get("sl_thuc_te", 0) or 0) + 1
-        supabase.table("phieu_kiem_ke_chi_tiet").update({
-            "sl_quet": sl_quet,
-            "sl_thuc_te": sl_tt
-        }).eq("id", hit["id"]).execute()
-        return True, str(hit.get("ma_hang", "") or code)
-    except Exception as e:
-        return False, f"Lỗi scan: {e}"
-
-
-def _kk_complete(ma_phieu: str) -> tuple[bool, str]:
-    try:
-        supabase.table("phieu_kiem_ke").update({
-            "trang_thai": "Chờ duyệt admin",
-            "completed_at": datetime.now().isoformat(),
-        }).eq("ma_phieu_kk", ma_phieu).execute()
-        supabase.table("phieu_kiem_ke_chi_tiet").update({
-            "trang_thai_dong": "Chờ duyệt admin"
-        }).eq("ma_phieu_kk", ma_phieu).execute()
-        st.cache_data.clear()
-        log_action("KIEMKE_COMPLETE", f"ma={ma_phieu}")
-        return True, "Đã chuyển phiếu sang trạng thái Chờ duyệt admin."
-    except Exception as e:
-        return False, f"Lỗi hoàn thành phiếu: {e}"
-
-
-def _kk_approve(ma_phieu: str) -> tuple[bool, str]:
-    try:
-        lines = _kk_get_lines(ma_phieu)
-        if lines.empty:
-            return False, "Phiếu không có dòng hàng."
-        for _, r in lines.iterrows():
-            ton_ss = int(r.get("ton_snapshot", 0) or 0)
-            sl_tt = int(r.get("sl_thuc_te", 0) or 0)
-            ch = sl_tt - ton_ss
-            supabase.table("phieu_kiem_ke_chi_tiet").update({
-                "ton_ky_vong_luc_duyet": ton_ss,
-                "chenh_lech": ch,
-                "trang_thai_dong": "Đã duyệt",
-            }).eq("id", int(r["id"])).execute()
-
-        supabase.table("phieu_kiem_ke").update({
-            "trang_thai": "Đã duyệt",
-            "approved_by": (get_user() or {}).get("ho_ten", ""),
-            "approved_at": datetime.now().isoformat(),
-        }).eq("ma_phieu_kk", ma_phieu).execute()
-        st.cache_data.clear()
-        log_action("KIEMKE_APPROVE", f"ma={ma_phieu}")
-        return True, "Đã duyệt phiếu kiểm kê."
-    except Exception as e:
-        return False, f"Lỗi duyệt phiếu: {e}"
-
-
-def module_kiem_ke():
-    st.markdown("### 🧮 Kiểm kê")
-    st.caption("MVP v1: Quét +1 mỗi lần, hoàn thành → chờ admin duyệt.")
-    active = get_active_branch()
-    accessible = get_accessible_branches()
-
-    tab_list, tab_create, tab_scan, tab_approve = st.tabs(
-        ["Danh sách phiếu", "Tạo phiếu", "Quét kiểm kê", "Duyệt admin"]
-    )
-
-    with tab_list:
-        try:
-            df = load_phieu_kiem_ke(tuple(accessible))
-            if df.empty:
-                st.info("Chưa có phiếu kiểm kê.")
-            else:
-                show_cols = ["ma_phieu_kk", "chi_nhanh", "nhom_cha", "trang_thai", "created_by", "created_at", "ghi_chu"]
-                show_cols = [c for c in show_cols if c in df.columns]
-                st.dataframe(df[show_cols], use_container_width=True, hide_index=True, height=420)
-        except Exception as e:
-            st.error(f"Không tải được danh sách phiếu kiểm kê: {e}")
-            st.caption("Kiểm tra đã tạo bảng Supabase: phieu_kiem_ke / phieu_kiem_ke_chi_tiet.")
-
-    with tab_create:
-        cn_create = active
-        if is_ke_toan_or_admin() and len(accessible) > 1:
-            default_idx = accessible.index(active) if active in accessible else 0
-            cn_create = st.selectbox("Chi nhánh kiểm kê:", accessible, index=default_idx)
-        master = load_hang_hoa()
-        if master.empty:
-            st.warning("Chưa có dữ liệu hàng hóa.")
-        else:
-            nhom_col = master["nhom_hang"].fillna("") if "nhom_hang" in master.columns else pd.Series([""] * len(master))
-            split = nhom_col.str.split(">>", n=1, expand=True)
-            master["_cha"] = split[0].fillna("").str.strip()
-            nhom_cha_list = sorted([x for x in master["_cha"].dropna().unique() if str(x).strip()])
-            if not nhom_cha_list:
-                st.warning("Không tìm thấy nhóm hàng cha trong master (cột nhom_hang).")
-            else:
-                nhom_cha = st.selectbox("Nhóm hàng cha:", nhom_cha_list)
-                ghi_chu = st.text_area("Ghi chú phiếu:", key="kk_ghi_chu_create",
-                                       placeholder="Ví dụ: Kiểm kê giữa ca, tập trung đồng hồ Citizen...")
-                if st.button("Tạo phiếu kiểm kê", type="primary", use_container_width=True):
-                    ok, msg = _kk_create_phieu(cn_create, nhom_cha, ghi_chu)
-                    if ok:
-                        st.session_state["kk_active_ma"] = msg
-                        st.success(f"Đã tạo phiếu {msg}.")
-                        st.rerun()
-                    else:
-                        st.error(msg)
-
-    with tab_scan:
-        try:
-            df = load_phieu_kiem_ke(tuple(accessible))
-            if df.empty:
-                st.info("Chưa có phiếu để quét.")
-            else:
-                candidates = df[df["trang_thai"] == "Đang kiểm"].copy() if "trang_thai" in df.columns else pd.DataFrame()
-                if candidates.empty:
-                    st.info("Không có phiếu ở trạng thái Đang kiểm.")
-                else:
-                    opts = [f"{r['ma_phieu_kk']} · {r.get('chi_nhanh','')} · {r.get('nhom_cha','')}" for _, r in candidates.iterrows()]
-                    idx = 0
-                    ma_saved = st.session_state.get("kk_active_ma")
-                    if ma_saved:
-                        for i, x in enumerate(opts):
-                            if x.startswith(ma_saved):
-                                idx = i
-                                break
-                    picked = st.selectbox("Chọn phiếu đang kiểm:", opts, index=idx)
-                    ma_phieu = picked.split(" · ")[0]
-                    st.session_state["kk_active_ma"] = ma_phieu
-
-                    with st.form("kk_scan_form", clear_on_submit=True):
-                        code = st.text_input("Quét mã vạch / mã hàng:", key="kk_scan_code",
-                                             placeholder="Đưa con trỏ ở đây và quét...")
-                        submitted = st.form_submit_button("Quét +1", use_container_width=True)
-                    if submitted:
-                        ok, msg = _kk_scan_plus_one(ma_phieu, code)
-                        if ok:
-                            st.success(f"✓ Đã cộng +1 cho mã {msg}")
-                            st.cache_data.clear()
-                        else:
-                            st.warning(msg)
-
-                    lines = _kk_get_lines(ma_phieu)
-                    if not lines.empty:
-                        view = lines.copy()
-                        view["chênh lệch tạm"] = view["sl_thuc_te"] - view["ton_snapshot"]
-                        cols = ["ma_hang", "ma_vach", "ten_hang", "ton_snapshot", "sl_quet", "sl_thuc_te", "chênh lệch tạm"]
-                        cols = [c for c in cols if c in view.columns]
-                        st.dataframe(view[cols], use_container_width=True, hide_index=True, height=360)
-                        c1, c2, c3 = st.columns(3)
-                        with c1:
-                            st.metric("Số SKU", f"{len(view)}")
-                        with c2:
-                            st.metric("Tổng quét", f"{int(view['sl_quet'].sum())}")
-                        with c3:
-                            lech = int((view["sl_thuc_te"] - view["ton_snapshot"]).abs().sum())
-                            st.metric("Tổng lệch tuyệt đối", f"{lech}")
-
-                        if st.button("Hoàn thành kiểm kê (chờ admin duyệt)",
-                                     type="primary", use_container_width=True):
-                            ok, msg = _kk_complete(ma_phieu)
-                            if ok:
-                                st.success(msg)
-                                st.rerun()
-                            else:
-                                st.error(msg)
-        except Exception as e:
-            st.error(f"Lỗi màn hình quét kiểm kê: {e}")
-
-    with tab_approve:
-        if not is_admin():
-            st.info("Chỉ admin có quyền duyệt phiếu kiểm kê.")
-        else:
-            try:
-                df = load_phieu_kiem_ke(tuple(accessible))
-                pending = df[df["trang_thai"] == "Chờ duyệt admin"].copy() if (not df.empty and "trang_thai" in df.columns) else pd.DataFrame()
-                if pending.empty:
-                    st.info("Không có phiếu chờ duyệt.")
-                else:
-                    opts = [f"{r['ma_phieu_kk']} · {r.get('chi_nhanh','')} · {r.get('nhom_cha','')}" for _, r in pending.iterrows()]
-                    picked = st.selectbox("Phiếu chờ duyệt:", opts, key="kk_pending_pick")
-                    ma_phieu = picked.split(" · ")[0]
-                    lines = _kk_get_lines(ma_phieu)
-                    if not lines.empty:
-                        lines["chenh_lech_du_kien"] = lines["sl_thuc_te"] - lines["ton_snapshot"]
-                        cols = ["ma_hang", "ten_hang", "ton_snapshot", "sl_thuc_te", "chenh_lech_du_kien"]
-                        cols = [c for c in cols if c in lines.columns]
-                        st.dataframe(lines[cols], use_container_width=True, hide_index=True, height=320)
-                        st.warning("Lưu ý: MVP v1 chưa ingest realtime bán hàng ngoài hệ thống, admin cần rà soát trước khi duyệt.")
-                        if st.button("Duyệt & chốt phiếu", type="primary", use_container_width=True):
-                            ok, msg = _kk_approve(ma_phieu)
-                            if ok:
-                                st.success(msg)
-                                st.rerun()
-                            else:
-                                st.error(msg)
-            except Exception as e:
-                st.error(f"Lỗi màn hình duyệt phiếu: {e}")
-
-
-
 
 # ==========================================
 # MODULE: TỔNG QUAN — FIX NameError (bỏ dashboard)
@@ -1319,7 +959,7 @@ def _kk_gen_ma_phieu() -> str:
         return f"KK{datetime.now().strftime('%y%m%d')}{uuid.uuid4().hex[:4].upper()}"
 
 
-def _kk_build_scope_rows(chi_nhanh: str, nhom_hang_list: list) -> tuple[list, str]:
+def _kk_build_scope_rows(chi_nhanh: str, nhom_hang_chon: str) -> tuple[list, str]:
     master = load_hang_hoa()
     kho = load_the_kho(branches_key=(chi_nhanh,))
     if master.empty or kho.empty:
@@ -1329,55 +969,49 @@ def _kk_build_scope_rows(chi_nhanh: str, nhom_hang_list: list) -> tuple[list, st
     df = master.merge(kho_map, left_on="ma_hang", right_on="Mã hàng", how="left")
     df["ton"] = pd.to_numeric(df["ton"], errors="coerce").fillna(0).astype(int)
 
-    # Logic lọc đa nhóm: Bắt tất cả các mã thuộc bất kỳ nhóm nào trong danh sách chọn
-    nhom_col = df["nhom_hang"].fillna("")
-    mask = pd.Series([False] * len(df))
-    for nhom in nhom_hang_list:
-        mask |= nhom_col.str.startswith(nhom)
+    # Lọc theo nhóm hàng (dùng startswith để bắt được cả nhóm con)
+    nhom_col = df["nhom_hang"].fillna("") if "nhom_hang" in df.columns else pd.Series([""] * len(df))
+    df = df[(nhom_col.str.startswith(nhom_hang_chon)) & (df["ton"] > 0)].copy()
     
-    df = df[mask & (df["ton"] > 0)].copy()
     if df.empty:
-        return [], "Không tìm thấy hàng tồn > 0 trong các nhóm đã chọn."
+        return [], f"Nhóm **{nhom_hang_chon}** không có hàng tồn > 0 tại chi nhánh này."
     
     rows = []
     for _, r in df.iterrows():
         rows.append({
-            "ma_hang": str(r.get("ma_hang", "")),
-            "ma_vach": str(r.get("ma_vach", "")),
-            "ten_hang": str(r.get("ten_hang", "")),
-            "nhom_hang": str(r.get("nhom_hang", "")),
-            "ton_snapshot": int(r.get("ton", 0)),
+            "ma_hang": str(r.get("ma_hang", "") or ""),
+            "ma_vach": str(r.get("ma_vach", "") or ""),
+            "ten_hang": str(r.get("ten_hang", "") or ""),
+            "nhom_hang": str(r.get("nhom_hang", "") or ""),
+            "ton_snapshot": int(r.get("ton", 0) or 0),
             "sl_quet": 0,
             "sl_thuc_te": 0,
-            "updated_at": datetime.now().isoformat(), # Dùng để sắp xếp lên đầu
+            "ton_ky_vong_luc_duyet": 0,
+            "chenh_lech": 0,
             "trang_thai_dong": "Đang kiểm",
         })
     return rows, ""
 
 
-def _kk_create_phieu(chi_nhanh: str, ghi_chu: str, nhom_list: list) -> tuple[bool, str]:
-    # Truyền cả danh sách nhóm vào để lấy hàng tồn
-    rows, err = _kk_build_scope_rows(chi_nhanh, nhom_list)
+def _kk_create_phieu(chi_nhanh: str, nhom_cha: str, ghi_chu: str) -> tuple[bool, str]:
+    rows, err = _kk_build_scope_rows(chi_nhanh, nhom_cha)
     if err:
         return False, err
 
     ma = _kk_gen_ma_phieu()
     user = get_user() or {}
-    
-    # Tạo chuỗi hiển thị tên nhóm (ví dụ: "Casio, Citizen, ...") để lưu vào DB
-    ten_nhom_hien_thi = ", ".join(nhom_list[:3])
-    if len(nhom_list) > 3:
-        ten_nhom_hien_thi += "..."
-
     try:
         supabase.table("phieu_kiem_ke").insert({
             "ma_phieu_kk": ma,
             "chi_nhanh": chi_nhanh,
             "trang_thai": "Đang kiểm",
-            "nhom_cha": ten_nhom_hien_thi, # Lưu tên nhóm tóm tắt để dễ nhìn
+            "nhom_cha": nhom_cha,
             "ghi_chu": ghi_chu.strip(),
             "created_by": user.get("ho_ten", ""),
             "created_at": datetime.now().isoformat(),
+            "completed_at": None,
+            "approved_by": None,
+            "approved_at": None,
         }).execute()
 
         payload = []
@@ -1385,56 +1019,78 @@ def _kk_create_phieu(chi_nhanh: str, ghi_chu: str, nhom_list: list) -> tuple[boo
             p = dict(r)
             p["ma_phieu_kk"] = ma
             payload.append(p)
-            
         for i in range(0, len(payload), 500):
             supabase.table("phieu_kiem_ke_chi_tiet").insert(payload[i:i+500]).execute()
-        
         st.cache_data.clear()
+        log_action("KIEMKE_CREATE", f"ma={ma} cn={chi_nhanh} nhom={nhom_cha} rows={len(rows)}")
         return True, ma
     except Exception as e:
-        return False, f"Lỗi tạo phiếu: {e}"
+        return False, f"Lỗi tạo phiếu kiểm kê: {e}"
+
 
 def _kk_scan_plus_one(ma_phieu: str, code: str) -> tuple[bool, str]:
-    code = str(code or "").strip().lower()
-    now_iso = datetime.now().isoformat()
+    code = str(code or "").strip()
+    if not code:
+        return False, "Mã quét rỗng."
+    
+    code_n = code.lower()
     try:
-        # 1. Tìm trong phiếu hiện tại
-        rows = supabase.table("phieu_kiem_ke_chi_tiet").select("*").eq("ma_phieu_kk", ma_phieu).execute().data or []
-        hit = next((r for r in rows if str(r.get("ma_hang","")).lower() == code or str(r.get("ma_vach","")).lower() == code), None)
+        # 1. Tìm mã trong DÒNG CHI TIẾT của phiếu hiện tại
+        rows = supabase.table("phieu_kiem_ke_chi_tiet") \
+            .select("id,ma_hang,ma_vach,sl_quet,sl_thuc_te") \
+            .eq("ma_phieu_kk", ma_phieu).execute().data or []
         
+        hit = None
+        for r in rows:
+            mh = str(r.get("ma_hang", "") or "").strip().lower()
+            mv = str(r.get("ma_vach", "") or "").strip().lower()
+            if code_n == mh or code_n == mv:
+                hit = r; break
+                
         if hit:
+            # ĐÃ CÓ TRONG PHIẾU: Cộng dồn +1
+            sl_quet = int(hit.get("sl_quet", 0) or 0) + 1
+            sl_tt = int(hit.get("sl_thuc_te", 0) or 0) + 1
             supabase.table("phieu_kiem_ke_chi_tiet").update({
-                "sl_quet": int(hit["sl_quet"]) + 1,
-                "sl_thuc_te": int(hit["sl_thuc_te"]) + 1,
-                "updated_at": now_iso
+                "sl_quet": sl_quet, "sl_thuc_te": sl_tt
             }).eq("id", hit["id"]).execute()
-            return True, str(hit["ma_hang"])
+            return True, str(hit.get("ma_hang", "") or code)
         
-        # 2. Nếu không có (phát sinh dương), tìm trong Master
-        master = load_hang_hoa()
-        m_hit = master[(master["ma_hang"].str.lower() == code) | (master["ma_vach"].str.lower() == code)]
-        if not m_hit.empty:
+        else:
+            # KHÔNG CÓ TRONG PHIẾU (Tồn = 0): Lấy từ Master Data chèn vào
+            master = load_hang_hoa()
+            if master.empty:
+                return False, "Dữ liệu Hàng hóa (Master) trống."
+            
+            match_mask = (master["ma_hang"].astype(str).str.strip().str.lower() == code_n) | \
+                         (master["ma_vach"].astype(str).str.strip().str.lower() == code_n)
+            m_hit = master[match_mask]
+            
+            if m_hit.empty:
+                return False, f"Mã '{code}' hoàn toàn không tồn tại trong hệ thống KiotViet."
+            
             row_data = m_hit.iloc[0]
+            mh_new = str(row_data.get("ma_hang", ""))
+            
             supabase.table("phieu_kiem_ke_chi_tiet").insert({
-                "ma_phieu_kk": ma_phieu, "ma_hang": str(row_data["ma_hang"]),
-                "ma_vach": str(row_data["ma_vach"]), "ten_hang": str(row_data["ten_hang"]),
-                "nhom_hang": str(row_data["nhom_hang"]), "ton_snapshot": 0,
-                "sl_quet": 1, "sl_thuc_te": 1, "updated_at": now_iso, "trang_thai_dong": "Đang kiểm"
+                "ma_phieu_kk": ma_phieu,
+                "ma_hang": mh_new,
+                "ma_vach": str(row_data.get("ma_vach", "")),
+                "ten_hang": str(row_data.get("ten_hang", "")),
+                "nhom_hang": str(row_data.get("nhom_hang", "")),
+                "ton_snapshot": 0, # Tồn lúc tạo phiếu là 0
+                "sl_quet": 1,      # Lần quét đầu tiên
+                "sl_thuc_te": 1,
+                "ton_ky_vong_luc_duyet": 0,
+                "chenh_lech": 0,
+                "trang_thai_dong": "Đang kiểm"
             }).execute()
-            return True, f"{row_data['ma_hang']} (Mới)"
-        return False, f"Mã '{code}' không tồn tại trong hệ thống."
+            
+            return True, f"{mh_new} (Phát sinh mới)"
+            
     except Exception as e:
-        return False, str(e)
+        return False, f"Lỗi scan: {e}"
 
-def _kk_complete(ma_phieu: str) -> tuple[bool, str]:
-    try:
-        supabase.table("phieu_kiem_ke").update({
-            "trang_thai": "Chờ duyệt admin", "completed_at": datetime.now().isoformat()
-        }).eq("ma_phieu_kk", ma_phieu).execute()
-        st.cache_data.clear()
-        return True, "Phiếu đã chuyển sang trạng thái Chờ duyệt."
-    except Exception as e:
-        return False, str(e)
 
 def _kk_cancel_phieu(ma_phieu: str) -> tuple[bool, str]:
     try:
@@ -1474,126 +1130,198 @@ def _kk_approve(ma_phieu: str) -> tuple[bool, str]:
 
 def module_kiem_ke():
     st.markdown("### 🧮 Kiểm kê")
+    st.caption("MVP v1.1: Quét +1, hỗ trợ lọc nhóm con, Hủy phiếu rác.")
     active = get_active_branch()
     accessible = get_accessible_branches()
 
-    tab_list, tab_create, tab_scan, tab_approve = st.tabs(["Danh sách", "Tạo phiếu", "Quét hàng", "Duyệt admin"])
+    tab_list, tab_create, tab_scan, tab_approve = st.tabs(
+        ["Danh sách phiếu", "Tạo phiếu", "Quét kiểm kê", "Duyệt admin"]
+    )
+
+    with tab_list:
+        try:
+            df = load_phieu_kiem_ke(tuple(accessible))
+            if df.empty:
+                st.info("Chưa có phiếu kiểm kê.")
+            else:
+                view = df.copy()
+                if "created_at" in view.columns:
+                    view["Ngày Tạo"] = pd.to_datetime(view["created_at"]).dt.strftime("%d/%m/%Y %H:%M")
+                rename_map = {
+                    "ma_phieu_kk": "Mã Phiếu", "chi_nhanh": "Chi Nhánh", 
+                    "nhom_cha": "Nhóm Hàng", "trang_thai": "Trạng Thái", 
+                    "created_by": "Người Tạo", "ghi_chu": "Ghi Chú"
+                }
+                view = view.rename(columns=rename_map)
+                cols = ["Mã Phiếu", "Chi Nhánh", "Nhóm Hàng", "Trạng Thái", "Người Tạo", "Ngày Tạo", "Ghi Chú"]
+                cols = [c for c in cols if c in view.columns]
+                st.dataframe(view[cols], use_container_width=True, hide_index=True, height=420)
+        except Exception as e:
+            st.error(f"Lỗi tải danh sách: {e}")
 
     with tab_create:
         cn_create = active
-        st.info(f"🏷️ Mã phiếu dự kiến: **{_kk_gen_ma_phieu()}**")
+        if is_ke_toan_or_admin() and len(accessible) > 1:
+            cn_create = st.selectbox("Chi nhánh kiểm kê:", accessible, index=max(0, accessible.index(active)))
+        
+        ma_du_kien = _kk_gen_ma_phieu()
+        st.info(f"🏷️ Mã phiếu dự kiến: **{ma_du_kien}**")
+
         master = load_hang_hoa()
-        if not master.empty:
-            nhom_list = sorted([str(x).strip() for x in master["nhom_hang"].unique() if str(x).strip()])
-            # CHO PHÉP CHỌN NHIỀU NHÓM
-            nhom_chon_list = st.multiselect("Chọn các nhóm hàng cần kiểm kê chung:", nhom_list,
-                                           help="Có thể chọn cả nhóm cha và nhóm con trộn lẫn.")
-            ghi_chu = st.text_area("Ghi chú:")
-            if st.button("Tạo phiếu kiểm kê", type="primary", use_container_width=True):
-                if not nhom_chon_list:
-                    st.error("Vui lòng chọn ít nhất một nhóm hàng.")
+        if master.empty:
+            st.warning("Chưa có dữ liệu hàng hóa.")
+        else:
+            # Xử lý cắt chuỗi "Cha >> Con" để lấy dữ liệu 2 cấp
+            nhom_col = master["nhom_hang"].fillna("") if "nhom_hang" in master.columns else pd.Series([""] * len(master))
+            split = nhom_col.str.split(">>", n=1, expand=True)
+            master["_cha"] = split[0].fillna("").str.strip()
+            master["_con"] = split[1].fillna("").str.strip() if len(split.columns) > 1 else ""
+
+            nhom_cha_list = sorted([str(x) for x in master["_cha"].unique() if str(x)])
+            
+            if not nhom_cha_list:
+                st.warning("Không tìm thấy dữ liệu nhóm hàng.")
+            else:
+                c1, c2 = st.columns(2)
+                with c1:
+                    nhom_cha = st.selectbox("1. Chọn Nhóm Cha:", nhom_cha_list)
+                
+                with c2:
+                    # Lọc tự động Nhóm Con theo Nhóm Cha đã chọn
+                    con_list = sorted([str(x) for x in master[master["_cha"] == nhom_cha]["_con"].unique() if str(x)])
+                    nhom_con_opts = ["-- Tất cả nhóm con --"] + con_list
+                    nhom_con = st.selectbox("2. Chọn Nhóm Con:", nhom_con_opts)
+
+                # Nối chuỗi để đẩy vào query
+                if nhom_con != "-- Tất cả nhóm con --":
+                    nhom_chon = f"{nhom_cha} >> {nhom_con}"
                 else:
-                    # Đã sửa: Chỉ truyền đúng 3 tham số (chi_nhanh, ghi_chu, nhom_list)
-                    ok, msg = _kk_create_phieu(cn_create, ghi_chu, nhom_chon_list)
+                    nhom_chon = nhom_cha
+
+                ghi_chu = st.text_area("Ghi chú phiếu:", key="kk_ghi_chu_create", placeholder=f"Sẽ kiểm kê: {nhom_chon}")
+                if st.button("Tạo phiếu kiểm kê", type="primary", use_container_width=True):
+                    ok, msg = _kk_create_phieu(cn_create, nhom_chon, ghi_chu)
                     if ok:
                         st.session_state["kk_active_ma"] = msg
-                        st.success(f"Đã tạo phiếu {msg} thành công.")
+                        st.success(f"Đã tạo phiếu {msg}.")
                         st.rerun()
                     else:
                         st.error(msg)
 
     with tab_scan:
-        df_p = load_phieu_kiem_ke(tuple(accessible))
-        candidates = df_p[df_p["trang_thai"] == "Đang kiểm"] if not df_p.empty else pd.DataFrame()
-        
-        if candidates.empty:
-            st.info("Không có phiếu đang kiểm.")
-        else:
-            opts = {f"{r['ma_phieu_kk']} ({r.get('chi_nhanh','')})": r['ma_phieu_kk'] for _, r in candidates.iterrows()}
-            ma_phieu = opts[st.selectbox("Chọn phiếu:", list(opts.keys()))]
-            
-            with st.form("scan_form", clear_on_submit=True):
-                code = st.text_input("Quét mã:", placeholder="Tít mã vào đây...")
-                if st.form_submit_button("Quét +1", use_container_width=True):
-                    ok, msg = _kk_scan_plus_one(ma_phieu, code)
-                    if ok: st.success(f"✓ {msg}"); st.cache_data.clear()
-                    else: st.warning(msg)
+        try:
+            df = load_phieu_kiem_ke(tuple(accessible))
+            if df.empty:
+                st.info("Chưa có phiếu để quét.")
+            else:
+                candidates = df[df["trang_thai"] == "Đang kiểm"].copy() if "trang_thai" in df.columns else pd.DataFrame()
+                if candidates.empty:
+                    st.info("Không có phiếu ở trạng thái Đang kiểm.")
+                else:
+                    opts = [f"{r['ma_phieu_kk']} · {r.get('chi_nhanh','')} · {r.get('nhom_cha','')}" for _, r in candidates.iterrows()]
+                    idx = 0
+                    ma_saved = st.session_state.get("kk_active_ma")
+                    if ma_saved:
+                        for i, x in enumerate(opts):
+                            if x.startswith(ma_saved):
+                                idx = i; break
+                    
+                    picked = st.selectbox("Chọn phiếu đang kiểm:", opts, index=idx)
+                    ma_phieu = picked.split(" · ")[0]
+                    st.session_state["kk_active_ma"] = ma_phieu
 
-            lines = _kk_get_lines(ma_phieu)
-            if not lines.empty:
-                # FIX BUGS: Chống lỗi KeyError cho các phiếu cũ chưa có updated_at
-                if "updated_at" not in lines.columns:
-                    lines["updated_at"] = ""
-                
-                # SẮP XẾP LÊN ĐẦU DANH SÁCH
-                view = lines.sort_values(by="updated_at", ascending=False).copy()
-                view["Lệch Tạm"] = view["sl_thuc_te"] - view["ton_snapshot"]
-                
-                # PHỤC HỒI TÍNH NĂNG NHÁY ĐÚP SỬA SỐ LƯỢNG
-                rename_map = {
-                    "id": "ID", "ma_hang": "Mã Hàng", "ten_hang": "Tên",
-                    "ton_snapshot": "Tồn", "sl_thuc_te": "Thực Tế"
-                }
-                view_renamed = view.rename(columns=rename_map)
-                cols = ["ID", "Mã Hàng", "Tên", "Tồn", "Thực Tế", "Lệch Tạm"]
-                cols = [c for c in cols if c in view_renamed.columns]
-                
-                editor_key = f"kk_editor_{ma_phieu}"
-                st.caption("💡 *Nháy đúp vào cột **Thực Tế ✏️** để sửa trực tiếp nếu quét lố.*")
-                
-                edited_df = st.data_editor(
-                    view_renamed[cols],
-                    use_container_width=True,
-                    hide_index=True,
-                    key=editor_key,
-                    height=360,
-                    column_config={
-                        "ID": None, # Ẩn cột ID
-                        "Mã Hàng": st.column_config.TextColumn(disabled=True),
-                        "Tên": st.column_config.TextColumn(disabled=True),
-                        "Tồn": st.column_config.NumberColumn(disabled=True),
-                        "Lệch Tạm": st.column_config.NumberColumn(disabled=True),
-                        "Thực Tế": st.column_config.NumberColumn("Thực Tế ✏️", min_value=0, step=1)
-                    }
-                )
+                    with st.form("kk_scan_form", clear_on_submit=True):
+                        code = st.text_input("Quét mã vạch / mã hàng:", key="kk_scan_code", placeholder="Đưa con trỏ ở đây và quét...")
+                        submitted = st.form_submit_button("Quét +1", use_container_width=True)
+                    if submitted:
+                        ok, msg = _kk_scan_plus_one(ma_phieu, code)
+                        if ok:
+                            st.success(f"✓ Đã cộng +1 cho mã {msg}")
+                            st.cache_data.clear()
+                        else:
+                            st.warning(msg)
 
-                # LOGIC BẮT SỰ KIỆN LƯU SAU KHI SỬA
-                changes = st.session_state.get(editor_key, {}).get("edited_rows", {})
-                if changes:
-                    st.warning("⚠️ Bảng có thay đổi chưa lưu. Hãy bấm nút lưu dưới đây!")
-                    if st.button("💾 Lưu các dòng đã sửa", type="primary", use_container_width=True):
-                        try:
-                            for row_idx, edit_data in changes.items():
-                                if "Thực Tế" in edit_data:
-                                    new_sl = int(edit_data["Thực Tế"])
-                                    row_id = int(view_renamed.iloc[row_idx]["ID"])
-                                    supabase.table("phieu_kiem_ke_chi_tiet").update({
-                                        "sl_thuc_te": new_sl
-                                    }).eq("id", row_id).execute()
-                            st.success("✓ Đã cập nhật thành công!"); st.cache_data.clear(); st.rerun()
-                        except Exception as e:
-                            st.error(f"Lỗi lưu: {e}")
+                    lines = _kk_get_lines(ma_phieu)
+                    if not lines.empty:
+                        view = lines.copy()
+                        view["Lệch Tạm"] = view["sl_thuc_te"] - view["ton_snapshot"]
+                        
+                        rename_map = {
+                            "id": "ID", "ma_hang": "Mã Hàng", "ma_vach": "Mã Vạch", "ten_hang": "Tên Hàng",
+                            "ton_snapshot": "Tồn Kho", "sl_quet": "SL Quét", "sl_thuc_te": "SL Thực Tế"
+                        }
+                        view = view.rename(columns=rename_map)
+                        cols = ["ID", "Mã Hàng", "Mã Vạch", "Tên Hàng", "Tồn Kho", "SL Quét", "SL Thực Tế", "Lệch Tạm"]
+                        cols = [c for c in cols if c in view.columns]
+                        
+                        editor_key = f"kk_editor_{ma_phieu}"
+                        st.caption("💡 *Mẹo: Nháy đúp vào ô thuộc cột **SL Thực Tế ✏️** để sửa trực tiếp.*")
+                        edited_df = st.data_editor(
+                            view[cols],
+                            use_container_width=True,
+                            hide_index=True,
+                            key=editor_key,
+                            height=360,
+                            column_config={
+                                "ID": None,
+                                "Mã Hàng": st.column_config.TextColumn(disabled=True),
+                                "Mã Vạch": st.column_config.TextColumn(disabled=True),
+                                "Tên Hàng": st.column_config.TextColumn(disabled=True),
+                                "Tồn Kho": st.column_config.NumberColumn(disabled=True),
+                                "SL Quét": st.column_config.NumberColumn(disabled=True),
+                                "Lệch Tạm": st.column_config.NumberColumn(disabled=True),
+                                "SL Thực Tế": st.column_config.NumberColumn(
+                                    "SL Thực Tế ✏️", 
+                                    min_value=0, 
+                                    step=1,
+                                    help="Nháy đúp để sửa số lượng thực tế"
+                                )
+                            }
+                        )
 
-                st.markdown("---")
-                c1, c2, c3 = st.columns(3)
-                t_ton = int(view["ton_snapshot"].sum())
-                t_quet = int(view["sl_thuc_te"].sum())
-                c1.metric("Tổng tồn", f"{t_ton}")
-                c2.metric("Tổng quét", f"{t_quet}")
-                c3.metric("Tổng chênh lệch", f"{t_quet - t_ton}", delta=int(t_quet - t_ton))
+                        changes = st.session_state.get(editor_key, {}).get("edited_rows", {})
+                        if changes:
+                            st.warning("⚠️ Bảng có thay đổi chưa lưu. Hãy bấm 'Lưu các dòng đã sửa' trước khi làm việc khác!")
+                            if st.button("💾 Lưu các dòng đã sửa", type="primary", use_container_width=True):
+                                try:
+                                    for row_idx, edit_data in changes.items():
+                                        if "SL Thực Tế" in edit_data:
+                                            new_sl = int(edit_data["SL Thực Tế"])
+                                            row_id = int(view.iloc[row_idx]["ID"])
+                                            supabase.table("phieu_kiem_ke_chi_tiet").update({
+                                                "sl_thuc_te": new_sl
+                                            }).eq("id", row_id).execute()
+                                    st.success("✓ Đã cập nhật số lượng thành công!")
+                                    st.cache_data.clear()
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Lỗi khi lưu: {e}")
 
-                st.markdown("---")
-                # Chỉ hiện nút Hoàn thành/Hủy khi không có thay đổi đang chờ lưu
-                if not changes:
-                    c_left, c_right = st.columns(2)
-                    with c_left:
-                        if st.button("✅ Hoàn thành kiểm kê", type="primary", use_container_width=True):
-                            ok, msg = _kk_complete(ma_phieu)
-                            if ok: st.success(msg); st.rerun()
-                            else: st.error(msg)
-                    with c_right:
-                        if st.button("🗑️ Hủy phiếu", use_container_width=True):
-                            if _kk_cancel_phieu(ma_phieu)[0]: st.rerun()
+                        st.markdown("---")
+                        c1, c2, c3 = st.columns(3)
+                        with c1: st.metric("Số SKU", f"{len(view)}")
+                        with c2: st.metric("Tổng quét", f"{int(view['SL Quét'].sum())}")
+                        with c3: 
+                            lech = int(view["Lệch Tạm"].abs().sum())
+                            st.metric("Tổng lệch tuyệt đối", f"{lech}")
+
+                        st.markdown("---")
+                        if not changes:
+                            c_left, c_right = st.columns(2)
+                            with c_left:
+                                if st.button("Hoàn thành kiểm kê", type="primary", use_container_width=True):
+                                    ok, msg = _kk_complete(ma_phieu)
+                                    if ok: st.success(msg); st.rerun()
+                                    else: st.error(msg)
+                            with c_right:
+                                if st.button("🗑️ Hủy phiếu này", type="secondary", use_container_width=True):
+                                    ok, msg = _kk_cancel_phieu(ma_phieu)
+                                    if ok:
+                                        st.session_state.pop("kk_active_ma", None)
+                                        st.success(msg); st.rerun()
+                                    else: st.error(msg)
+        except Exception as e:
+            st.error(f"Lỗi màn hình quét kiểm kê: {e}")
 
     with tab_approve:
         if not is_admin():

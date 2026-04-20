@@ -984,8 +984,16 @@ def _kk_build_scope_rows(chi_nhanh: str, nhom_hang_chon: str) -> tuple[list, str
     if master.empty or kho.empty:
         return [], "Chưa đủ dữ liệu master/thẻ kho để tạo phiếu kiểm kê."
     
-    kho_map = kho.groupby("Mã hàng", as_index=False).agg(ton=("Tồn cuối kì", "sum"))
-    df = master.merge(kho_map, left_on="ma_hang", right_on="Mã hàng", how="left")
+    # Chuẩn hóa tên cột kho về lowercase để merge an toàn
+    kho_cols = {c: c.strip() for c in kho.columns}
+    kho = kho.rename(columns=kho_cols)
+    # Tìm đúng tên cột mã hàng và tồn trong kho (có thể viết hoa/thường khác nhau)
+    ma_col = next((c for c in kho.columns if c.lower().replace(" ","") == "mahang"), None)
+    ton_col = next((c for c in kho.columns if "tồn cuối" in c.lower()), None)
+    if not ma_col or not ton_col:
+        return [], f"Không tìm thấy cột mã hàng/tồn cuối kì trong thẻ kho. Cột hiện có: {list(kho.columns)}"
+    kho_map = kho.groupby(ma_col, as_index=False).agg(ton=(ton_col, "sum"))
+    df = master.merge(kho_map, left_on="ma_hang", right_on=ma_col, how="left")
     df["ton"] = pd.to_numeric(df["ton"], errors="coerce").fillna(0).astype(int)
 
     # Hỗ trợ đa nhóm: nhom_hang_chon có thể là "A|B|C"

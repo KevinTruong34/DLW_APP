@@ -1129,13 +1129,18 @@ def module_kiem_ke():
             nhom_chon_list = st.multiselect("Chọn các nhóm hàng cần kiểm kê chung:", nhom_list,
                                            help="Có thể chọn cả nhóm cha và nhóm con trộn lẫn.")
             ghi_chu = st.text_area("Ghi chú:")
-            if st.button("Tạo phiếu", type="primary", use_container_width=True):
+            if st.button("Tạo phiếu kiểm kê", type="primary", use_container_width=True):
                 if not nhom_chon_list:
                     st.error("Vui lòng chọn ít nhất một nhóm hàng.")
                 else:
-                    ok, msg = _kk_create_phieu(cn_create, ", ".join(nhom_chon_list[:3]) + "...", ghi_chu, nhom_chon_list)
-                    if ok: st.success(f"Đã tạo {msg}"); st.rerun()
-                    else: st.error(msg)
+                    # Đã sửa: Chỉ truyền đúng 3 tham số (chi_nhanh, ghi_chu, nhom_list)
+                    ok, msg = _kk_create_phieu(cn_create, ghi_chu, nhom_chon_list)
+                    if ok:
+                        st.session_state["kk_active_ma"] = msg
+                        st.success(f"Đã tạo phiếu {msg} thành công.")
+                        st.rerun()
+                    else:
+                        st.error(msg)
 
     with tab_scan:
         df_p = load_phieu_kiem_ke(tuple(accessible))

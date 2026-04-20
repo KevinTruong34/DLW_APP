@@ -984,26 +984,23 @@ def _kk_build_scope_rows(chi_nhanh: str, nhom_hang_chon: str) -> tuple[list, str
     if master.empty or kho.empty:
         return [], "Chưa đủ dữ liệu master/thẻ kho để tạo phiếu kiểm kê."
 
-    # DEBUG tạm — xóa sau khi fix xong
-    st.info(f"DEBUG master.columns: {list(master.columns)}")
-    st.info(f"DEBUG kho.columns: {list(kho.columns)}")
-    st.info(f"DEBUG master['nhom_hang'] mẫu: {master['nhom_hang'].dropna().unique()[:5].tolist() if 'nhom_hang' in master.columns else 'KHÔNG CÓ CỘT'}")
-    st.info(f"DEBUG master['ma_hang'] mẫu: {master['ma_hang'].dropna().head(3).tolist() if 'ma_hang' in master.columns else 'KHÔNG CÓ CỘT'}")
-    st.info(f"DEBUG kho 'Mã hàng' mẫu: {kho['Mã hàng'].dropna().head(3).tolist() if 'Mã hàng' in kho.columns else 'KHÔNG CÓ CỘT'}")
     kho_map = kho.groupby("Mã hàng", as_index=False).agg(ton=("Tồn cuối kì", "sum"))
     df = master.merge(kho_map, left_on="ma_hang", right_on="Mã hàng", how="left")
     df["ton"] = pd.to_numeric(df["ton"], errors="coerce").fillna(0).astype(int)
-    st.info(f"DEBUG sau merge: {len(df)} dòng, ton>0: {(df['ton']>0).sum()}, nhom_hang mẫu: {df['nhom_hang'].dropna().unique()[:5].tolist() if 'nhom_hang' in df.columns else 'N/A'}")
 
-    # Hỗ trợ đa nhóm: nhom_hang_chon có thể là "A|B|C"
+    # nhom_hang trong DB dùng ">>" không có dấu cách (vd: "Đồng hồ đeo tay>>CITIZEN")
+    # nhom_hang_chon có thể là "A|B|C" (đa nhóm)
     nhom_col = df["nhom_hang"].fillna("") if "nhom_hang" in df.columns else pd.Series([""] * len(df))
     nhom_list = [x.strip() for x in nhom_hang_chon.split("|") if x.strip()]
     mask = pd.Series([False] * len(df), index=df.index)
     for nhom in nhom_list:
         if ">>" in nhom:
-            mask = mask | (nhom_col == nhom)
+            # Nhóm con cụ thể — chuẩn hóa bỏ dấu cách quanh >> để khớp DB
+            nhom_norm = ">>".join(p.strip() for p in nhom.split(">>"))
+            mask = mask | (nhom_col == nhom_norm)
         else:
-            mask = mask | (nhom_col == nhom) | nhom_col.str.startswith(nhom + " >>")
+            # Nhóm cha — lấy tất cả hàng bắt đầu bằng "Cha>>"
+            mask = mask | (nhom_col == nhom) | nhom_col.str.startswith(nhom + ">>")
     df = df[mask & (df["ton"] > 0)].copy()
 
     if df.empty:
@@ -1217,11 +1214,11 @@ def module_kiem_ke():
             else:
                 # Build danh sách phẳng: gồm cả nhóm cha và nhóm con "Cha >> Con"
                 nhom_flat = []
-                for cha in nhom_cha_list:
-                    nhom_flat.append(cha)
-                    con_list = sorted([str(x) for x in master[master["_cha"] == cha]["_con"].unique() if str(x)])
-                    for con in con_list:
-                        nhom_flat.append(f"{cha} >> {con}")
+            for cha in nhom_cha_list:
+                nhom_flat.append(cha)
+                con_list = sorted([str(x) for x in master[master["_cha"] == cha]["_con"].unique() if str(x)])
+                for con in con_list:
+                    nhom_flat.append(f"{cha}>>{con}")  # khớp format DB, không có dấu cách
 
                 nhom_chon_list = st.multiselect(
                     "Chọn nhóm hàng kiểm kê (có thể chọn nhiều):",

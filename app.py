@@ -940,10 +940,13 @@ def _kk_get_lines(ma_phieu: str) -> pd.DataFrame:
     for col in ["ton_snapshot", "sl_quet", "sl_thuc_te", "ton_ky_vong_luc_duyet", "chenh_lech"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
-    # Sắp xếp: hàng vừa quét (sl_quet > 0) lên đầu, sau đó theo updated_at mới nhất
+    # Sắp xếp: mã vừa quét gần nhất lên đầu (updated_at desc)
+    # Hàng chưa quét (sl_quet=0) xuống cuối
     if "updated_at" in df.columns:
         df["updated_at"] = pd.to_datetime(df["updated_at"], errors="coerce")
-        df = df.sort_values(["sl_quet", "updated_at"], ascending=[False, False])
+        df["_da_quet"] = (df["sl_quet"] > 0).astype(int)
+        df = df.sort_values(["_da_quet", "updated_at"], ascending=[False, False])
+        df = df.drop(columns=["_da_quet"])
     else:
         df = df.sort_values("sl_quet", ascending=False)
     return df.reset_index(drop=True)
@@ -1002,10 +1005,14 @@ def _kk_build_scope_rows(chi_nhanh: str, nhom_hang_chon: str) -> tuple[list, str
         else:
             # Nhóm cha: lấy hàng thuộc cha đó hoặc bất kỳ nhóm con nào
             mask = mask | (nhom_col == nhom_norm) | nhom_col.str.startswith(nhom_norm + ">>")
-    df = df[mask & (df["ton"] > 0)].copy()
-    
+    df = df[mask].copy()
+
     if df.empty:
-        return [], f"Nhóm **{nhom_hang_chon}** không có hàng tồn > 0 tại chi nhánh này."
+        return [], f"Nhóm **{nhom_hang_chon}** không có mặt hàng nào tại chi nhánh này."
+
+    # Tách thành 2 nhóm: có tồn > 0 (đưa vào phiếu luôn) và tồn = 0 (bỏ qua)
+    # Nhân viên có thể quét phát sinh thêm nếu thực tế có hàng mà hệ thống chưa ghi nhận
+    df = df[df["ton"] >= 0].copy()  # giữ cả ton=0 để snapshot đúng thực tế
     
     rows = []
     for _, r in df.iterrows():
@@ -1177,7 +1184,9 @@ def module_kiem_ke():
             else:
                 view = df.copy()
                 if "created_at" in view.columns:
-                    view["Ngày Tạo"] = pd.to_datetime(view["created_at"]).dt.strftime("%d/%m/%Y %H:%M")
+                    view["Ngày Tạo"] = (pd.to_datetime(view["created_at"], utc=True)
+                                        .dt.tz_convert("Asia/Ho_Chi_Minh")
+                                        .dt.strftime("%d/%m/%Y %H:%M"))
                 rename_map = {
                     "ma_phieu_kk": "Mã Phiếu", "chi_nhanh": "Chi Nhánh", 
                     "nhom_cha": "Nhóm Hàng", "trang_thai": "Trạng Thái", 
@@ -1186,7 +1195,27 @@ def module_kiem_ke():
                 view = view.rename(columns=rename_map)
                 cols = ["Mã Phiếu", "Chi Nhánh", "Nhóm Hàng", "Trạng Thái", "Người Tạo", "Ngày Tạo", "Ghi Chú"]
                 cols = [c for c in cols if c in view.columns]
-                st.dataframe(view[cols], use_container_width=True, hide_index=True, height=420)
+                st.dataframe(view[cols], use_container_width=True, hide_index=True, height=380)
+
+                # Xem chi tiết phiếu đã duyệt
+                st.markdown("---")
+                st.caption("📋 Xem chi tiết mặt hàng của một phiếu:")
+                ma_options = view["Mã Phiếu"].tolist() if "Mã Phiếu" in view.columns else []
+                picked_ma = st.selectbox("Chọn phiếu để xem chi tiết:", ["-- Chọn phiếu --"] + ma_options, key="kk_list_detail_pick")
+                if picked_ma != "-- Chọn phiếu --":
+                    detail = _kk_get_lines(picked_ma)
+                    if detail.empty:
+                        st.info("Phiếu này chưa có dữ liệu chi tiết.")
+                    else:
+                        detail["Chênh lệch"] = detail["sl_thuc_te"] - detail["ton_snapshot"]
+                        detail_view = detail.rename(columns={
+                            "ma_hang": "Mã Hàng", "ten_hang": "Tên Hàng",
+                            "ton_snapshot": "Tồn Sổ Sách", "sl_thuc_te": "SL Thực Tế",
+                            "sl_quet": "SL Quét"
+                        })
+                        dcols = ["Mã Hàng", "Tên Hàng", "Tồn Sổ Sách", "SL Quét", "SL Thực Tế", "Chênh lệch"]
+                        dcols = [c for c in dcols if c in detail_view.columns]
+                        st.dataframe(detail_view[dcols], use_container_width=True, hide_index=True, height=360)
         except Exception as e:
             st.error(f"Lỗi tải danh sách: {e}")
 
@@ -1387,6 +1416,31 @@ def module_kiem_ke():
                     lines = _kk_get_lines(ma_phieu)
                     if not lines.empty:
                         lines["Lệch Dự Kiến"] = lines["sl_thuc_te"] - lines["ton_snapshot"]
+
+                        # Lấy giá bán để tính giá trị
+                        gia_map = get_gia_ban_map()
+                        lines["_gia"] = lines["ma_hang"].astype(str).map(gia_map).fillna(0).astype(int)
+                        lines["_gt_thuc_te"] = lines["sl_thuc_te"] * lines["_gia"]
+                        lines["_gt_lech"] = lines["Lệch Dự Kiến"] * lines["_gia"]
+
+                        tong_thuc_te_sl = int(lines["sl_thuc_te"].sum())
+                        tong_thuc_te_gt = int(lines["_gt_thuc_te"].sum())
+                        lech_tang = lines[lines["Lệch Dự Kiến"] > 0]
+                        lech_giam = lines[lines["Lệch Dự Kiến"] < 0]
+                        tong_tang_sl = int(lech_tang["Lệch Dự Kiến"].sum())
+                        tong_tang_gt = int(lech_tang["_gt_lech"].sum())
+                        tong_giam_sl = int(lech_giam["Lệch Dự Kiến"].sum())
+                        tong_giam_gt = int(lech_giam["_gt_lech"].sum())
+                        tong_lech_sl = tong_tang_sl + tong_giam_sl
+                        tong_lech_gt = tong_tang_gt + tong_giam_gt
+
+                        def fmt_vnd(x): return f"{x:,.0f}".replace(",", ".")
+
+                        m1, m2, m3, m4 = st.columns(4)
+                        with m1: st.metric(f"Tổng thực tế ({tong_thuc_te_sl})", fmt_vnd(tong_thuc_te_gt))
+                        with m2: st.metric(f"Lệch tăng (+{tong_tang_sl})", fmt_vnd(tong_tang_gt))
+                        with m3: st.metric(f"Lệch giảm ({tong_giam_sl})", fmt_vnd(abs(tong_giam_gt)))
+                        with m4: st.metric(f"Tổng chênh ({tong_lech_sl:+d})", fmt_vnd(tong_lech_gt))
                         view = lines.rename(columns={
                             "ma_hang": "Mã Hàng", "ten_hang": "Tên Hàng", 
                             "ton_snapshot": "Tồn Kho", "sl_thuc_te": "SL Thực Tế"

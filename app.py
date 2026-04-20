@@ -1144,7 +1144,7 @@ def module_kiem_ke():
         if candidates.empty:
             st.info("Không có phiếu đang kiểm.")
         else:
-            opts = {f"{r['ma_phieu_kk']} ({r['chi_nhanh']})": r['ma_phieu_kk'] for _, r in candidates.iterrows()}
+            opts = {f"{r['ma_phieu_kk']} ({r.get('chi_nhanh','')})": r['ma_phieu_kk'] for _, r in candidates.iterrows()}
             ma_phieu = opts[st.selectbox("Chọn phiếu:", list(opts.keys()))]
             
             with st.form("scan_form", clear_on_submit=True):
@@ -1156,18 +1156,60 @@ def module_kiem_ke():
 
             lines = _kk_get_lines(ma_phieu)
             if not lines.empty:
-                # SẮP XẾP HÀNG MỚI QUÉT LÊN ĐẦU
-                view = lines.sort_values(by="updated_at", ascending=False).copy()
-                view["Chênh lệch"] = view["sl_thuc_te"] - view["ton_snapshot"]
+                # FIX BUGS: Chống lỗi KeyError cho các phiếu cũ chưa có updated_at
+                if "updated_at" not in lines.columns:
+                    lines["updated_at"] = ""
                 
-                st.data_editor(
-                    view[["ma_hang", "ten_hang", "ton_snapshot", "sl_thuc_te", "Chênh lệch"]].rename(columns={
-                        "ma_hang": "Mã Hàng", "ten_hang": "Tên", "ton_snapshot": "Tồn", "sl_thuc_te": "Thực Tế"
-                    }),
-                    use_container_width=True, hide_index=True, disabled=["Mã Hàng", "Tên", "Tồn", "Chênh lệch"]
+                # SẮP XẾP LÊN ĐẦU DANH SÁCH
+                view = lines.sort_values(by="updated_at", ascending=False).copy()
+                view["Lệch Tạm"] = view["sl_thuc_te"] - view["ton_snapshot"]
+                
+                # PHỤC HỒI TÍNH NĂNG NHÁY ĐÚP SỬA SỐ LƯỢNG
+                rename_map = {
+                    "id": "ID", "ma_hang": "Mã Hàng", "ten_hang": "Tên",
+                    "ton_snapshot": "Tồn", "sl_thuc_te": "Thực Tế"
+                }
+                view_renamed = view.rename(columns=rename_map)
+                cols = ["ID", "Mã Hàng", "Tên", "Tồn", "Thực Tế", "Lệch Tạm"]
+                cols = [c for c in cols if c in view_renamed.columns]
+                
+                editor_key = f"kk_editor_{ma_phieu}"
+                st.caption("💡 *Nháy đúp vào cột **Thực Tế ✏️** để sửa trực tiếp nếu quét lố.*")
+                
+                edited_df = st.data_editor(
+                    view_renamed[cols],
+                    use_container_width=True,
+                    hide_index=True,
+                    key=editor_key,
+                    height=360,
+                    column_config={
+                        "ID": None, # Ẩn cột ID
+                        "Mã Hàng": st.column_config.TextColumn(disabled=True),
+                        "Tên": st.column_config.TextColumn(disabled=True),
+                        "Tồn": st.column_config.NumberColumn(disabled=True),
+                        "Lệch Tạm": st.column_config.NumberColumn(disabled=True),
+                        "Thực Tế": st.column_config.NumberColumn("Thực Tế ✏️", min_value=0, step=1)
+                    }
                 )
 
-                # CẬP NHẬT CHỈ SỐ THEO YÊU CẦU
+                # LOGIC BẮT SỰ KIỆN LƯU SAU KHI SỬA
+                changes = st.session_state.get(editor_key, {}).get("edited_rows", {})
+                if changes:
+                    st.warning("⚠️ Bảng có thay đổi chưa lưu. Hãy bấm nút lưu dưới đây!")
+                    if st.button("💾 Lưu các dòng đã sửa", type="primary", use_container_width=True):
+                        try:
+                            for row_idx, edit_data in changes.items():
+                                if "Thực Tế" in edit_data:
+                                    new_sl = int(edit_data["Thực Tế"])
+                                    row_id = int(view_renamed.iloc[row_idx]["ID"])
+                                    supabase.table("phieu_kiem_ke_chi_tiet").update({
+                                        "sl_thuc_te": new_sl
+                                    }).eq("id", row_id).execute()
+                            st.success("✓ Đã cập nhật thành công!"); st.cache_data.clear(); st.rerun()
+                        except Exception as e:
+                            st.error(f"Lỗi lưu: {e}")
+
+                st.markdown("---")
                 c1, c2, c3 = st.columns(3)
                 t_ton = int(view["ton_snapshot"].sum())
                 t_quet = int(view["sl_thuc_te"].sum())
@@ -1176,15 +1218,17 @@ def module_kiem_ke():
                 c3.metric("Tổng chênh lệch", f"{t_quet - t_ton}", delta=int(t_quet - t_ton))
 
                 st.markdown("---")
-                col_btn1, col_btn2 = st.columns(2)
-                with col_btn1:
-                    if st.button("✅ Hoàn thành kiểm kê", type="primary", use_container_width=True):
-                        ok, msg = _kk_complete(ma_phieu)
-                        if ok: st.success(msg); st.rerun()
-                        else: st.error(msg)
-                with col_btn2:
-                    if st.button("🗑️ Hủy phiếu", use_container_width=True):
-                        if _kk_cancel_phieu(ma_phieu)[0]: st.rerun()
+                # Chỉ hiện nút Hoàn thành/Hủy khi không có thay đổi đang chờ lưu
+                if not changes:
+                    c_left, c_right = st.columns(2)
+                    with c_left:
+                        if st.button("✅ Hoàn thành kiểm kê", type="primary", use_container_width=True):
+                            ok, msg = _kk_complete(ma_phieu)
+                            if ok: st.success(msg); st.rerun()
+                            else: st.error(msg)
+                    with c_right:
+                        if st.button("🗑️ Hủy phiếu", use_container_width=True):
+                            if _kk_cancel_phieu(ma_phieu)[0]: st.rerun()
 
     with tab_approve:
         if not is_admin():

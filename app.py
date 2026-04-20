@@ -3201,56 +3201,65 @@ def module_quan_tri():
                         with st.expander("Xem trước"):
                             st.dataframe(df.head(), use_container_width=True, hide_index=True)
                         if st.button("Upload Hóa đơn", key="btn_up_hd", type="primary"):
-                            with st.spinner("Đang xử lý..."):
-                                
-                                import numpy as np
-                                import pandas as pd
+    with st.spinner("Đang xử lý dữ liệu..."):
+        
+        # 1. LÀM SẠCH DỮ LIỆU (Triệt tiêu lỗi Timestamp và NaN)
+        # Quét từng ô, nếu là ngày tháng thì đổi thành chữ, nếu rỗng thì đổi thành None
+        def clean_data(x):
+            if isinstance(x, (pd.Timestamp, datetime)):
+                return x.strftime('%Y-%m-%d %H:%M:%S')
+            if pd.isna(x):
+                return None
+            return x
 
-                                # 1. FIX LỖI TIMESTAMP: Ép tất cả cột ngày tháng thành chuỗi (String)
-                                for col in df.columns:
-                                    if pd.api.types.is_datetime64_any_dtype(df[col]):
-                                        df[col] = df[col].dt.strftime('%Y-%m-%d %H:%M:%S')
-                                
-                                # 2. FIX LỖI NaN: Chuyển các ô trống thành None (NULL)
-                                df = df.astype(object).where(pd.notna(df), None)
+        # Áp dụng hàm làm sạch cho toàn bộ bảng dữ liệu
+        df_clean = df.applymap(clean_data)
 
-                                # 3. LOGIC CHỐNG TRÙNG LẶP: Quét mã Hóa đơn đã có trên Supabase
-                                ma_hd_list = df['Mã hóa đơn'].dropna().unique().tolist()
-                                existing_mads = set()
-                                
-                                # Cắt nhỏ từng cụm 200 mã để hỏi Supabase (tránh lỗi URL quá dài)
-                                for i in range(0, len(ma_hd_list), 200):
-                                    batch_mads = ma_hd_list[i:i+200]
-                                    res = supabase.table("hoa_don").select("Mã hóa đơn").in_("Mã hóa đơn", batch_mads).execute()
-                                    if res.data:
-                                        for r in res.data:
-                                            existing_mads.add(r["Mã hóa đơn"])
-                                            
-                                # Lọc bỏ các dòng thuộc hóa đơn đã tồn tại
-                                if existing_mads:
-                                    df = df[~df['Mã hóa đơn'].isin(existing_mads)]
-                                    st.info(f"Đã bỏ qua {len(existing_mads)} mã hóa đơn bị trùng.")
-                                
-                                # 4. UPLOAD DỮ LIỆU MỚI
-                                if df.empty:
-                                    st.warning("Tất cả hóa đơn trong file đều đã tồn tại trên hệ thống!")
-                                else:
-                                    records = df.to_dict(orient="records")
-                                    total = len(records)
-                                    prog = st.progress(0, text=f"Đang đẩy lên {total} dòng dữ liệu mới...")
-                                    ok = 0
-                                    for i in range(0, total, 500):
-                                        try:
-                                            supabase.table("hoa_don").insert(records[i:i+500]).execute()
-                                            ok += len(records[i:i+500])
-                                            prog.progress(min(ok/total, 1.0), text=f"{ok}/{total}...")
-                                        except Exception as e: 
-                                            st.error(f"Batch {i}: {e}")
-                                    prog.empty()
-                                    if ok == total:
-                                        log_action("UPLOAD_HOA_DON", f"rows={ok}")
-                                        st.success(f"Upload {ok} dòng mới thành công!")
-                                        st.cache_data.clear()
+        # 2. LOGIC CHỐNG TRÙNG LẶP
+        ma_hd_list = df_clean['Mã hóa đơn'].dropna().unique().tolist()
+        existing_mads = set()
+        
+        # Chia nhỏ để hỏi Supabase (mỗi lần 200 mã)
+        for i in range(0, len(ma_hd_list), 200):
+            batch_mads = ma_hd_list[i:i+200]
+            try:
+                # Bọc tên cột có dấu cách trong dấu ngoặc kép để API nhận diện đúng
+                res = supabase.table("hoa_don").select('"Mã hóa đơn"').in_('"Mã hóa đơn"', batch_mads).execute()
+                if res.data:
+                    for r in res.data:
+                        existing_mads.add(r.get("Mã hóa đơn"))
+            except Exception as e:
+                st.warning(f"Lưu ý: Không thể kiểm tra trùng lặp cho một số mã (Batch {i})")
+                    
+        # Lọc bỏ những hóa đơn đã tồn tại
+        if existing_mads:
+            df_final = df_clean[~df_clean['Mã hóa đơn'].isin(existing_mads)]
+            st.info(f"Đã phát hiện và bỏ qua {len(existing_mads)} hóa đơn đã có trên hệ thống.")
+        else:
+            df_final = df_clean
+
+        # 3. TIẾN HÀNH UPLOAD
+        if df_final.empty:
+            st.warning("Không có dữ liệu mới để upload (tất cả đều trùng hoặc file rỗng).")
+        else:
+            records = df_final.to_dict(orient="records")
+            total = len(records)
+            prog = st.progress(0, text=f"Đang đẩy {total} dòng lên database...")
+            ok = 0
+            for i in range(0, total, 500):
+                batch = records[i:i+500]
+                try:
+                    supabase.table("hoa_don").insert(batch).execute()
+                    ok += len(batch)
+                    prog.progress(min(ok/total, 1.0), text=f"Tiến độ: {ok}/{total}")
+                except Exception as e: 
+                    st.error(f"Lỗi tại dòng {i}: {e}")
+            
+            prog.empty()
+            if ok > 0:
+                log_action("UPLOAD_HOA_DON", f"Thành công {ok}/{total} dòng.")
+                st.success(f"Đã upload thành công {ok} dòng dữ liệu mới!")
+                st.cache_data.clear()
                 except Exception as e: st.error(f"Lỗi: {e}")
 
         with s4:

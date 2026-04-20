@@ -983,26 +983,27 @@ def _kk_build_scope_rows(chi_nhanh: str, nhom_hang_chon: str) -> tuple[list, str
     kho = load_the_kho(branches_key=(chi_nhanh,))
     if master.empty or kho.empty:
         return [], "Chưa đủ dữ liệu master/thẻ kho để tạo phiếu kiểm kê."
-
+    
     kho_map = kho.groupby("Mã hàng", as_index=False).agg(ton=("Tồn cuối kì", "sum"))
     df = master.merge(kho_map, left_on="ma_hang", right_on="Mã hàng", how="left")
     df["ton"] = pd.to_numeric(df["ton"], errors="coerce").fillna(0).astype(int)
 
-    # nhom_hang trong DB dùng ">>" không có dấu cách (vd: "Đồng hồ đeo tay>>CITIZEN")
-    # nhom_hang_chon có thể là "A|B|C" (đa nhóm)
+    # Hỗ trợ đa nhóm: nhom_hang_chon có thể là "A|B|C"
+    # DB lưu format "Cha>>Con" không có dấu cách quanh >>
     nhom_col = df["nhom_hang"].fillna("") if "nhom_hang" in df.columns else pd.Series([""] * len(df))
     nhom_list = [x.strip() for x in nhom_hang_chon.split("|") if x.strip()]
     mask = pd.Series([False] * len(df), index=df.index)
     for nhom in nhom_list:
-        if ">>" in nhom:
-            # Nhóm con cụ thể — chuẩn hóa bỏ dấu cách quanh >> để khớp DB
-            nhom_norm = ">>".join(p.strip() for p in nhom.split(">>"))
+        # Chuẩn hóa: bỏ dấu cách quanh >> để khớp format DB
+        nhom_norm = ">>".join(p.strip() for p in nhom.split(">>"))
+        if ">>" in nhom_norm:
+            # Nhóm con cụ thể: khớp chính xác
             mask = mask | (nhom_col == nhom_norm)
         else:
-            # Nhóm cha — lấy tất cả hàng bắt đầu bằng "Cha>>"
-            mask = mask | (nhom_col == nhom) | nhom_col.str.startswith(nhom + ">>")
+            # Nhóm cha: lấy hàng thuộc cha đó hoặc bất kỳ nhóm con nào
+            mask = mask | (nhom_col == nhom_norm) | nhom_col.str.startswith(nhom_norm + ">>")
     df = df[mask & (df["ton"] > 0)].copy()
-
+    
     if df.empty:
         return [], f"Nhóm **{nhom_hang_chon}** không có hàng tồn > 0 tại chi nhánh này."
     
@@ -1214,11 +1215,11 @@ def module_kiem_ke():
             else:
                 # Build danh sách phẳng: gồm cả nhóm cha và nhóm con "Cha >> Con"
                 nhom_flat = []
-            for cha in nhom_cha_list:
-                nhom_flat.append(cha)
-                con_list = sorted([str(x) for x in master[master["_cha"] == cha]["_con"].unique() if str(x)])
-                for con in con_list:
-                    nhom_flat.append(f"{cha}>>{con}")  # khớp format DB, không có dấu cách
+                for cha in nhom_cha_list:
+                    nhom_flat.append(cha)
+                    con_list = sorted([str(x) for x in master[master["_cha"] == cha]["_con"].unique() if str(x)])
+                    for con in con_list:
+                        nhom_flat.append(f"{cha}>>{con}")  # khớp format DB, không có dấu cách
 
                 nhom_chon_list = st.multiselect(
                     "Chọn nhóm hàng kiểm kê (có thể chọn nhiều):",
@@ -1277,7 +1278,6 @@ def module_kiem_ke():
                             st.warning(msg)
 
                     lines = _kk_get_lines(ma_phieu)
-                    st.caption(f"DEBUG: {len(lines)} dòng — cột: {list(lines.columns) if not lines.empty else 'rỗng'}")
                     if not lines.empty:
                         view = lines.copy()
                         view["Lệch Tạm"] = view["sl_thuc_te"] - view["ton_snapshot"]
@@ -1366,9 +1366,7 @@ def module_kiem_ke():
                                     st.success(msg); st.rerun()
                                 else: st.error(msg)
         except Exception as e:
-            import traceback
             st.error(f"Lỗi màn hình quét kiểm kê: {e}")
-            st.code(traceback.format_exc())
 
     with tab_approve:
         if not is_admin():

@@ -3222,11 +3222,19 @@ def module_quan_tri():
                                         df.loc[df[col]=="nan",col] = None
                                 for col in [c for c in df.columns if c not in tc]:
                                     df[col] = pd.to_numeric(df[col],errors="coerce").fillna(0).astype(int)
-                                records = df.where(pd.notnull(df),None).to_dict(orient="records")
-                                for r in records:
-                                    for k,v in r.items():
-                                        if isinstance(v,np.integer): r[k]=int(v)
-                                        elif isinstance(v,np.floating): r[k]=float(v)
+
+                                def _clean_val(v):
+                                    if v is None: return None
+                                    try:
+                                        if pd.isna(v): return None
+                                    except Exception: pass
+                                    if isinstance(v, float) and (v != v): return None  # float nan
+                                    if isinstance(v, np.integer): return int(v)
+                                    if isinstance(v, np.floating): return None if np.isnan(v) else float(v)
+                                    return v
+
+                                records = [{k: _clean_val(v) for k,v in row.items()}
+                                           for row in df.to_dict(orient="records")]
                                 total,ok = len(records),0
                                 prog = st.progress(0,text="Đang upload...")
                                 for i in range(0,total,500):
@@ -3263,11 +3271,20 @@ def module_quan_tri():
                                 for col in ["Tổng tiền hàng","Khách cần trả","Khách đã trả","Đơn giá","Thành tiền"]:
                                     if col in df.columns:
                                         df[col] = pd.to_numeric(df[col],errors="coerce").fillna(0).astype(int)
-                                records = df.where(pd.notnull(df),None).to_dict(orient="records")
-                                for r in records:
-                                    for k,v in r.items():
-                                        if isinstance(v,np.integer): r[k]=int(v)
-                                        elif isinstance(v,np.floating): r[k]=float(v)
+
+                                def _clean_val_hd(v):
+                                    if v is None: return None
+                                    try:
+                                        if pd.isna(v): return None
+                                    except Exception: pass
+                                    if isinstance(v, float) and (v != v): return None  # float nan
+                                    if isinstance(v, np.integer): return int(v)
+                                    if isinstance(v, np.floating): return None if np.isnan(v) else float(v)
+                                    if isinstance(v, pd.Timestamp): return v.isoformat()
+                                    return v
+
+                                records = [{k: _clean_val_hd(v) for k,v in row.items()}
+                                           for row in df.to_dict(orient="records")]
                                 total,ok = len(records),0
                                 prog = st.progress(0,text="Đang upload...")
                                 for i in range(0,total,500):

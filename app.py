@@ -3239,7 +3239,10 @@ def module_quan_tri():
                                 prog = st.progress(0,text="Đang upload...")
                                 for i in range(0,total,500):
                                     try:
-                                        supabase.table("the_kho").insert(records[i:i+500]).execute()
+                                        supabase.table("the_kho").upsert(
+                                            records[i:i+500],
+                                            on_conflict="Mã hàng,Chi nhánh"
+                                        ).execute()
                                         ok+=len(records[i:i+500])
                                         prog.progress(min(ok/total,1.0),text=f"{ok}/{total}...")
                                     except Exception as e: st.error(f"Batch {i}: {e}")
@@ -3289,7 +3292,10 @@ def module_quan_tri():
                                 prog = st.progress(0,text="Đang upload...")
                                 for i in range(0,total,500):
                                     try:
-                                        supabase.table("hoa_don").insert(records[i:i+500]).execute()
+                                        supabase.table("hoa_don").upsert(
+                                            records[i:i+500],
+                                            on_conflict="Mã hóa đơn,Mã hàng"
+                                        ).execute()
                                         ok+=len(records[i:i+500])
                                         prog.progress(min(ok/total,1.0),text=f"{ok}/{total}...")
                                     except Exception as e: st.error(f"Batch {i}: {e}")

@@ -3228,21 +3228,32 @@ def module_quan_tri():
                                     try:
                                         if pd.isna(v): return None
                                     except Exception: pass
-                                    if isinstance(v, float) and (v != v): return None  # float nan
+                                    if isinstance(v, float) and (v != v): return None
                                     if isinstance(v, np.integer): return int(v)
                                     if isinstance(v, np.floating): return None if np.isnan(v) else float(v)
                                     return v
 
                                 records = [{k: _clean_val(v) for k,v in row.items()}
                                            for row in df.to_dict(orient="records")]
+
+                                # Xóa các dòng có (Mã hàng, Chi nhánh) trùng với file đang upload
+                                # để tránh duplicate — lịch sử mã hàng/chi nhánh khác không bị ảnh hưởng
+                                ma_hang_list = df["Mã hàng"].dropna().unique().tolist()
+                                cn_list = df["Chi nhánh"].dropna().unique().tolist()
+                                try:
+                                    supabase.table("the_kho").delete() \
+                                        .in_("Mã hàng", ma_hang_list) \
+                                        .in_("Chi nhánh", cn_list) \
+                                        .execute()
+                                except Exception as e:
+                                    st.error(f"Lỗi xóa dữ liệu cũ: {e}")
+                                    st.stop()
+
                                 total,ok = len(records),0
                                 prog = st.progress(0,text="Đang upload...")
                                 for i in range(0,total,500):
                                     try:
-                                        supabase.table("the_kho").upsert(
-                                            records[i:i+500],
-                                            on_conflict="Mã hàng,Chi nhánh"
-                                        ).execute()
+                                        supabase.table("the_kho").insert(records[i:i+500]).execute()
                                         ok+=len(records[i:i+500])
                                         prog.progress(min(ok/total,1.0),text=f"{ok}/{total}...")
                                     except Exception as e: st.error(f"Batch {i}: {e}")
@@ -3280,7 +3291,7 @@ def module_quan_tri():
                                     try:
                                         if pd.isna(v): return None
                                     except Exception: pass
-                                    if isinstance(v, float) and (v != v): return None  # float nan
+                                    if isinstance(v, float) and (v != v): return None
                                     if isinstance(v, np.integer): return int(v)
                                     if isinstance(v, np.floating): return None if np.isnan(v) else float(v)
                                     if isinstance(v, pd.Timestamp): return v.isoformat()
@@ -3288,16 +3299,26 @@ def module_quan_tri():
 
                                 records = [{k: _clean_val_hd(v) for k,v in row.items()}
                                            for row in df.to_dict(orient="records")]
+
+                                # Xóa các hóa đơn trùng mã trong file đang upload
+                                # → upload lại file cũ không bị nhân đôi, lịch sử tháng khác an toàn
+                                ma_hd_list = df["Mã hóa đơn"].dropna().unique().tolist()
+                                try:
+                                    supabase.table("hoa_don").delete() \
+                                        .in_("Mã hóa đơn", ma_hd_list) \
+                                        .execute()
+                                except Exception as e:
+                                    st.error(f"Lỗi xóa dữ liệu cũ: {e}")
+                                    st.stop()
+
                                 total,ok = len(records),0
                                 prog = st.progress(0,text="Đang upload...")
                                 for i in range(0,total,500):
                                     try:
-                                        supabase.table("hoa_don").upsert(
-                                            records[i:i+500],
-                                            on_conflict="Mã hóa đơn,Mã hàng"
-                                        ).execute()
+                                        supabase.table("hoa_don").insert(records[i:i+500]).execute()
                                         ok+=len(records[i:i+500])
                                         prog.progress(min(ok/total,1.0),text=f"{ok}/{total}...")
+                                    except Exception as e: st.error(f"Batch {i}: {e}")
                                     except Exception as e: st.error(f"Batch {i}: {e}")
                                 prog.empty()
                                 if ok==total:

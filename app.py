@@ -645,9 +645,8 @@ def load_hoa_don(branches_key: tuple):
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
     if "Thời gian" in df.columns:
-        df["_ngay"] = pd.to_datetime(df["Thời gian"], format="%d/%m/%Y %H:%M", errors="coerce")
-        if df["_ngay"].isna().all():
-            df["_ngay"] = pd.to_datetime(df["Thời gian"], dayfirst=True, errors="coerce")
+        # Thử parse format KiotViet gốc trước, sau đó fallback các format khác
+        df["_ngay"] = pd.to_datetime(df["Thời gian"], dayfirst=True, errors="coerce")
         df["_date"] = df["_ngay"].dt.date
     return df
 
@@ -3294,7 +3293,9 @@ def module_quan_tri():
                                     if isinstance(v, float) and (v != v): return None
                                     if isinstance(v, np.integer): return int(v)
                                     if isinstance(v, np.floating): return None if np.isnan(v) else float(v)
-                                    if isinstance(v, pd.Timestamp): return v.isoformat()
+                                    # Timestamp: convert sang format giống KiotViet để đồng nhất trong DB
+                                    if isinstance(v, pd.Timestamp):
+                                        return v.strftime("%d/%m/%Y %H:%M:%S")
                                     return v
 
                                 records = [{k: _clean_val_hd(v) for k,v in row.items()}

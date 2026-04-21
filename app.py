@@ -1448,6 +1448,23 @@ def module_kiem_ke():
                         cols = [c for c in cols if c in view.columns]
                         st.dataframe(view[cols], use_container_width=True, hide_index=True, height=320)
                         st.warning("Lưu ý: Rà soát kỹ trước khi duyệt.")
+
+                        # Xuất file Excel để import vào KiotViet
+                        # Format: chỉ 2 cột "Mã hàng" + "Số lượng" (đúng file mẫu KiotViet)
+                        # Chỉ xuất các mã có SL thực tế > 0 hoặc có chênh lệch
+                        import io
+                        df_export = lines[["ma_hang", "sl_thuc_te"]].copy()
+                        df_export.columns = ["Mã hàng", "Số lượng"]
+                        buf = io.BytesIO()
+                        df_export.to_excel(buf, index=False)
+                        buf.seek(0)
+                        st.download_button(
+                            label="📥 Xuất Excel import KiotViet",
+                            data=buf,
+                            file_name=f"KiemKe_{ma_phieu}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True
+                        )
                         
                         c_left, c_right = st.columns(2)
                         with c_left:

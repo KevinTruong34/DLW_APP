@@ -1570,8 +1570,8 @@ def module_sua_chua():
     user = get_user() or {}
     ho_ten = user.get("ho_ten", user.get("username", ""))
 
-    tab_list, tab_create, tab_detail = st.tabs(
-        ["Danh sách phiếu", "Tạo phiếu mới", "Chi tiết / Cập nhật"]
+    tab_list, tab_create, tab_detail, tab_hoadon = st.tabs(
+        ["Danh sách phiếu", "Tạo phiếu mới", "Chi tiết / Cập nhật", "Tạo hóa đơn sửa"]
     )
 
     # ── HELPERS ──
@@ -1612,63 +1612,62 @@ def module_sua_chua():
         except Exception:
             return f"SC{datetime.now().strftime('%y%m%d%H%M')}"
 
-    def _gen_ma_hdsc() -> str:
-        """Sinh mã hóa đơn sửa chữa HDSC kế tiếp."""
+    def _gen_ma_apsc() -> str:
+        """Sinh mã hóa đơn sửa chữa APSC kế tiếp (App Sửa Chữa, không trùng KiotViet)."""
         try:
             res = supabase.table("hoa_don").select("Mã hóa đơn") \
-                .like("Mã hóa đơn", "HDSC%").order("Mã hóa đơn", desc=True).limit(1).execute()
+                .like("Mã hóa đơn", "APSC%").order("Mã hóa đơn", desc=True).limit(1).execute()
             if res.data:
                 last = res.data[0]["Mã hóa đơn"]
                 num = int("".join(filter(str.isdigit, last))) + 1
             else:
                 num = 1
-            return f"HDSC{num:06d}"
+            return f"APSC{num:06d}"
         except Exception:
-            return f"HDSC{datetime.now().strftime('%y%m%d%H%M')}"
+            return f"APSC{(datetime.now() + timedelta(hours=7)).strftime('%y%m%d%H%M')}"
 
-    def _tao_hoa_don_sc(phieu: dict, ct: pd.DataFrame):
-        """Tạo bản ghi hóa đơn HDSC khi phiếu chuyển sang Hoàn thành."""
-        ma_hd = _gen_ma_hdsc()
-        now_str = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    def _tao_hoa_don_apsc(phieu: dict, ct: pd.DataFrame,
+                           giam_gia: int, pttt: dict) -> str:
+        """Tạo hóa đơn APSC với giảm giá và PTTT tuỳ chỉnh."""
+        ma_hd = _gen_ma_apsc()
+        now_vn = datetime.now() + timedelta(hours=7)
+        now_str = now_vn.strftime("%d/%m/%Y %H:%M:%S")
+        tong = int((ct["so_luong"] * ct["don_gia"]).sum()) if not ct.empty else 0
+        can_tra = max(0, tong - giam_gia - int(phieu.get("khach_tra_truoc", 0)))
         rows = []
+        base = {
+            "Mã hóa đơn": ma_hd, "Chi nhánh": phieu.get("chi_nhanh",""),
+            "Thời gian": now_str, "Thời gian tạo": now_str,
+            "Tên khách hàng": phieu.get("ten_khach",""),
+            "Điện thoại": phieu.get("sdt_khach",""),
+            "Trạng thái": "Hoàn thành", "Người bán": ho_ten,
+            "Tổng tiền hàng": tong, "Giảm giá hóa đơn": giam_gia,
+            "Khách cần trả": can_tra, "Khách đã trả": can_tra,
+            "Tiền mặt": pttt.get("tien_mat", 0),
+            "Chuyển khoản": pttt.get("chuyen_khoan", 0),
+            "Thẻ": pttt.get("the", 0),
+            "Ví": 0, "Điểm": 0, "Còn cần thu (COD)": 0,
+            "Kênh bán": "Tại quầy", "Ghi chú": phieu.get("mo_ta_loi",""),
+        }
         if ct.empty:
-            rows.append({
-                "Mã hóa đơn": ma_hd, "Chi nhánh": phieu.get("chi_nhanh",""),
-                "Thời gian": now_str, "Thời gian tạo": now_str,
-                "Tên khách hàng": phieu.get("ten_khach",""),
-                "Điện thoại": phieu.get("sdt_khach",""),
-                "Trạng thái": "Hoàn thành", "Người bán": ho_ten,
-                "Tổng tiền hàng": 0, "Khách cần trả": 0, "Khách đã trả": 0,
-                "Tiền mặt": 0, "Thẻ": 0, "Ví": 0, "Chuyển khoản": 0,
-                "Giảm giá hóa đơn": 0, "Điểm": 0, "Còn cần thu (COD)": 0,
-                "Kênh bán": "Tại quầy", "Ghi chú": phieu.get("mo_ta_loi",""),
-            })
+            rows.append(base)
         else:
-            tong = int((ct["so_luong"] * ct["don_gia"]).sum())
-            tra_truoc = int(phieu.get("khach_tra_truoc", 0))
             for _, r in ct.iterrows():
                 tt = int(r["so_luong"]) * int(r["don_gia"])
-                rows.append({
-                    "Mã hóa đơn": ma_hd, "Chi nhánh": phieu.get("chi_nhanh",""),
-                    "Thời gian": now_str, "Thời gian tạo": now_str,
-                    "Tên khách hàng": phieu.get("ten_khach",""),
-                    "Điện thoại": phieu.get("sdt_khach",""),
-                    "Trạng thái": "Hoàn thành", "Người bán": ho_ten,
-                    "Mã hàng": r.get("ma_hang",""), "Mã vạch": r.get("ma_hang",""),
-                    "Tên hàng": r.get("ten_hang",""),
-                    "Số lượng": int(r["so_luong"]), "Đơn giá": int(r["don_gia"]),
+                row = {**base,
+                    "Mã hàng": str(r.get("ma_hang") or ""),
+                    "Mã vạch": str(r.get("ma_hang") or ""),
+                    "Tên hàng": str(r.get("ten_hang","")),
+                    "Số lượng": int(r["so_luong"]),
+                    "Đơn giá": int(r["don_gia"]),
                     "Thành tiền": tt, "Giá bán": int(r["don_gia"]),
                     "Giảm giá %": 0, "Giảm giá": 0,
-                    "Tổng tiền hàng": tong, "Khách cần trả": max(0, tong - tra_truoc),
-                    "Khách đã trả": tong, "Tiền mặt": max(0, tong - tra_truoc),
-                    "Thẻ": 0, "Ví": 0, "Chuyển khoản": 0,
-                    "Giảm giá hóa đơn": 0, "Điểm": 0, "Còn cần thu (COD)": 0,
-                    "Kênh bán": "Tại quầy", "Ghi chú": phieu.get("mo_ta_loi",""),
-                })
+                }
+                rows.append(row)
         supabase.table("hoa_don").insert(rows).execute()
         return ma_hd
 
-    TRANG_THAI_LIST = ["Đang sửa", "Chờ linh kiện", "Đang xử lý", "Hoàn thành"]
+    TRANG_THAI_LIST = ["Đang sửa", "Chờ linh kiện", "Chờ giao khách"]
     LOAI_YC_LIST   = ["Sửa chữa", "Bảo hành"]
     LOAI_DONG_LIST = ["Dịch vụ", "Linh kiện"]
 
@@ -1874,16 +1873,18 @@ def module_sua_chua():
             except Exception as e:
                 st.error(f"Lỗi tạo phiếu: {e}")
 
-    # ══════ TAB 3 — CHI TIẾT / CẬP NHẬT ══════
+    # ══════ TAB 3 — CHI TIẾT / CẬP NHẬT (chỉ phiếu chưa Hoàn thành) ══════
     with tab_detail:
         df_all = _load_phieu(tuple(accessible))
-        if df_all.empty:
-            st.info("Chưa có phiếu nào.")
+        # Không hiện phiếu đã Hoàn thành — chúng đã có hóa đơn
+        df_chua_xong = df_all[df_all["trang_thai"] != "Hoàn thành"].copy() if not df_all.empty else df_all
+        if df_chua_xong.empty:
+            st.info("Không có phiếu nào đang xử lý.")
         else:
             # Search giống tab danh sách
             search_dt = st.text_input("Tìm SĐT / Mã phiếu / Tên khách:", key="sc_search_dt",
                                        placeholder="VD: '900' tìm SC000900...")
-            df_filtered = df_all.copy()
+            df_filtered = df_chua_xong.copy()
             if search_dt.strip():
                 s = search_dt.strip().lower()
                 def _match_ma2(ma):
@@ -1909,7 +1910,7 @@ def module_sua_chua():
                 ma_pick = picked.split(" · ")[0]
                 st.session_state["sc_active_ma"] = ma_pick
 
-                phieu = df_all[df_all["ma_phieu"] == ma_pick].iloc[0]
+                phieu = df_chua_xong[df_chua_xong["ma_phieu"] == ma_pick].iloc[0]
                 ct    = _load_chi_tiet(ma_pick)
 
                 # ── Thông tin header ──
@@ -1990,19 +1991,9 @@ def module_sua_chua():
                                 ).execute()
                                 st.session_state["sc_upd_items"] = []
 
-                            # Nếu chuyển sang Hoàn thành → tạo HDSC
-                            hdsc_ma = None
-                            if new_tt == "Hoàn thành" and cur_tt != "Hoàn thành":
-                                ct_latest = _load_chi_tiet(ma_pick)
-                                hdsc_ma = _tao_hoa_don_sc(dict(phieu), ct_latest)
-                                log_action("SC_HOA_DON", f"ma={ma_pick} hdsc={hdsc_ma}")
-
                             st.cache_data.clear()
                             log_action("SC_UPDATE", f"ma={ma_pick} trang_thai={new_tt}")
-                            if hdsc_ma:
-                                st.success(f"✓ Đã cập nhật & tạo hóa đơn **{hdsc_ma}**!")
-                            else:
-                                st.success("✓ Đã cập nhật!")
+                            st.success("✓ Đã cập nhật!")
                             st.rerun()
                         except Exception as e:
                             st.error(f"Lỗi: {e}")
@@ -2027,6 +2018,100 @@ def module_sua_chua():
                             st.success("Đã xóa phiếu."); st.rerun()
                         except Exception as e:
                             st.error(f"Lỗi xóa: {e}")
+
+
+    # ══════ TAB 4 — TẠO HÓA ĐƠN SỬA ══════
+    with tab_hoadon:
+        df_all_hd = _load_phieu(tuple(accessible))
+        # Chỉ hiện phiếu "Chờ giao khách" — sẵn sàng xuất hóa đơn
+        cho_giao = df_all_hd[df_all_hd["trang_thai"] == "Chờ giao khách"].copy() \
+            if not df_all_hd.empty else pd.DataFrame()
+
+        if cho_giao.empty:
+            st.info("Không có phiếu nào ở trạng thái **Chờ giao khách**.")
+            st.caption("Cập nhật trạng thái phiếu sang 'Chờ giao khách' ở tab Chi tiết / Cập nhật trước.")
+        else:
+            opts_hd = [f"{r['ma_phieu']} · {r.get('ten_khach','')} · {r.get('sdt_khach','')}"
+                       for _, r in cho_giao.iterrows()]
+            picked_hd = st.selectbox("Chọn phiếu:", opts_hd, key="sc_hd_pick")
+            ma_hd_pick = picked_hd.split(" · ")[0]
+
+            phieu_hd = cho_giao[cho_giao["ma_phieu"] == ma_hd_pick].iloc[0]
+            ct_hd    = _load_chi_tiet(ma_hd_pick)
+
+            # Tóm tắt phiếu
+            st.markdown(f"**{ma_hd_pick}** — {phieu_hd.get('ten_khach','')} | {phieu_hd.get('sdt_khach','')}")
+            st.caption(f"Hiệu ĐH: {phieu_hd.get('hieu_dong_ho') or '—'} · "
+                       f"Mô tả: {phieu_hd.get('mo_ta_loi','')}")
+
+            if ct_hd.empty:
+                st.warning("Phiếu chưa có dịch vụ/linh kiện nào. Thêm trước ở tab Chi tiết.")
+            else:
+                ct_hd["Thành tiền"] = ct_hd["so_luong"] * ct_hd["don_gia"]
+                ct_view = ct_hd.rename(columns={
+                    "ten_hang": "Tên", "ma_hang": "Mã",
+                    "so_luong": "SL", "don_gia": "Đơn giá"
+                })
+                vcols = ["Tên", "Mã", "SL", "Đơn giá", "Thành tiền"]
+                vcols = [c for c in vcols if c in ct_view.columns]
+                st.dataframe(ct_view[vcols], use_container_width=True, hide_index=True)
+
+            tong_dv = int(ct_hd["Thành tiền"].sum()) if not ct_hd.empty else 0
+            tra_truoc = int(phieu_hd.get("khach_tra_truoc", 0))
+
+            st.markdown("---")
+            st.markdown("**Thông tin hóa đơn:**")
+
+            giam_gia = st.number_input("Giảm giá (đ):", min_value=0, step=10000,
+                                        value=0, key="sc_hd_giam")
+            can_tra = max(0, tong_dv - giam_gia - tra_truoc)
+
+            m1, m2, m3 = st.columns(3)
+            with m1: st.metric("Tổng dịch vụ", f"{tong_dv:,}đ".replace(",","."))
+            with m2: st.metric("Giảm giá + Trả trước", f"{giam_gia + tra_truoc:,}đ".replace(",","."))
+            with m3: st.metric("Khách cần trả", f"{can_tra:,}đ".replace(",","."))
+
+            st.markdown("**Phương thức thanh toán:**")
+            chia_pttt = st.checkbox("Chia nhiều phương thức", key="sc_hd_chia")
+
+            if not chia_pttt:
+                pttt_chon = st.radio("PTTT:", ["Tiền mặt", "Chuyển khoản", "Thẻ"],
+                                      horizontal=True, key="sc_hd_pttt")
+                pttt = {
+                    "tien_mat":      can_tra if pttt_chon == "Tiền mặt" else 0,
+                    "chuyen_khoan":  can_tra if pttt_chon == "Chuyển khoản" else 0,
+                    "the":           can_tra if pttt_chon == "Thẻ" else 0,
+                }
+            else:
+                p1, p2, p3 = st.columns(3)
+                with p1: tm = st.number_input("Tiền mặt:", min_value=0, step=10000,
+                                               value=can_tra, key="sc_hd_tm")
+                with p2: ck = st.number_input("Chuyển khoản:", min_value=0, step=10000,
+                                               value=0, key="sc_hd_ck")
+                with p3: the = st.number_input("Thẻ:", min_value=0, step=10000,
+                                                value=0, key="sc_hd_the")
+                tong_pttt = tm + ck + the
+                if tong_pttt != can_tra:
+                    st.warning(f"Tổng PTTT ({tong_pttt:,}đ) ≠ Khách cần trả ({can_tra:,}đ)".replace(",","."))
+                pttt = {"tien_mat": tm, "chuyen_khoan": ck, "the": the}
+
+            st.markdown("---")
+            if st.button("✅ Tạo hóa đơn APSC", type="primary",
+                          use_container_width=True, key="sc_hd_create",
+                          disabled=ct_hd.empty):
+                try:
+                    apsc_ma = _tao_hoa_don_apsc(dict(phieu_hd), ct_hd, giam_gia, pttt)
+                    # Chuyển phiếu sang Hoàn thành
+                    supabase.table("phieu_sua_chua").update({
+                        "trang_thai": "Hoàn thành",
+                        "updated_at": (datetime.now() + timedelta(hours=7)).isoformat(),
+                    }).eq("ma_phieu", ma_hd_pick).execute()
+                    st.cache_data.clear()
+                    log_action("SC_HOA_DON", f"ma={ma_hd_pick} apsc={apsc_ma}")
+                    st.success(f"✓ Đã tạo hóa đơn **{apsc_ma}** — phiếu chuyển sang Hoàn thành!")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Lỗi tạo hóa đơn: {e}")
 
 
 def module_tong_quan():

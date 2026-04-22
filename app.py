@@ -1569,11 +1569,18 @@ def module_sua_chua():
             return f"SC{datetime.now().strftime('%y%m%d%H%M')}"
 
     def _gen_ma_apsc() -> str:
-        """Sinh mã APSC kế tiếp qua Postgres function để tránh lỗi encode tên cột."""
+        """Sinh mã APSC kế tiếp qua Postgres function."""
         try:
             res = supabase.rpc("get_next_apsc_num", {}).execute()
-            num = res.data if res.data else 1
-            return f"APSC{int(num):06d}"
+            data = res.data
+            # supabase-py có thể trả scalar int hoặc list tuỳ version
+            if isinstance(data, list):
+                num = int(data[0]) if data else 1
+            elif data is not None:
+                num = int(data)
+            else:
+                num = 1
+            return f"APSC{num:06d}"
         except Exception:
             return f"APSC{(datetime.now() + timedelta(hours=7)).strftime('%y%m%d%H%M')}"
 

@@ -1805,7 +1805,7 @@ def module_sua_chua():
                         [{"ma_phieu": ma, **item} for item in items]
                     ).execute()
 
-                # In phiếu ngay sau khi tạo
+                # Lưu HTML phiếu vào session_state để render sau rerun
                 ct_new = pd.DataFrame(items) if items else pd.DataFrame()
                 if not ct_new.empty:
                     for col in ["so_luong","don_gia"]:
@@ -1817,19 +1817,23 @@ def module_sua_chua():
                     "mo_ta_loi": mo_ta.strip(), "khach_tra_truoc": int(tra_truoc),
                     "ngay_hen_tra": str(ngay_hen) if ngay_hen else None,
                     "nguoi_tiep_nhan": ho_ten,
-                    "Ngày TN": datetime.now().strftime("%d/%m/%Y %H:%M"),
+                    "Ngày TN": (datetime.now() + timedelta(hours=7)).strftime("%d/%m/%Y %H:%M"),
                 }
-                _in_phieu_sc(_build_phieu_html(phieu_data, ct_new), key="sc_print_new")
+                st.session_state["sc_pending_print_html"] = _build_phieu_html(phieu_data, ct_new)
 
                 # Reset form
                 st.session_state["sc_create_count"] = cnt + 1
                 st.session_state["sc_active_ma"] = ma
                 st.cache_data.clear()
                 log_action("SC_CREATE", f"ma={ma} kh={ten_khach} cn={cn_create}")
-                st.success(f"✓ Đã tạo phiếu **{ma}** — cửa sổ in đang mở")
                 st.rerun()
             except Exception as e:
                 st.error(f"Lỗi tạo phiếu: {e}")
+
+        # Render lệnh in sau rerun (nếu có)
+        if st.session_state.get("sc_pending_print_html"):
+            _in_phieu_sc(st.session_state.pop("sc_pending_print_html"), key="sc_print_new")
+            st.success(f"✓ Đã tạo phiếu — cửa sổ in đang mở")
 
     # ══════ TAB 3 — CHI TIẾT / CẬP NHẬT (chỉ phiếu chưa Hoàn thành) ══════
     with tab_detail:

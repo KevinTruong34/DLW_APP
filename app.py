@@ -1651,7 +1651,7 @@ def module_sua_chua():
                 gia = int(row.get("gia_ban", 0))
                 label = f"{row['ma_hang']} — {row['ten_hang']}  |  {gia:,}đ".replace(",",".")
                 col_lbl, col_sl, col_btn = st.columns([5, 1, 1])
-                with col_lbl: st.caption(label)
+                with col_lbl: st.markdown(f"<span style='font-size:0.9rem'>{label}</span>", unsafe_allow_html=True)
                 with col_sl:
                     sl = st.number_input("SL", min_value=1, value=1,
                                           key=f"{key_prefix}_sl_{row['ma_hang']}", label_visibility="collapsed")
@@ -1908,9 +1908,9 @@ def module_sua_chua():
                 with i1:
                     st.markdown(f"**Chi nhánh:** {phieu.get('chi_nhanh','')}")
                     st.markdown(f"**Hiệu ĐH:** {phieu.get('hieu_dong_ho') or '—'}")
-                    st.markdown(f"**Loại YC:** {phieu.get('loai_yeu_cau','')}")
-                with i2:
                     st.markdown(f"**Đặc điểm:** {phieu.get('dac_diem') or '—'}")
+                with i2:
+                    st.markdown(f"**Loại YC:** {phieu.get('loai_yeu_cau','')}")
                     st.markdown(f"**Trả trước:** {int(phieu.get('khach_tra_truoc',0)):,}đ".replace(",","."))
                     st.markdown(f"**Hẹn trả:** {phieu.get('ngay_hen_tra') or '—'}")
                 with i3:
@@ -1942,7 +1942,9 @@ def module_sua_chua():
                 st.markdown("---")
 
                 # ── Cập nhật phiếu ──
-                with st.expander("✏️ Cập nhật phiếu", expanded=False):
+                if "sc_upd_open" not in st.session_state:
+                    st.session_state["sc_upd_open"] = False
+                with st.expander("✏️ Cập nhật phiếu", expanded=st.session_state["sc_upd_open"]):
                     cur_tt = phieu.get("trang_thai", "Đang sửa")
                     new_tt = st.selectbox("Trạng thái:", TRANG_THAI_LIST,
                                           index=TRANG_THAI_LIST.index(cur_tt) if cur_tt in TRANG_THAI_LIST else 0,
@@ -1982,6 +1984,7 @@ def module_sua_chua():
 
                             st.cache_data.clear()
                             log_action("SC_UPDATE", f"ma={ma_pick} trang_thai={new_tt}")
+                            st.session_state["sc_upd_open"] = False
                             st.success("✓ Đã cập nhật!")
                             st.rerun()
                         except Exception as e:
@@ -1990,6 +1993,7 @@ def module_sua_chua():
                 # ── In phiếu ──
                 if st.button("🖨️ In phiếu (A5)", use_container_width=True, key="sc_print_detail"):
                     _in_phieu_sc(_build_phieu_html(dict(phieu), ct), key="sc_print_d")
+                st.caption("💡 Nếu thấy URL trên phiếu in: vào More settings → bỏ tick **Headers and footers**")
 
                 # ── Xóa phiếu (admin only) ──
                 if is_admin():

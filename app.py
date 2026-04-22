@@ -198,16 +198,6 @@ hr { border-color: #ebebeb !important; margin: 8px 0 !important; }
 [data-testid="stForm"] > div:empty { display: none !important; }
 [data-testid="stForm"] { border: none !important; padding: 0 !important; }
 
-/* ── Pull-to-refresh indicator ── */
-.pull-refresh-zone {
-    text-align: center;
-    padding: 20px 0 10px 0;
-    color: #aaa;
-    font-size: 0.85rem;
-    border-top: 1px dashed #e0e0e0;
-    margin-top: 24px;
-}
-
 /* ── Mobile ── */
 @media (max-width: 640px) {
     .block-container { padding: 0.4rem 0.5rem 1rem 0.5rem !important; }
@@ -306,40 +296,6 @@ def clear_session_params():
 # SCROLL-TO-BOTTOM RELOAD
 # ==========================================
 
-def inject_scroll_refresh():
-    """Khi user scroll gần đáy trang → reload."""
-    components.html("""
-    <div id="ws-sentinel"></div>
-    <script>
-    (function() {
-      try {
-        const parentWin = window.parent;
-        if (parentWin.__ws_scroll_handler_installed) return;
-        parentWin.__ws_scroll_handler_installed = true;
-
-        let triggered = false;
-        let lastY = 0;
-        const threshold = 80;
-
-        parentWin.addEventListener('scroll', function() {
-          if (triggered) return;
-          const sy = parentWin.scrollY || parentWin.pageYOffset;
-          const ih = parentWin.innerHeight;
-          const doc = parentWin.document.documentElement;
-          const sh = Math.max(doc.scrollHeight, parentWin.document.body.scrollHeight);
-          const atBottom = (sy + ih) >= (sh - threshold);
-          const scrollingDown = sy > lastY;
-          lastY = sy;
-          if (atBottom && scrollingDown && sh > ih + 200) {
-            triggered = true;
-            parentWin.scrollTo({top: sh, behavior: 'smooth'});
-            setTimeout(() => { parentWin.location.reload(); }, 250);
-          }
-        }, { passive: true });
-      } catch(e) { /* cross-origin fallback silently */ }
-    })();
-    </script>
-    """, height=0)
 
 
 # ==========================================
@@ -1613,15 +1569,15 @@ def module_sua_chua():
             return f"SC{datetime.now().strftime('%y%m%d%H%M')}"
 
     def _gen_ma_apsc() -> str:
-        """Sinh mã hóa đơn sửa chữa APSC kế tiếp (App Sửa Chữa, không trùng KiotViet)."""
+        """Sinh mã APSC kế tiếp. Prefix APSC không trùng với KiotViet."""
         try:
             res = supabase.table("hoa_don").select("Mã hóa đơn") \
                 .like("Mã hóa đơn", "APSC%").order("Mã hóa đơn", desc=True).limit(1).execute()
+            num = 1
             if res.data:
-                last = res.data[0]["Mã hóa đơn"]
-                num = int("".join(filter(str.isdigit, last))) + 1
-            else:
-                num = 1
+                digits = "".join(filter(str.isdigit, res.data[0]["Mã hóa đơn"]))
+                if digits:
+                    num = int(digits) + 1
             return f"APSC{num:06d}"
         except Exception:
             return f"APSC{(datetime.now() + timedelta(hours=7)).strftime('%y%m%d%H%M')}"
@@ -2333,7 +2289,7 @@ def module_hoa_don():
                 try:
                     val = float(row.get(col, 0) or 0)
                     if val > 0:
-                        payments.append(f"{icon} {col}: <b>{val:,.0f}đ</b>")
+                        payments.append(f"{icon} {col}: <b>{val:,.0f}đ</b>".replace(",","."))
                 except (ValueError, TypeError):
                     pass
 
@@ -2354,9 +2310,14 @@ def module_hoa_don():
             st.markdown(header_html, unsafe_allow_html=True)
             st.markdown("<br>", unsafe_allow_html=True)
 
-            c1,c2 = st.columns(2)
-            c1.metric("Tổng tiền hàng", f"{row.get('Tổng tiền hàng',0):,.0f} đ")
-            c2.metric("Khách đã trả",   f"{row.get('Khách đã trả',0):,.0f} đ")
+            c1, c2, c3 = st.columns([4, 3, 3])
+            c1.metric("Tổng tiền hàng", f"{row.get('Tổng tiền hàng',0):,.0f}đ".replace(",","."))
+            gg = float(row.get("Giảm giá hóa đơn", 0) or 0)
+            if gg > 0:
+                c2.metric("Giảm giá HĐ", f"{gg:,.0f}đ".replace(",","."))
+            else:
+                c2.metric("Giảm giá HĐ", "0đ")
+            c3.metric("Khách đã trả", f"{row.get('Khách đã trả',0):,.0f}đ".replace(",","."))
 
             # Phương thức thanh toán
             if payments:
@@ -2371,7 +2332,7 @@ def module_hoa_don():
             cols = ["Mã hàng","Tên hàng","Số lượng","Đơn giá","Thành tiền","Ghi chú hàng hóa"]
             dv = inv_df[[c for c in cols if c in inv_df.columns]].copy()
             for c in ["Đơn giá","Thành tiền"]:
-                if c in dv.columns: dv[c] = dv[c].apply(lambda x: f"{x:,.0f}")
+                if c in dv.columns: dv[c] = dv[c].apply(lambda x: f"{x:,.0f}".replace(",","."))
             with st.expander("Chi tiết hàng hóa", expanded=False):
                 st.dataframe(dv, use_container_width=True, hide_index=True)
 
@@ -4242,10 +4203,3 @@ elif page_clean == "Chuyển hàng": module_chuyen_hang()
 elif page_clean == "Quản trị":    module_quan_tri()
 elif page_clean == "Kiểm kê":     module_kiem_ke()
 elif page_clean == "Sửa chữa":    module_sua_chua()
-
-# ── SCROLL-TO-BOTTOM RELOAD ──
-st.markdown(
-    "<div class='pull-refresh-zone'>↓ Kéo xuống cuối để tải lại ↓</div>",
-    unsafe_allow_html=True
-)
-inject_scroll_refresh()

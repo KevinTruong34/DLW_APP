@@ -1569,16 +1569,11 @@ def module_sua_chua():
             return f"SC{datetime.now().strftime('%y%m%d%H%M')}"
 
     def _gen_ma_apsc() -> str:
-        """Sinh mã APSC kế tiếp. Prefix APSC không trùng với KiotViet."""
+        """Sinh mã APSC kế tiếp qua Postgres function để tránh lỗi encode tên cột."""
         try:
-            res = supabase.table("hoa_don").select("Mã hóa đơn") \
-                .like("Mã hóa đơn", "APSC%").order("Mã hóa đơn", desc=True).limit(1).execute()
-            num = 1
-            if res.data:
-                digits = "".join(filter(str.isdigit, res.data[0]["Mã hóa đơn"]))
-                if digits:
-                    num = int(digits) + 1
-            return f"APSC{num:06d}"
+            res = supabase.rpc("get_next_apsc_num", {}).execute()
+            num = res.data if res.data else 1
+            return f"APSC{int(num):06d}"
         except Exception:
             return f"APSC{(datetime.now() + timedelta(hours=7)).strftime('%y%m%d%H%M')}"
 

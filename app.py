@@ -1546,12 +1546,19 @@ def _build_phieu_html(phieu: dict, ct: pd.DataFrame) -> str:
 
 
 def _in_phieu_sc(phieu_html: str, key: str):
-    """Mở tab mới và in phiếu từ HTML."""
+    """Mở tab mới và in phiếu — dùng Blob URL để giữ đúng UTF-8 tiếng Việt."""
     import base64
-    b64 = base64.b64encode(phieu_html.encode()).decode()
+    b64 = base64.b64encode(phieu_html.encode("utf-8")).decode("ascii")
     st.components.v1.html(
-        f"<script>var w=window.open('','_blank');"
-        f"w.document.write(atob('{b64}'));w.document.close();</script>",
+        f"""<script>
+        var b = new Blob(
+            [new TextDecoder('utf-8').decode(
+                Uint8Array.from(atob('{b64}'), c => c.charCodeAt(0))
+            )],
+            {{type: 'text/html; charset=utf-8'}}
+        );
+        var w = window.open(URL.createObjectURL(b), '_blank');
+        </script>""",
         height=0
     )
 
@@ -1667,55 +1674,51 @@ def module_sua_chua():
 
     # ── Helper: widget thêm dịch vụ/linh kiện dùng chung ──
     def _widget_them_dv(key_prefix: str, items_key: str):
-        """Widget tìm và thêm dịch vụ/linh kiện từ danh mục hàng hóa."""
         hh = load_hang_hoa()
-        st.caption("Tìm theo mã hàng:")
-        col_ma, col_btn = st.columns([3, 1])
-        with col_ma:
-            ma_tim = st.text_input("Mã hàng / Tên dịch vụ:", key=f"{key_prefix}_ma_tim",
-                                    placeholder="VD: DVBH, thay pin...")
-        # Tìm trong master
-        hit = pd.DataFrame()
+        ma_tim = st.text_input("🔍 Tìm mã / tên hàng hóa:", key=f"{key_prefix}_ma_tim",
+                                placeholder="VD: PDH, pin, lau dầu...")
+        # Tìm kết quả
+        hits = pd.DataFrame()
         if ma_tim.strip() and not hh.empty:
             s = ma_tim.strip().lower()
             mask = (hh["ma_hang"].astype(str).str.lower().str.contains(s, na=False) |
                     hh["ten_hang"].astype(str).str.lower().str.contains(s, na=False))
-            hit = hh[mask].head(5)
+            hits = hh[mask].head(8)
 
-        # Chọn từ kết quả hoặc nhập tay
-        if not hit.empty:
-            opts = [f"{r['ma_hang']} — {r['ten_hang']} ({int(r.get('gia_ban',0)):,}đ)".replace(",",".")
-                    for _, r in hit.iterrows()]
-            sel = st.selectbox("Chọn:", ["-- Nhập tay --"] + opts, key=f"{key_prefix}_sel")
-            if sel != "-- Nhập tay --":
-                row = hit.iloc[opts.index(sel)]
-                ten_dv   = str(row["ten_hang"])
-                ma_dv    = str(row["ma_hang"])
-                gia_dv   = int(row.get("gia_ban", 0))
-                loai_dv  = "Dịch vụ"
-            else:
-                ten_dv, ma_dv, gia_dv, loai_dv = "", "", 0, "Dịch vụ"
-        else:
-            ten_dv, ma_dv, gia_dv, loai_dv = "", "", 0, "Dịch vụ"
-
-        ca, cb, cc, cd, ce = st.columns([2, 3, 2, 1, 2])
-        with ca: loai_new = st.selectbox("Loại:", LOAI_DONG_LIST, key=f"{key_prefix}_loai",
-                                          index=0 if loai_dv=="Dịch vụ" else 1)
-        with cb: ten_new  = st.text_input("Tên:", value=ten_dv, key=f"{key_prefix}_ten")
-        with cc: ma_new   = st.text_input("Mã hàng:", value=ma_dv, key=f"{key_prefix}_ma")
-        with cd: sl_new   = st.number_input("SL:", min_value=1, value=1, key=f"{key_prefix}_sl")
-        with ce: gia_new  = st.number_input("Đơn giá:", min_value=0, step=10000,
-                                             value=gia_dv, key=f"{key_prefix}_gia")
-        if st.button("➕ Thêm dòng", key=f"{key_prefix}_add"):
-            if ten_new.strip():
-                st.session_state.setdefault(items_key, []).append({
-                    "loai_dong": loai_new, "ten_hang": ten_new.strip(),
-                    "ma_hang": ma_new.strip() or None,
-                    "so_luong": sl_new, "don_gia": gia_new
-                })
-                st.rerun()
-            else:
-                st.warning("Nhập tên dịch vụ/linh kiện.")
+        if not hits.empty:
+            for _, row in hits.iterrows():
+                gia = int(row.get("gia_ban", 0))
+                label = f"{row['ma_hang']} — {row['ten_hang']}  |  {gia:,}đ".replace(",",".")
+                col_lbl, col_sl, col_btn = st.columns([5, 1, 1])
+                with col_lbl: st.caption(label)
+                with col_sl:
+                    sl = st.number_input("SL", min_value=1, value=1,
+                                          key=f"{key_prefix}_sl_{row['ma_hang']}", label_visibility="collapsed")
+                with col_btn:
+                    if st.button("➕", key=f"{key_prefix}_add_{row['ma_hang']}"):
+                        st.session_state.setdefault(items_key, []).append({
+                            "loai_dong": "Dịch vụ",
+                            "ten_hang":  str(row["ten_hang"]),
+                            "ma_hang":   str(row["ma_hang"]),
+                            "so_luong":  int(sl),
+                            "don_gia":   gia,
+                        })
+                        st.rerun()
+        elif ma_tim.strip():
+            st.caption("Không tìm thấy — có thể nhập tay bên dưới:")
+            ca, cb, cc, cd = st.columns([3, 1, 2, 1])
+            with ca: ten_tay = st.text_input("Tên:", key=f"{key_prefix}_tay_ten")
+            with cb: sl_tay  = st.number_input("SL:", min_value=1, value=1, key=f"{key_prefix}_tay_sl")
+            with cc: gia_tay = st.number_input("Đơn giá:", min_value=0, step=10000,
+                                                value=0, key=f"{key_prefix}_tay_gia")
+            with cd:
+                st.write("")
+                if st.button("➕", key=f"{key_prefix}_tay_add") and ten_tay.strip():
+                    st.session_state.setdefault(items_key, []).append({
+                        "loai_dong": "Dịch vụ", "ten_hang": ten_tay.strip(),
+                        "ma_hang": None, "so_luong": sl_tay, "don_gia": gia_tay,
+                    })
+                    st.rerun()
 
     def _hien_thi_items(items_key: str):
         items = st.session_state.get(items_key, [])
@@ -1788,13 +1791,13 @@ def module_sua_chua():
 
         c1, c2 = st.columns(2)
         with c1:
-            ten_khach = st.text_input("Tên khách hàng: *", key=f"sc_ten_kh_{cnt}")
+            sdt_khach = st.text_input("Số điện thoại: *", key=f"sc_sdt_kh_{cnt}")
             hieu_dh   = st.text_input("Hiệu đồng hồ:", key=f"sc_hieu_dh_{cnt}",
                                        placeholder="Casio, Citizen, Seiko...")
             dac_diem  = st.text_input("Đặc điểm (IMEI / mô tả):", key=f"sc_dac_diem_{cnt}",
                                        placeholder="Số serial, màu sắc, trầy xước...")
         with c2:
-            sdt_khach = st.text_input("Số điện thoại: *", key=f"sc_sdt_kh_{cnt}")
+            ten_khach = st.text_input("Tên khách hàng: *", key=f"sc_ten_kh_{cnt}")
             loai_yc   = st.selectbox("Loại yêu cầu:", LOAI_YC_LIST, key=f"sc_loai_yc_{cnt}")
             ngay_hen  = st.date_input("Ngày hẹn trả:", key=f"sc_ngay_hen_{cnt}",
                                        value=None, format="DD/MM/YYYY")
@@ -1909,26 +1912,24 @@ def module_sua_chua():
                 phieu = df_all[df_all["ma_phieu"] == ma_pick].iloc[0]
                 ct    = _load_chi_tiet(ma_pick)
 
-                # ── Thông tin header — font to hơn dùng markdown ──
-                st.markdown(f"""
-<div style='font-size:1.1rem;line-height:1.8;background:#f9f9f9;
-     border-radius:8px;padding:12px 16px;border:1px solid #e8e8e8;'>
-<div style='font-size:1.25rem;font-weight:700;margin-bottom:6px;'>
-  {ma_pick} &nbsp;·&nbsp; {phieu.get('trang_thai','')}
-</div>
-<div>👤 <b>Khách:</b> {phieu.get('ten_khach','')} &nbsp;|&nbsp;
-     📞 <b>SĐT:</b> {phieu.get('sdt_khach','')}</div>
-<div>🕐 <b>Tiếp nhận:</b> {phieu.get('Ngày TN','—')} &nbsp;·&nbsp;
-     👨‍🔧 <b>NV:</b> {phieu.get('nguoi_tiep_nhan') or '—'}</div>
-<div>⌚ <b>Hiệu ĐH:</b> {phieu.get('hieu_dong_ho') or '—'} &nbsp;|&nbsp;
-     🏷️ <b>Loại:</b> {phieu.get('loai_yeu_cau','')} &nbsp;|&nbsp;
-     📋 <b>Đặc điểm:</b> {phieu.get('dac_diem') or '—'}</div>
-<div>📅 <b>Hẹn trả:</b> {phieu.get('ngay_hen_tra') or '—'} &nbsp;|&nbsp;
-     💰 <b>Trả trước:</b> {int(phieu.get('khach_tra_truoc',0)):,}đ</div>
-<div>🔧 <b>Mô tả lỗi:</b> {phieu.get('mo_ta_loi','')}</div>
-{f"<div>📝 <b>Ghi chú NB:</b> {phieu.get('ghi_chu_noi_bo','')}</div>" if phieu.get('ghi_chu_noi_bo') else ""}
-</div>
-""".replace(",","."), unsafe_allow_html=True)
+                # ── Thông tin header ──
+                st.markdown(f"#### {ma_pick} — {phieu.get('ten_khach','')} | {phieu.get('sdt_khach','')}")
+                i1, i2, i3 = st.columns(3)
+                with i1:
+                    st.markdown(f"**Chi nhánh:** {phieu.get('chi_nhanh','')}")
+                    st.markdown(f"**Loại YC:** {phieu.get('loai_yeu_cau','')}")
+                    st.markdown(f"**Hiệu ĐH:** {phieu.get('hieu_dong_ho') or '—'}")
+                with i2:
+                    st.markdown(f"**Đặc điểm:** {phieu.get('dac_diem') or '—'}")
+                    st.markdown(f"**Trả trước:** {int(phieu.get('khach_tra_truoc',0)):,}đ".replace(",","."))
+                    st.markdown(f"**Hẹn trả:** {phieu.get('ngay_hen_tra') or '—'}")
+                with i3:
+                    st.markdown(f"**NV tiếp nhận:** {phieu.get('nguoi_tiep_nhan') or '—'}")
+                    st.markdown(f"**Ngày TN:** {phieu.get('Ngày TN','—')}")
+                    st.markdown(f"**Trạng thái:** {phieu.get('trang_thai','')}")
+                st.markdown(f"**Mô tả lỗi:** {phieu.get('mo_ta_loi','')}")
+                if phieu.get("ghi_chu_noi_bo"):
+                    st.markdown(f"**Ghi chú nội bộ:** {phieu.get('ghi_chu_noi_bo','')}")
 
                 # ── Bảng dịch vụ ──
                 if not ct.empty:
@@ -1966,7 +1967,11 @@ def module_sua_chua():
                     # Thêm dịch vụ/linh kiện ngay trong cập nhật
                     st.markdown("**Thêm dịch vụ / Linh kiện:**")
                     _widget_them_dv("sc_upd_dv", "sc_upd_items")
+                    upd_items = st.session_state.get("sc_upd_items", [])
                     _hien_thi_items("sc_upd_items")
+                    if upd_items:
+                        tong_moi = sum(x["so_luong"] * x["don_gia"] for x in upd_items)
+                        st.caption(f"Tổng dịch vụ mới thêm: **{tong_moi:,}đ**".replace(",","."))
 
                     if st.button("💾 Lưu cập nhật", type="primary", use_container_width=True, key="sc_save_upd"):
                         try:

@@ -1458,7 +1458,8 @@ def _build_phieu_html(phieu: dict, ct: pd.DataFrame) -> str:
   .sub {{ text-align:center; font-size:12px; color:#444; margin-bottom:10px; }}
   .info {{ width:100%; border-collapse:collapse; margin-bottom:8px; }}
   .info td {{ padding:3px 4px; font-size:13px; vertical-align:top; }}
-  .info .lbl {{ font-weight:700; white-space:nowrap; width:38%; }}
+  .info .lbl {{ font-weight:700; white-space:nowrap; width:22%; }}
+  .info .val {{ width:28%; }}
   .svc {{ width:100%; border-collapse:collapse; margin-top:6px; }}
   .svc th {{ background:#eee; border:1px solid #aaa; padding:4px 5px; font-size:12px; }}
   .svc td {{ border:1px solid #aaa; padding:4px 5px; font-size:12px; }}
@@ -1473,13 +1474,13 @@ def _build_phieu_html(phieu: dict, ct: pd.DataFrame) -> str:
 <div class='sub'>Mã: <b>{phieu.get('ma_phieu','')}</b> &nbsp;·&nbsp; {phieu.get('Ngày TN','')}</div>
 <hr>
 <table class='info'>
-  <tr><td class='lbl'>Khách hàng:</td><td><b>{phieu.get('ten_khach','')}</b></td>
+  <tr><td class='lbl'>Khách hàng:</td><td class='val'><b>{phieu.get('ten_khach','')}</b></td>
       <td class='lbl'>SĐT:</td><td><b>{phieu.get('sdt_khach','')}</b></td></tr>
-  <tr><td class='lbl'>Hiệu đồng hồ:</td><td>{phieu.get('hieu_dong_ho') or '—'}</td>
+  <tr><td class='lbl'>Hiệu đồng hồ:</td><td class='val'>{phieu.get('hieu_dong_ho') or '—'}</td>
       <td class='lbl'>Loại YC:</td><td>{phieu.get('loai_yeu_cau','')}</td></tr>
   <tr><td class='lbl'>Đặc điểm:</td><td colspan='3'>{phieu.get('dac_diem') or '—'}</td></tr>
   <tr><td class='lbl'>Mô tả lỗi:</td><td colspan='3'>{phieu.get('mo_ta_loi','')}</td></tr>
-  <tr><td class='lbl'>Hẹn trả:</td><td>{phieu.get('ngay_hen_tra') or '—'}</td>
+  <tr><td class='lbl'>Hẹn trả:</td><td class='val'>{phieu.get('ngay_hen_tra') or '—'}</td>
       <td class='lbl'>Trả trước:</td><td>{int(phieu.get('khach_tra_truoc',0)):,}đ</td></tr>
 </table>
 <hr>
@@ -1634,12 +1635,15 @@ def module_sua_chua():
         hh = load_hang_hoa()
         ma_tim = st.text_input("🔍 Tìm mã / tên hàng hóa:", key=f"{key_prefix}_ma_tim",
                                 placeholder="VD: PDH, pin, lau dầu...")
-        # Tìm kết quả
+        # Tìm kết quả — chuẩn hoá bỏ dấu cách để "pin150" khớp "pin 150"
         hits = pd.DataFrame()
         if ma_tim.strip() and not hh.empty:
             s = ma_tim.strip().lower()
-            mask = (hh["ma_hang"].astype(str).str.lower().str.contains(s, na=False) |
-                    hh["ten_hang"].astype(str).str.lower().str.contains(s, na=False))
+            s_nospace = s.replace(" ", "")
+            def _fuzzy(val):
+                v = str(val).lower()
+                return s in v or s_nospace in v.replace(" ", "")
+            mask = (hh["ma_hang"].apply(_fuzzy) | hh["ten_hang"].apply(_fuzzy))
             hits = hh[mask].head(8)
 
         if not hits.empty:
@@ -1679,16 +1683,19 @@ def module_sua_chua():
 
     def _hien_thi_items(items_key: str):
         items = st.session_state.get(items_key, [])
-        if items:
-            for i, item in enumerate(items):
-                ci1, ci2, ci3, ci4, ci5 = st.columns([2, 4, 1, 2, 1])
-                with ci1: st.caption(item.get("loai_dong",""))
-                with ci2: st.caption(item.get("ten_hang",""))
-                with ci3: st.caption(str(item.get("so_luong",1)))
-                with ci4: st.caption(f"{item.get('don_gia',0):,}đ".replace(",","."))
-                with ci5:
-                    if st.button("✕", key=f"del_{items_key}_{i}"):
-                        st.session_state[items_key].pop(i); st.rerun()
+        # Luôn hiện container kể cả khi rỗng để tránh collapse đột ngột
+        if not items:
+            st.caption("_(Chưa có mục nào)_")
+            return
+        for i, item in enumerate(items):
+            ci1, ci2, ci3, ci4, ci5 = st.columns([2, 4, 1, 2, 1])
+            with ci1: st.markdown(f"<span style='font-size:0.9rem'>{item.get('loai_dong','')}</span>", unsafe_allow_html=True)
+            with ci2: st.markdown(f"<span style='font-size:0.9rem'>{item.get('ten_hang','')}</span>", unsafe_allow_html=True)
+            with ci3: st.markdown(f"<span style='font-size:0.9rem'>x{item.get('so_luong',1)}</span>", unsafe_allow_html=True)
+            with ci4: st.markdown(f"<span style='font-size:0.9rem'>{item.get('don_gia',0):,}đ</span>".replace(",","."), unsafe_allow_html=True)
+            with ci5:
+                if st.button("✕", key=f"del_{items_key}_{i}"):
+                    st.session_state[items_key].pop(i); st.rerun()
 
     # ══════ TAB 1 — DANH SÁCH ══════
     with tab_list:
@@ -1697,7 +1704,7 @@ def module_sua_chua():
             cn_filter = st.selectbox("Chi nhánh:", ["Tất cả"] + accessible, key="sc_cn_filter")
         branches = accessible if cn_filter == "Tất cả" else [cn_filter]
 
-        tt_filter = st.selectbox("Trạng thái:", ["Tất cả"] + TRANG_THAI_LIST, key="sc_tt_filter")
+        tt_filter = st.selectbox("Trạng thái:", ["Tất cả"] + TRANG_THAI_LIST + ["Hoàn thành"], key="sc_tt_filter")
         search = st.text_input("Tìm SĐT / Mã phiếu / Tên khách:", key="sc_search",
                                 placeholder="VD: '900' tìm SC000900...")
 
@@ -1709,7 +1716,6 @@ def module_sua_chua():
                 df = df[df["trang_thai"] == tt_filter]
             if search.strip():
                 s = search.strip().lower()
-                # Tìm số cuối mã phiếu: "900" khớp SC000900
                 def _match_ma(ma):
                     try: return str(int(ma[2:])).endswith(s) if ma.startswith("SC") else s in ma.lower()
                     except: return s in str(ma).lower()
@@ -1731,8 +1737,27 @@ def module_sua_chua():
                 cols = ["Mã Phiếu", "Chi Nhánh", "Khách hàng", "SĐT", "Loại",
                         "Hiệu ĐH", "Trạng Thái", "Hẹn Trả", "Ngày TN", "NV Tiếp Nhận"]
                 cols = [c for c in cols if c in view.columns]
-                st.dataframe(view[cols], use_container_width=True, hide_index=True, height=420)
+                st.dataframe(view[cols], use_container_width=True, hide_index=True, height=360)
                 st.caption(f"Tổng: {len(df)} phiếu")
+
+                # Xem chi tiết phiếu
+                st.markdown("---")
+                st.caption("📋 Xem chi tiết dịch vụ / linh kiện của một phiếu:")
+                ma_opts = view["Mã Phiếu"].tolist() if "Mã Phiếu" in view.columns else []
+                picked_list = st.selectbox("Chọn phiếu:", ["-- Chọn --"] + ma_opts, key="sc_list_pick")
+                if picked_list != "-- Chọn --":
+                    ct_list = _load_chi_tiet(picked_list)
+                    if ct_list.empty:
+                        st.info("Phiếu này chưa có dịch vụ.")
+                    else:
+                        ct_list["Thành tiền"] = ct_list["so_luong"] * ct_list["don_gia"]
+                        ct_view = ct_list.rename(columns={
+                            "loai_dong": "Loại", "ten_hang": "Tên", "ma_hang": "Mã",
+                            "so_luong": "SL", "don_gia": "Đơn giá"
+                        })
+                        vcols = ["Loại", "Tên", "Mã", "SL", "Đơn giá", "Thành tiền"]
+                        vcols = [c for c in vcols if c in ct_view.columns]
+                        st.dataframe(ct_view[vcols], use_container_width=True, hide_index=True)
 
     # ══════ TAB 2 — TẠO PHIẾU ══════
     with tab_create:
@@ -1763,6 +1788,8 @@ def module_sua_chua():
                               placeholder="Mô tả chi tiết tình trạng đồng hồ...")
         tra_truoc = st.number_input("Khách trả trước (đ):", min_value=0, step=10000,
                                      key=f"sc_tra_truoc_{cnt}", value=0)
+        if tra_truoc > 0:
+            st.caption(f"= {int(tra_truoc):,}đ".replace(",","."))
         ghi_chu   = st.text_area("Ghi chú nội bộ:", key=f"sc_ghi_chu_nb_{cnt}",
                                   placeholder="Thợ kỹ thuật ghi chú...")
 
@@ -1880,8 +1907,8 @@ def module_sua_chua():
                 i1, i2, i3 = st.columns(3)
                 with i1:
                     st.markdown(f"**Chi nhánh:** {phieu.get('chi_nhanh','')}")
-                    st.markdown(f"**Loại YC:** {phieu.get('loai_yeu_cau','')}")
                     st.markdown(f"**Hiệu ĐH:** {phieu.get('hieu_dong_ho') or '—'}")
+                    st.markdown(f"**Loại YC:** {phieu.get('loai_yeu_cau','')}")
                 with i2:
                     st.markdown(f"**Đặc điểm:** {phieu.get('dac_diem') or '—'}")
                     st.markdown(f"**Trả trước:** {int(phieu.get('khach_tra_truoc',0)):,}đ".replace(",","."))
@@ -2026,6 +2053,8 @@ def module_sua_chua():
 
             giam_gia = st.number_input("Giảm giá (đ):", min_value=0, step=10000,
                                         value=0, key="sc_hd_giam")
+            if giam_gia > 0:
+                st.caption(f"= {int(giam_gia):,}đ".replace(",","."))
             can_tra = max(0, tong_dv - giam_gia - tra_truoc)
 
             m1, m2, m3 = st.columns(3)
@@ -2046,15 +2075,26 @@ def module_sua_chua():
                 }
             else:
                 p1, p2, p3 = st.columns(3)
-                with p1: tm = st.number_input("Tiền mặt:", min_value=0, step=10000,
-                                               value=can_tra, key="sc_hd_tm")
-                with p2: ck = st.number_input("Chuyển khoản:", min_value=0, step=10000,
-                                               value=0, key="sc_hd_ck")
-                with p3: the = st.number_input("Thẻ:", min_value=0, step=10000,
-                                                value=0, key="sc_hd_the")
+                with p1:
+                    tm = st.number_input("Tiền mặt:", min_value=0, step=10000,
+                                          value=can_tra, key="sc_hd_tm")
+                    if tm > 0: st.caption(f"= {int(tm):,}đ".replace(",","."))
+                with p2:
+                    ck = st.number_input("Chuyển khoản:", min_value=0, step=10000,
+                                          value=0, key="sc_hd_ck")
+                    if ck > 0: st.caption(f"= {int(ck):,}đ".replace(",","."))
+                with p3:
+                    the = st.number_input("Thẻ:", min_value=0, step=10000,
+                                           value=0, key="sc_hd_the")
+                    if the > 0: st.caption(f"= {int(the):,}đ".replace(",","."))
                 tong_pttt = tm + ck + the
-                if tong_pttt != can_tra:
-                    st.warning(f"Tổng PTTT ({tong_pttt:,}đ) ≠ Khách cần trả ({can_tra:,}đ)".replace(",","."))
+                lech = tong_pttt - can_tra
+                if lech != 0:
+                    lech_label = f"Dư: +{lech:,}đ" if lech > 0 else f"Thiếu: {lech:,}đ"
+                    st.warning(
+                        f"Tổng cần trả: **{can_tra:,}đ** &nbsp;|&nbsp; "
+                        f"Đã nhập: **{tong_pttt:,}đ** &nbsp;|&nbsp; {lech_label}".replace(",",".")
+                    )
                 pttt = {"tien_mat": tm, "chuyen_khoan": ck, "the": the}
 
             st.markdown("---")

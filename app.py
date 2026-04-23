@@ -1703,13 +1703,13 @@ def module_nhap_hang():
                     if not hits.empty:
                         # Header labels cho các ô input
                         hh1,hh2,hh3,hh4,hh5 = st.columns([3,1,2,2,1])
-                        with hh2: st.caption("Số lượng")
-                        with hh3: st.caption("Giá vốn")
-                        with hh4: st.caption("Giá bán")
+                        with hh2: st.markdown("**Số lượng**")
+                        with hh3: st.markdown("**Giá vốn**")
+                        with hh4: st.markdown("**Giá bán**")
                         for _, r in hits.iterrows():
                             gb_cu = int(r.get("gia_ban",0))
                             h1,h2,h3,h4,h5 = st.columns([3,1,2,2,1])
-                            with h1: st.caption(f"{r['ma_hang']} — {r['ten_hang']}")
+                            with h1: st.markdown(f"**{r['ma_hang']}** — {r['ten_hang']}")
                             with h2: sl = st.number_input("SL",min_value=1,value=1,
                                         key=f"pnh_sl_{cnt}_{r['ma_hang']}", label_visibility="collapsed")
                             with h3: gv = st.number_input("Giá vốn",min_value=0,step=1000,
@@ -2127,6 +2127,23 @@ def module_nhap_hang():
                     columns={"ma_ncc":"Mã","ten_ncc":"Tên NCC","sdt":"SĐT",
                              "dia_chi":"Địa chỉ","ghi_chu":"Ghi chú"}),
                     use_container_width=True, hide_index=True)
+
+                # Xóa NCC
+                st.markdown("**Xóa NCC:**")
+                ncc_del_opts = ["-- Chọn NCC để xóa --"] + [
+                    f"{r['ma_ncc']} — {r['ten_ncc']}" for _, r in df_ncc2.iterrows()
+                ]
+                ncc_del = st.selectbox("", ncc_del_opts, key="ncc_del_pick",
+                                        label_visibility="collapsed")
+                if ncc_del != "-- Chọn NCC để xóa --":
+                    ma_del = ncc_del.split(" — ")[0]
+                    if st.button("🗑️ Xóa NCC này", type="secondary", key="ncc_del_btn"):
+                        try:
+                            supabase.table("nha_cung_cap").update({"active": False}) \
+                                .eq("ma_ncc", ma_del).execute()
+                            st.cache_data.clear()
+                            st.success(f"✓ Đã xóa {ncc_del}"); st.rerun()
+                        except Exception as e: st.error(f"Lỗi: {e}")
 
             st.markdown("---")
             st.markdown("**Thêm NCC mới:**")
@@ -3409,7 +3426,9 @@ def module_hang_hoa():
             with c_close:
                 st.markdown("<div style='padding-top:10px;'>", unsafe_allow_html=True)
                 if st.button("✕", key="btn_close", help="Đóng"):
-                    st.session_state.pop("hh_ma_chon", None); st.rerun()
+                    st.session_state.pop("hh_ma_chon", None)
+                    st.session_state["hh_search"] = ""
+                    st.rerun()
                 st.markdown("</div>", unsafe_allow_html=True)
 
             # Tồn kho 3 chi nhánh, highlight CN hiện tại (active, không phải active_cn)

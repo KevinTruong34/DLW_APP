@@ -1974,8 +1974,10 @@ def module_nhap_hang():
                             # Batch 1: load tồn kho — filter trong Python để tránh lỗi encode tên cột
                             kho_res = supabase.table("the_kho").select("*") \
                                 .eq("Chi nhánh", chi_nhanh).execute()
-                            kho_map = {r["Mã hàng"]: r for r in (kho_res.data or [])
-                                       if r.get("Mã hàng") in ma_hangs}
+                            ma_hangs_set = {str(m).strip() for m in ma_hangs}
+                            kho_map = {str(r["Mã hàng"]).strip(): r
+                                       for r in (kho_res.data or [])
+                                       if str(r.get("Mã hàng","")).strip() in ma_hangs_set}
 
                             # ── Batch 2: load giá bán hiện tại trong hang_hoa ──
                             hh_res = supabase.table("hang_hoa").select("ma_hang,gia_ban") \
@@ -2069,12 +2071,17 @@ def module_nhap_hang():
                             # Batch load tồn kho — filter Python tránh lỗi encode
                             kho_res = supabase.table("the_kho").select("*") \
                                 .eq("Chi nhánh", chi_nhanh).execute()
-                            kho_map = {r["Mã hàng"]: r for r in (kho_res.data or [])
-                                       if r.get("Mã hàng") in ma_hangs}
+                            ma_hangs_set = {str(m).strip() for m in ma_hangs}
+                            kho_map = {str(r["Mã hàng"]).strip(): r
+                                       for r in (kho_res.data or [])
+                                       if str(r.get("Mã hàng","")).strip() in ma_hangs_set}
 
-                            sl_map = {str(r["ma_hang"]): int(r["so_luong"]) for _, r in ct.iterrows()}
+                            sl_map = {str(r["ma_hang"]).strip(): int(r["so_luong"]) for _, r in ct.iterrows()}
+
+                            if not kho_map:
+                                st.warning("Không tìm thấy dòng tồn kho để trừ — phiếu vẫn được hủy.")
                             for mh, kho_row in kho_map.items():
-                                sl = sl_map.get(mh, 0)
+                                sl  = sl_map.get(mh, 0)
                                 cur = int(kho_row.get("Tồn cuối kì") or 0)
                                 supabase.table("the_kho").update(
                                     {"Tồn cuối kì": max(0, cur - sl)}

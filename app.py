@@ -1935,11 +1935,14 @@ def module_sua_chua():
         c1, c2 = st.columns(2)
         with c1:
             sdt_khach = st.text_input("Số điện thoại: *", key=f"sc_sdt_kh_{cnt}")
-            # Auto-fill tên từ DB khách hàng
-            kh_found = lookup_khach_hang(sdt_khach) if sdt_khach.strip() else None
+            # Auto-fill: lookup khi SĐT thay đổi, lưu vào session_state
+            sdt_key = f"sc_sdt_prev_{cnt}"
+            kh_key  = f"sc_kh_found_{cnt}"
+            if sdt_khach.strip() != st.session_state.get(sdt_key, ""):
+                st.session_state[sdt_key] = sdt_khach.strip()
+                st.session_state[kh_key]  = lookup_khach_hang(sdt_khach) if sdt_khach.strip() else None
+            kh_found = st.session_state.get(kh_key)
             ten_auto = kh_found["ten_kh"] if kh_found else ""
-            ten_border = "" if (not sdt_khach.strip() or kh_found) else \
-                "border: 1px solid #e63946 !important; border-radius: 8px;"
             if sdt_khach.strip() and not kh_found:
                 st.caption("⚠️ SĐT chưa có trong hệ thống — khách mới sẽ được lưu tự động")
             hieu_dh   = st.text_input("Hiệu đồng hồ:", key=f"sc_hieu_dh_{cnt}",
@@ -1949,9 +1952,6 @@ def module_sua_chua():
         with c2:
             ten_khach = st.text_input("Tên khách hàng: *", value=ten_auto,
                                        key=f"sc_ten_kh_{cnt}")
-            if ten_border:
-                st.markdown(f"<style>div[data-testid='stTextInput']:has(input[aria-label='Tên khách hàng: *']) input {{{ten_border}}}</style>",
-                            unsafe_allow_html=True)
             loai_yc   = st.selectbox("Loại yêu cầu:", LOAI_YC_LIST, key=f"sc_loai_yc_{cnt}")
             ngay_hen  = st.date_input("Ngày hẹn trả:", key=f"sc_ngay_hen_{cnt}",
                                        value=None, format="DD/MM/YYYY")
@@ -2522,11 +2522,17 @@ def module_hoa_don():
             f"{code}  ·  {row.get('Thời gian','')}  ·  {row.get('Tên khách hàng','Khách lẻ')}",
             expanded=True
         ):
-            # Status badge + Người bán
+            # Status badge + Người bán + SĐT
+            sdt_hd = str(row.get("Điện thoại","") or "").strip()
             header_html = (
                 f'<span style="background:{color};color:#fff;padding:3px 12px;'
                 f'border-radius:20px;font-size:.8rem;font-weight:600;">{status}</span>'
             )
+            if sdt_hd and sdt_hd.lower() not in ("nan","none",""):
+                header_html += (
+                    f'<span style="margin-left:10px;font-size:0.82rem;color:#555;">'
+                    f'📞 {sdt_hd}</span>'
+                )
             if nguoi_ban:
                 header_html += (
                     f'<span style="margin-left:10px;font-size:0.82rem;color:#555;">'

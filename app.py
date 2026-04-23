@@ -1512,6 +1512,175 @@ def _in_phieu_sc(phieu_html: str, key: str):
     )
 
 
+def lookup_khach_hang(sdt: str) -> dict | None:
+    """Tra cứu khách hàng theo SĐT. Trả None nếu không tìm thấy."""
+    if not sdt or not sdt.strip(): return None
+    try:
+        sdt_clean = sdt.strip().replace(" ", "")
+        res = supabase.table("khach_hang").select("*").eq("sdt", sdt_clean).limit(1).execute()
+        return res.data[0] if res.data else None
+    except Exception: return None
+
+
+def _gen_ma_akh() -> str:
+    """Sinh mã AKH kế tiếp qua Postgres function."""
+    try:
+        res = supabase.rpc("get_next_akh_num", {}).execute()
+        data = res.data
+        num = int(data[0] if isinstance(data, list) else data) if data else 1
+        return f"AKH{num:06d}"
+    except Exception:
+        return f"AKH{(datetime.now() + timedelta(hours=7)).strftime('%y%m%d%H%M')}"
+
+
+def _upsert_khach_hang(ten: str, sdt: str, chi_nhanh: str = "") -> str:
+    """Thêm mới hoặc bỏ qua nếu SĐT đã tồn tại. Trả về ma_kh."""
+    sdt_clean = sdt.strip().replace(" ", "")
+    existing = lookup_khach_hang(sdt_clean)
+    if existing:
+        return existing.get("ma_kh", "")
+    try:
+        ma = _gen_ma_akh()
+        supabase.table("khach_hang").insert({
+            "ma_kh": ma, "ten_kh": ten.strip(), "sdt": sdt_clean,
+            "chi_nhanh_tao": chi_nhanh,
+            "created_at": (datetime.now() + timedelta(hours=7)).isoformat(),
+            "updated_at": (datetime.now() + timedelta(hours=7)).isoformat(),
+        }).execute()
+        return ma
+    except Exception: return ""
+
+
+@st.cache_data(ttl=120)
+def load_khach_hang_list() -> pd.DataFrame:
+    rows, batch, offset = [], 1000, 0
+    while True:
+        res = supabase.table("khach_hang").select("*") \
+            .order("updated_at", desc=True).range(offset, offset+batch-1).execute()
+        if not res.data: break
+        rows.extend(res.data)
+        if len(res.data) < batch: break
+        offset += batch
+    if not rows: return pd.DataFrame()
+    df = pd.DataFrame(rows)
+    for col in ["tong_ban", "diem_hien_tai"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
+    return df
+
+
+def module_khach_hang():
+    st.markdown("### 👥 Khách hàng")
+    tab_list, tab_detail = st.tabs(["Danh sách", "Chi tiết khách"])
+
+    with tab_list:
+        search = st.text_input("Tìm SĐT / Tên / Mã KH:", key="kh_search",
+                                placeholder="Nhập SĐT hoặc tên...")
+        df = load_khach_hang_list()
+        if df.empty:
+            st.info("Chưa có khách hàng nào. Upload file từ tab Quản trị.")
+        else:
+            if search.strip():
+                s = search.strip().lower()
+                mask = (df["sdt"].astype(str).str.contains(s, na=False) |
+                        df["ten_kh"].astype(str).str.lower().str.contains(s, na=False) |
+                        df["ma_kh"].astype(str).str.lower().str.contains(s, na=False))
+                df = df[mask]
+            if df.empty:
+                st.info("Không tìm thấy.")
+            else:
+                view = df.rename(columns={
+                    "ma_kh": "Mã KH", "ten_kh": "Tên KH", "sdt": "SĐT",
+                    "chi_nhanh_tao": "Chi Nhánh", "nhom_kh": "Nhóm",
+                    "tong_ban": "Tổng mua", "diem_hien_tai": "Điểm",
+                    "ngay_gd_cuoi": "GD Cuối"
+                })
+                cols = ["Mã KH", "Tên KH", "SĐT", "Chi Nhánh", "Nhóm",
+                        "Tổng mua", "Điểm", "GD Cuối"]
+                cols = [c for c in cols if c in view.columns]
+                st.dataframe(view[cols], use_container_width=True, hide_index=True, height=420)
+                st.caption(f"Tổng: {len(df)} khách")
+
+    with tab_detail:
+        search_dt = st.text_input("Tìm SĐT / Tên:", key="kh_detail_search",
+                                   placeholder="Nhập SĐT để tra cứu...")
+        df_all = load_khach_hang_list()
+        if df_all.empty:
+            st.info("Chưa có dữ liệu.")
+        else:
+            df_f = df_all.copy()
+            if search_dt.strip():
+                s = search_dt.strip().lower()
+                mask = (df_f["sdt"].astype(str).str.contains(s, na=False) |
+                        df_f["ten_kh"].astype(str).str.lower().str.contains(s, na=False))
+                df_f = df_f[mask]
+
+            if df_f.empty:
+                st.info("Không tìm thấy khách.")
+            else:
+                opts = [f"{r['ma_kh']} · {r['ten_kh']} · {r['sdt']}"
+                        for _, r in df_f.iterrows()]
+                picked = st.selectbox("Chọn khách:", opts, key="kh_detail_pick")
+                ma_pick = picked.split(" · ")[0]
+                kh = df_all[df_all["ma_kh"] == ma_pick].iloc[0]
+
+                # Thông tin khách
+                k1, k2, k3 = st.columns(3)
+                with k1:
+                    st.markdown(f"**Mã KH:** {kh.get('ma_kh','')}")
+                    st.markdown(f"**Tên:** {kh.get('ten_kh','')}")
+                    st.markdown(f"**SĐT:** {kh.get('sdt','')}")
+                with k2:
+                    st.markdown(f"**Chi nhánh:** {kh.get('chi_nhanh_tao') or '—'}")
+                    st.markdown(f"**Nhóm KH:** {kh.get('nhom_kh') or '—'}")
+                    st.markdown(f"**Giới tính:** {kh.get('gioi_tinh') or '—'}")
+                with k3:
+                    st.markdown(f"**Tổng mua:** {int(kh.get('tong_ban',0)):,}đ".replace(',','.'))
+                    st.markdown(f"**Điểm:** {int(kh.get('diem_hien_tai',0))}")
+                    st.markdown(f"**GD cuối:** {kh.get('ngay_gd_cuoi') or '—'}")
+                if kh.get("ghi_chu"):
+                    st.markdown(f"**Ghi chú:** {kh.get('ghi_chu','')}")
+
+                st.markdown("---")
+
+                # Lịch sử hóa đơn
+                sdt_kh = str(kh.get("sdt",""))
+                ten_kh = str(kh.get("ten_kh",""))
+                try:
+                    hd_data = load_hoa_don(tuple(get_accessible_branches()))
+                    if not hd_data.empty:
+                        # Match theo SĐT hoặc tên
+                        mask_hd = (hd_data["Điện thoại"].astype(str).str.replace(" ","").str.contains(sdt_kh.replace(" ",""), na=False))
+                        hd_kh = hd_data[mask_hd].copy()
+                        if not hd_kh.empty:
+                            st.markdown(f"**Lịch sử hóa đơn ({hd_kh['Mã hóa đơn'].nunique()} HĐ):**")
+                            hd_view = hd_kh.drop_duplicates(subset=["Mã hóa đơn"]) \
+                                [["Mã hóa đơn","Thời gian","Chi nhánh","Tổng tiền hàng","Trạng thái"]] \
+                                .sort_values("Thời gian", ascending=False)
+                            st.dataframe(hd_view, use_container_width=True, hide_index=True, height=200)
+                        else:
+                            st.caption("Chưa có hóa đơn.")
+                except Exception: st.caption("Không tải được lịch sử HĐ.")
+
+                # Lịch sử phiếu sửa chữa
+                try:
+                    sc_data = supabase.table("phieu_sua_chua").select(
+                        "ma_phieu,trang_thai,mo_ta_loi,ngay_tiep_nhan,chi_nhanh"
+                    ).eq("sdt_khach", sdt_kh).order("created_at", desc=True).execute()
+                    if sc_data.data:
+                        st.markdown(f"**Lịch sử sửa chữa ({len(sc_data.data)} phiếu):**")
+                        sc_df = pd.DataFrame(sc_data.data)
+                        sc_df = sc_df.rename(columns={
+                            "ma_phieu":"Mã Phiếu","trang_thai":"Trạng Thái",
+                            "mo_ta_loi":"Mô tả","ngay_tiep_nhan":"Ngày TN",
+                            "chi_nhanh":"Chi Nhánh"
+                        })
+                        st.dataframe(sc_df, use_container_width=True, hide_index=True, height=200)
+                    else:
+                        st.caption("Chưa có phiếu sửa chữa.")
+                except Exception: st.caption("Không tải được lịch sử SC.")
+
+
 def module_sua_chua():
     st.markdown("### 🔧 Sửa chữa")
     active = get_active_branch()
@@ -1766,12 +1935,23 @@ def module_sua_chua():
         c1, c2 = st.columns(2)
         with c1:
             sdt_khach = st.text_input("Số điện thoại: *", key=f"sc_sdt_kh_{cnt}")
+            # Auto-fill tên từ DB khách hàng
+            kh_found = lookup_khach_hang(sdt_khach) if sdt_khach.strip() else None
+            ten_auto = kh_found["ten_kh"] if kh_found else ""
+            ten_border = "" if (not sdt_khach.strip() or kh_found) else \
+                "border: 1px solid #e63946 !important; border-radius: 8px;"
+            if sdt_khach.strip() and not kh_found:
+                st.caption("⚠️ SĐT chưa có trong hệ thống — khách mới sẽ được lưu tự động")
             hieu_dh   = st.text_input("Hiệu đồng hồ:", key=f"sc_hieu_dh_{cnt}",
                                        placeholder="Casio, Citizen, Seiko...")
             dac_diem  = st.text_input("Đặc điểm (IMEI / mô tả):", key=f"sc_dac_diem_{cnt}",
                                        placeholder="Số serial, màu sắc, trầy xước...")
         with c2:
-            ten_khach = st.text_input("Tên khách hàng: *", key=f"sc_ten_kh_{cnt}")
+            ten_khach = st.text_input("Tên khách hàng: *", value=ten_auto,
+                                       key=f"sc_ten_kh_{cnt}")
+            if ten_border:
+                st.markdown(f"<style>div[data-testid='stTextInput']:has(input[aria-label='Tên khách hàng: *']) input {{{ten_border}}}</style>",
+                            unsafe_allow_html=True)
             loai_yc   = st.selectbox("Loại yêu cầu:", LOAI_YC_LIST, key=f"sc_loai_yc_{cnt}")
             ngay_hen  = st.date_input("Ngày hẹn trả:", key=f"sc_ngay_hen_{cnt}",
                                        value=None, format="DD/MM/YYYY")
@@ -1823,6 +2003,9 @@ def module_sua_chua():
                     supabase.table("phieu_sua_chua_chi_tiet").insert(
                         [{"ma_phieu": ma, **item} for item in items]
                     ).execute()
+
+                # Lưu khách hàng mới vào DB nếu chưa tồn tại
+                _upsert_khach_hang(ten_khach.strip(), sdt_khach.strip(), cn_create)
 
                 # Lưu HTML phiếu vào session_state để render sau rerun
                 ct_new = pd.DataFrame(items) if items else pd.DataFrame()
@@ -3772,7 +3955,7 @@ def module_quan_tri():
             f"rồi sang tab **Xóa dữ liệu** để nhấn nút **Kết sổ tất cả phiếu App**."
         )
 
-    tab_up, tab_del, tab_nv = st.tabs(["Upload","Xóa dữ liệu","Nhân viên"])
+    tab_up, tab_del, tab_nv, tab_kh = st.tabs(["Upload","Xóa dữ liệu","Nhân viên","Upload KH"])
 
     with tab_up:
         s1, s2, s3, s4 = st.tabs(["Hàng hóa (master)","Thẻ kho","Hóa đơn","Chuyển kho"])
@@ -4174,6 +4357,74 @@ def module_quan_tri():
     with tab_nv:
         module_nhan_vien()
 
+    with tab_kh:
+        st.caption("Upload file **Danh sách khách hàng** từ KiotViet (.xlsx)")
+        up_kh = st.file_uploader("Chọn file:", type=["xlsx","xls"], key="up_khach_hang")
+        if up_kh:
+            try:
+                df_kh = pd.read_excel(up_kh)
+                st.success(f"Đọc được {len(df_kh)} dòng")
+                miss = [c for c in ["Mã khách hàng","Tên khách hàng","Điện thoại"] if c not in df_kh.columns]
+                if miss:
+                    st.error(f"Thiếu cột: {', '.join(miss)}")
+                else:
+                    st.info(f"{df_kh['Mã khách hàng'].nunique()} khách hàng")
+                    with st.expander("Xem trước"):
+                        st.dataframe(df_kh.head(), use_container_width=True, hide_index=True)
+                    if st.button("Upload khách hàng", key="btn_up_kh", type="primary"):
+                        with st.spinner("Đang xử lý..."):
+                            def _cv(v):
+                                if v is None: return None
+                                try:
+                                    if pd.isna(v): return None
+                                except Exception: pass
+                                if isinstance(v, float) and (v != v): return None
+                                if isinstance(v, np.integer): return int(v)
+                                if isinstance(v, np.floating): return None if np.isnan(v) else float(v)
+                                if isinstance(v, pd.Timestamp): return v.strftime("%Y-%m-%d")
+                                return str(v).strip() if str(v).strip() not in ("nan","None","") else None
+
+                            rows_kh = []
+                            for _, r in df_kh.iterrows():
+                                sdt_raw = str(r.get("Điện thoại","") or "").strip().replace(" ","")
+                                if not sdt_raw or sdt_raw == "nan": continue
+                                rows_kh.append({
+                                    "ma_kh":          _cv(r.get("Mã khách hàng")),
+                                    "ten_kh":         _cv(r.get("Tên khách hàng")) or "Không tên",
+                                    "sdt":            sdt_raw,
+                                    "gioi_tinh":      _cv(r.get("Giới tính")),
+                                    "ngay_sinh":      _cv(r.get("Ngày sinh")),
+                                    "nhom_kh":        _cv(r.get("Nhóm khách hàng")),
+                                    "chi_nhanh_tao":  _cv(r.get("Chi nhánh tạo")),
+                                    "tong_ban":       int(r.get("Tổng bán trừ trả hàng") or 0),
+                                    "diem_hien_tai":  int(r.get("Điểm hiện tại") or 0),
+                                    "ngay_gd_cuoi":   _cv(r.get("Ngày giao dịch cuối")),
+                                    "ghi_chu":        _cv(r.get("Ghi chú")),
+                                    "trang_thai":     int(r.get("Trạng thái") or 1),
+                                    "updated_at":     (datetime.now() + timedelta(hours=7)).isoformat(),
+                                })
+
+                            total, ok = len(rows_kh), 0
+                            prog = st.progress(0, text="Đang upload...")
+                            for i in range(0, total, 200):
+                                batch = rows_kh[i:i+200]
+                                try:
+                                    # Upsert theo sdt — không trùng lặp
+                                    supabase.table("khach_hang").upsert(
+                                        batch, on_conflict="sdt"
+                                    ).execute()
+                                    ok += len(batch)
+                                    prog.progress(min(ok/total, 1.0), text=f"{ok}/{total}...")
+                                except Exception as e:
+                                    st.error(f"Batch {i}: {e}")
+                            prog.empty()
+                            if ok == total:
+                                log_action("UPLOAD_KHACH_HANG", f"rows={ok}")
+                                st.success(f"✓ Upload {ok} khách hàng thành công!")
+                                st.cache_data.clear()
+            except Exception as e:
+                st.error(f"Lỗi: {e}")
+
 
 # ==========================================
 # NAVIGATION  v15.0
@@ -4190,7 +4441,7 @@ role_lbl  = {"admin":"Admin","ke_toan":"Kế toán","nhan_vien":"Nhân viên"}.g
 
 # Menu: BỎ Tổng quan khỏi vị trí có dashboard — chỉ còn welcome
 # Sắp xếp thứ tự theo ý anh: Tổng quan -> Hóa đơn -> Hàng hóa -> Chuyển hàng -> Kiểm kê
-menu = ["📊 Tổng quan", "🧾 Hóa đơn", "📦 Hàng hóa", "🔄 Chuyển hàng", "🧮 Kiểm kê", "🔧 Sửa chữa"]
+menu = ["📊 Tổng quan", "🧾 Hóa đơn", "📦 Hàng hóa", "🔄 Chuyển hàng", "🧮 Kiểm kê", "🔧 Sửa chữa", "👥 Khách hàng"]
 
 if is_admin():
     menu.append("⚙️ Quản trị")
@@ -4246,3 +4497,4 @@ elif page_clean == "Chuyển hàng": module_chuyen_hang()
 elif page_clean == "Quản trị":    module_quan_tri()
 elif page_clean == "Kiểm kê":     module_kiem_ke()
 elif page_clean == "Sửa chữa":    module_sua_chua()
+elif page_clean == "Khách hàng":  module_khach_hang()

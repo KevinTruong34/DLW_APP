@@ -1971,13 +1971,22 @@ def module_nhap_hang():
                             chi_nhanh = phieu.get("chi_nhanh","")
                             ma_hangs  = ct["ma_hang"].astype(str).tolist()
 
-                            # Batch 1: load tồn kho — filter trong Python để tránh lỗi encode tên cột
-                            kho_res = supabase.table("the_kho").select("*") \
-                                .eq("Chi nhánh", chi_nhanh).execute()
+                            # Batch 1: load tồn kho với pagination — tránh giới hạn 1000 rows
+                            kho_rows2, batch2, offset2 = [], 1000, 0
+                            while True:
+                                r2 = supabase.table("the_kho").select("*") \
+                                    .eq("Chi nhánh", chi_nhanh) \
+                                    .range(offset2, offset2+batch2-1).execute()
+                                if not r2.data: break
+                                kho_rows2.extend(r2.data)
+                                if len(r2.data) < batch2: break
+                                offset2 += batch2
                             ma_hangs_set = {str(m).strip() for m in ma_hangs}
-                            kho_map = {str(r["Mã hàng"]).strip(): r
-                                       for r in (kho_res.data or [])
-                                       if str(r.get("Mã hàng","")).strip() in ma_hangs_set}
+                            ma_key2 = next((k for k in (kho_rows2[0].keys() if kho_rows2 else [])
+                                            if "m" in k.lower() and "h" in k.lower() and len(k) <= 8), "Mã hàng")
+                            kho_map = {str(r.get(ma_key2,"")).strip(): r
+                                       for r in kho_rows2
+                                       if str(r.get(ma_key2,"")).strip() in ma_hangs_set}
 
                             # ── Batch 2: load giá bán hiện tại trong hang_hoa ──
                             hh_res = supabase.table("hang_hoa").select("ma_hang,gia_ban") \
@@ -2066,26 +2075,29 @@ def module_nhap_hang():
                                  use_container_width=True, key="pnh_revert"):
                         try:
                             chi_nhanh = phieu.get("chi_nhanh","")
-                            ma_hangs  = ct["ma_hang"].astype(str).tolist()
-
-                            # Batch load tồn kho — filter Python tránh lỗi encode
-                            kho_res = supabase.table("the_kho").select("*") \
-                                .eq("Chi nhánh", chi_nhanh).execute()
-                            ma_hangs_set = {str(m).strip() for m in ma_hangs}
-                            kho_map = {str(r["Mã hàng"]).strip(): r
-                                       for r in (kho_res.data or [])
-                                       if str(r.get("Mã hàng","")).strip() in ma_hangs_set}
-
+                            ma_hangs  = ct["ma_hang"].astype(str).str.strip().tolist()
+                            ma_hangs_set = set(ma_hangs)
                             sl_map = {str(r["ma_hang"]).strip(): int(r["so_luong"]) for _, r in ct.iterrows()}
 
-                            if not kho_map:
-                                st.warning("Không tìm thấy dòng tồn kho để trừ — phiếu vẫn được hủy.")
-                                st.caption(f"DEBUG ma_hangs_set={ma_hangs_set}")
-                                st.caption(f"DEBUG kho_res rows={len(kho_res.data or [])}")
-                                if kho_res.data:
-                                    sample = kho_res.data[0]
-                                    st.caption(f"DEBUG sample keys={list(sample.keys())[:5]}")
-                                    st.caption(f"DEBUG sample Mã hàng='{sample.get('Mã hàng','MISSING')}'")
+                            # Load the_kho với pagination — tránh bị giới hạn 1000 rows
+                            kho_rows, batch, offset = [], 1000, 0
+                            while True:
+                                r2 = supabase.table("the_kho").select("*") \
+                                    .eq("Chi nhánh", chi_nhanh) \
+                                    .range(offset, offset+batch-1).execute()
+                                if not r2.data: break
+                                kho_rows.extend(r2.data)
+                                if len(r2.data) < batch: break
+                                offset += batch
+
+                            # Tìm key thực tế của "Mã hàng" trong response
+                            ma_key = next((k for k in (kho_rows[0].keys() if kho_rows else [])
+                                           if "m" in k.lower() and "h" in k.lower() and len(k) <= 8), "Mã hàng")
+
+                            kho_map = {str(r.get(ma_key,"")).strip(): r
+                                       for r in kho_rows
+                                       if str(r.get(ma_key,"")).strip() in ma_hangs_set}
+
                             for mh, kho_row in kho_map.items():
                                 sl  = sl_map.get(mh, 0)
                                 cur = int(kho_row.get("Tồn cuối kì") or 0)

@@ -1667,13 +1667,11 @@ def module_nhap_hang():
             if df_ncc.empty:
                 st.warning("Chưa có NCC nào. Admin thêm NCC ở tab Nhà cung cấp trước.")
             else:
-                ncc_opts = ["-- Chọn NCC --"] + df_ncc["ten_ncc"].tolist()
-                ncc_pick = st.selectbox("Nhà cung cấp: *", ncc_opts, key=f"pnh_ncc_{cnt}")
-                ma_ncc, ten_ncc = "", ""
-                if ncc_pick != "-- Chọn NCC --":
-                    row_ncc = df_ncc[df_ncc["ten_ncc"] == ncc_pick].iloc[0]
-                    ma_ncc  = row_ncc["ma_ncc"]
-                    ten_ncc = row_ncc["ten_ncc"]
+                ncc_opts = {"-- Chọn NCC --": ("","") }
+                for _, r in df_ncc.iterrows():
+                    ncc_opts[f"{r['ma_ncc']} — {r['ten_ncc']}"] = (r["ma_ncc"], r["ten_ncc"])
+                ncc_label = st.selectbox("Nhà cung cấp: *", list(ncc_opts.keys()), key=f"pnh_ncc_{cnt}")
+                ma_ncc, ten_ncc = ncc_opts[ncc_label]
 
                 ghi_chu = st.text_area("Ghi chú:", key=f"pnh_gc_{cnt}",
                                         placeholder="Số hóa đơn NCC, ghi chú giao hàng...")
@@ -1785,7 +1783,7 @@ def module_nhap_hang():
                                            f"{_fmt(x['gia_ban_cu'])}đ → **{_fmt(x['gia_ban_moi'])}đ**")
 
                 st.markdown("---")
-                can_save = ncc_pick != "-- Chọn NCC --" and len(items) > 0
+                can_save = bool(ma_ncc) and len(items) > 0
                 c_draft, c_submit = st.columns(2)
                 with c_draft:
                     if st.button("💾 Lưu nháp", use_container_width=True,
@@ -1912,6 +1910,63 @@ def module_nhap_hang():
                                  use_container_width=True, key="pnh_confirm"):
                         try:
                             now_vn = (datetime.now()+timedelta(hours=7)).isoformat()
+                            chi_nhanh = phieu.get("chi_nhanh","")
+                            ma_hangs  = ct["ma_hang"].astype(str).tolist()
+
+                            # ── Batch 1: load tồn kho hiện tại cho toàn bộ mã hàng ──
+                            kho_res = supabase.table("the_kho").select("id,Mã hàng,Tồn cuối kì") \
+                                .eq("Chi nhánh", chi_nhanh).in_("Mã hàng", ma_hangs).execute()
+                            kho_map = {r["Mã hàng"]: r for r in (kho_res.data or [])}
+
+                            # ── Batch 2: load giá bán hiện tại trong hang_hoa ──
+                            hh_res = supabase.table("hang_hoa").select("ma_hang,gia_ban") \
+                                .in_("ma_hang", ma_hangs).execute()
+                            hh_map = {r["ma_hang"]: r for r in (hh_res.data or [])}
+
+                            # ── Tính toán trong Python ──
+                            kho_updates, kho_inserts = [], []
+                            hh_updates, hh_inserts   = [], []
+
+                            for _, r in ct.iterrows():
+                                mh     = str(r["ma_hang"])
+                                sl     = int(r["so_luong"])
+                                gb_moi = int(r["gia_ban_moi"])
+                                gb_cu  = r.get("gia_ban_cu")
+
+                                # Tồn kho
+                                if mh in kho_map:
+                                    cur = int(kho_map[mh].get("Tồn cuối kì") or 0)
+                                    kho_updates.append({"id": kho_map[mh]["id"],
+                                                        "Tồn cuối kì": cur + sl})
+                                else:
+                                    kho_inserts.append({"Mã hàng": mh, "Chi nhánh": chi_nhanh,
+                                                        "Tên hàng": str(r["ten_hang"]),
+                                                        "Tồn cuối kì": sl, "Tồn đầu kì": 0})
+
+                                # Giá bán
+                                if mh in hh_map:
+                                    if gb_cu is not None and gb_moi != int(gb_cu or 0):
+                                        hh_updates.append({"ma_hang": mh, "gia_ban": gb_moi})
+                                else:
+                                    # Hàng mới — insert vào hang_hoa
+                                    hh_inserts.append({"ma_hang": mh,
+                                                       "ten_hang": str(r["ten_hang"]),
+                                                       "gia_ban": gb_moi})
+
+                            # ── Batch execute ──
+                            # Tồn kho update: upsert theo id
+                            for u in kho_updates:
+                                supabase.table("the_kho").update({"Tồn cuối kì": u["Tồn cuối kì"]}) \
+                                    .eq("id", u["id"]).execute()
+                            if kho_inserts:
+                                supabase.table("the_kho").insert(kho_inserts).execute()
+                            # Giá bán: update batch
+                            for u in hh_updates:
+                                supabase.table("hang_hoa").update({"gia_ban": u["gia_ban"]}) \
+                                    .eq("ma_hang", u["ma_hang"]).execute()
+                            if hh_inserts:
+                                supabase.table("hang_hoa").insert(hh_inserts).execute()
+
                             # Cập nhật trạng thái phiếu
                             supabase.table("phieu_nhap_hang").update({
                                 "trang_thai": "Đã nhập kho",
@@ -1919,48 +1974,6 @@ def module_nhap_hang():
                                 "confirmed_at": now_vn,
                                 "updated_at": now_vn,
                             }).eq("ma_phieu", ma_pick).execute()
-
-                            chi_nhanh = phieu.get("chi_nhanh","")
-                            for _, r in ct.iterrows():
-                                mh = str(r["ma_hang"])
-                                sl = int(r["so_luong"])
-                                gb_moi = int(r["gia_ban_moi"])
-
-                                # Cộng SL vào the_kho
-                                kho = supabase.table("the_kho").select("id,Tồn cuối kì") \
-                                    .eq("Mã hàng", mh).eq("Chi nhánh", chi_nhanh).limit(1).execute()
-                                if kho.data:
-                                    cur = int(kho.data[0].get("Tồn cuối kì") or 0)
-                                    supabase.table("the_kho").update(
-                                        {"Tồn cuối kì": cur + sl}
-                                    ).eq("id", kho.data[0]["id"]).execute()
-                                else:
-                                    # Hàng mới chưa có trong the_kho — thêm dòng mới
-                                    supabase.table("the_kho").insert({
-                                        "Mã hàng": mh, "Chi nhánh": chi_nhanh,
-                                        "Tên hàng": str(r["ten_hang"]),
-                                        "Tồn cuối kì": sl,
-                                        "Tồn đầu kì": 0,
-                                    }).execute()
-
-                                # Cập nhật giá bán trong hang_hoa nếu thay đổi
-                                gb_cu = r.get("gia_ban_cu")
-                                if gb_cu is not None and gb_moi != int(gb_cu):
-                                    supabase.table("hang_hoa").update(
-                                        {"gia_ban": gb_moi}
-                                    ).eq("ma_hang", mh).execute()
-
-                                # Nếu hàng mới (_is_new) thì insert vào hang_hoa
-                                # (dựa vào gia_ban_cu là None)
-                                if gb_cu is None:
-                                    existing = supabase.table("hang_hoa").select("ma_hang") \
-                                        .eq("ma_hang", mh).limit(1).execute()
-                                    if not existing.data:
-                                        supabase.table("hang_hoa").insert({
-                                            "ma_hang": mh,
-                                            "ten_hang": str(r["ten_hang"]),
-                                            "gia_ban": gb_moi,
-                                        }).execute()
 
                             st.cache_data.clear()
                             log_action("PNH_CONFIRM", f"ma={ma_pick} cn={chi_nhanh}")
@@ -1988,15 +2001,21 @@ def module_nhap_hang():
                                  use_container_width=True, key="pnh_revert"):
                         try:
                             chi_nhanh = phieu.get("chi_nhanh","")
-                            for _, r in ct.iterrows():
-                                mh = str(r["ma_hang"]); sl = int(r["so_luong"])
-                                kho = supabase.table("the_kho").select("id,Tồn cuối kì") \
-                                    .eq("Mã hàng", mh).eq("Chi nhánh", chi_nhanh).limit(1).execute()
-                                if kho.data:
-                                    cur = int(kho.data[0].get("Tồn cuối kì") or 0)
-                                    supabase.table("the_kho").update(
-                                        {"Tồn cuối kì": max(0, cur - sl)}
-                                    ).eq("id", kho.data[0]["id"]).execute()
+                            ma_hangs  = ct["ma_hang"].astype(str).tolist()
+
+                            # Batch load tồn kho
+                            kho_res = supabase.table("the_kho").select("id,Mã hàng,Tồn cuối kì") \
+                                .eq("Chi nhánh", chi_nhanh).in_("Mã hàng", ma_hangs).execute()
+                            kho_map = {r["Mã hàng"]: r for r in (kho_res.data or [])}
+
+                            sl_map = {str(r["ma_hang"]): int(r["so_luong"]) for _, r in ct.iterrows()}
+                            for mh, kho_row in kho_map.items():
+                                sl = sl_map.get(mh, 0)
+                                cur = int(kho_row.get("Tồn cuối kì") or 0)
+                                supabase.table("the_kho").update(
+                                    {"Tồn cuối kì": max(0, cur - sl)}
+                                ).eq("id", kho_row["id"]).execute()
+
                             supabase.table("phieu_nhap_hang").update({
                                 "trang_thai": "Đã hủy",
                                 "updated_at": (datetime.now()+timedelta(hours=7)).isoformat()

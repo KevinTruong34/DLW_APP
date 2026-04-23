@@ -1972,7 +1972,7 @@ def module_nhap_hang():
                             ma_hangs  = ct["ma_hang"].astype(str).tolist()
 
                             # Batch 1: load tồn kho — filter trong Python để tránh lỗi encode tên cột
-                            kho_res = supabase.table("the_kho").select("id,Mã hàng,Tồn cuối kì") \
+                            kho_res = supabase.table("the_kho").select("*") \
                                 .eq("Chi nhánh", chi_nhanh).execute()
                             kho_map = {r["Mã hàng"]: r for r in (kho_res.data or [])
                                        if r.get("Mã hàng") in ma_hangs}
@@ -2067,7 +2067,7 @@ def module_nhap_hang():
                             ma_hangs  = ct["ma_hang"].astype(str).tolist()
 
                             # Batch load tồn kho — filter Python tránh lỗi encode
-                            kho_res = supabase.table("the_kho").select("id,Mã hàng,Tồn cuối kì") \
+                            kho_res = supabase.table("the_kho").select("*") \
                                 .eq("Chi nhánh", chi_nhanh).execute()
                             kho_map = {r["Mã hàng"]: r for r in (kho_res.data or [])
                                        if r.get("Mã hàng") in ma_hangs}

@@ -2521,12 +2521,11 @@ def module_hoa_don():
                 except (ValueError, TypeError):
                     pass
 
-        # Chuẩn hóa SĐT: bỏ .0 nếu bị float
-        sdt_raw = row.get("Điện thoại","") or ""
-        try:
-            sdt_hd = str(int(float(str(sdt_raw)))) if sdt_raw and str(sdt_raw).strip() not in ("","nan","None") else ""
-        except Exception:
-            sdt_hd = str(sdt_raw).strip()
+        # Chuẩn hóa SĐT: bỏ .0 nếu bị lưu dạng float
+        sdt_raw = str(row.get("Điện thoại","") or "").strip()
+        if sdt_raw.endswith(".0"):
+            sdt_raw = sdt_raw[:-2]
+        sdt_hd = sdt_raw if sdt_raw.lower() not in ("","nan","none") else ""
 
         ten_kh = row.get("Tên khách hàng","Khách lẻ") or "Khách lẻ"
         title_parts = [code, str(row.get("Thời gian","")), ten_kh]

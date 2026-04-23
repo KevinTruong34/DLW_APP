@@ -4384,6 +4384,13 @@ def module_quan_tri():
                                 if isinstance(v, pd.Timestamp): return v.strftime("%Y-%m-%d")
                                 return str(v).strip() if str(v).strip() not in ("nan","None","") else None
 
+                            def _to_int(v, default=0):
+                                try:
+                                    if v is None: return default
+                                    if isinstance(v, float) and v != v: return default
+                                    return int(float(v))
+                                except: return default
+
                             rows_kh = []
                             for _, r in df_kh.iterrows():
                                 sdt_raw = str(r.get("Điện thoại","") or "").strip().replace(" ","")
@@ -4396,11 +4403,11 @@ def module_quan_tri():
                                     "ngay_sinh":      _cv(r.get("Ngày sinh")),
                                     "nhom_kh":        _cv(r.get("Nhóm khách hàng")),
                                     "chi_nhanh_tao":  _cv(r.get("Chi nhánh tạo")),
-                                    "tong_ban":       int(r.get("Tổng bán trừ trả hàng") or 0),
-                                    "diem_hien_tai":  int(r.get("Điểm hiện tại") or 0),
+                                    "tong_ban":       _to_int(r.get("Tổng bán trừ trả hàng")),
+                                    "diem_hien_tai":  _to_int(r.get("Điểm hiện tại")),
                                     "ngay_gd_cuoi":   _cv(r.get("Ngày giao dịch cuối")),
                                     "ghi_chu":        _cv(r.get("Ghi chú")),
-                                    "trang_thai":     int(r.get("Trạng thái") or 1),
+                                    "trang_thai":     _to_int(r.get("Trạng thái"), default=1),
                                     "updated_at":     (datetime.now() + timedelta(hours=7)).isoformat(),
                                 })
 

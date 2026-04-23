@@ -949,19 +949,22 @@ def _kk_build_scope_rows(chi_nhanh: str, nhom_hang_chon: str) -> tuple[list, str
     df = master.merge(kho_map, left_on="ma_hang", right_on="Mã hàng", how="left")
     df["ton"] = pd.to_numeric(df["ton"], errors="coerce").fillna(0).astype(int)
 
-    # Hỗ trợ đa nhóm: nhom_hang_chon có thể là "A|B|C"
-    # DB lưu format "Cha>>Con" không có dấu cách quanh >>
-    nhom_col = df["nhom_hang"].fillna("") if "nhom_hang" in df.columns else pd.Series([""] * len(df))
+    # Dùng loai_hang + thuong_hieu nếu có, fallback nhom_hang cũ
+    def _get_nhom_col(df_in):
+        if "loai_hang" in df_in.columns:
+            th = df_in.get("thuong_hieu", pd.Series([""] * len(df_in))).fillna("")
+            lt = df_in["loai_hang"].fillna("")
+            return lt.where(th == "", lt + ">>" + th)
+        return df_in["nhom_hang"].fillna("") if "nhom_hang" in df_in.columns else pd.Series([""] * len(df_in))
+
+    nhom_col  = _get_nhom_col(df)
     nhom_list = [x.strip() for x in nhom_hang_chon.split("|") if x.strip()]
     mask = pd.Series([False] * len(df), index=df.index)
     for nhom in nhom_list:
-        # Chuẩn hóa: bỏ dấu cách quanh >> để khớp format DB
         nhom_norm = ">>".join(p.strip() for p in nhom.split(">>"))
         if ">>" in nhom_norm:
-            # Nhóm con cụ thể: khớp chính xác
             mask = mask | (nhom_col == nhom_norm)
         else:
-            # Nhóm cha: lấy hàng thuộc cha đó hoặc bất kỳ nhóm con nào
             mask = mask | (nhom_col == nhom_norm) | nhom_col.str.startswith(nhom_norm + ">>")
     df = df[mask].copy()
 
@@ -1206,11 +1209,15 @@ def module_kiem_ke():
         if master.empty:
             st.warning("Chưa có dữ liệu hàng hóa.")
         else:
-            # Xử lý cắt chuỗi "Cha >> Con" để lấy dữ liệu 2 cấp
-            nhom_col = master["nhom_hang"].fillna("") if "nhom_hang" in master.columns else pd.Series([""] * len(master))
-            split = nhom_col.str.split(">>", n=1, expand=True)
-            master["_cha"] = split[0].fillna("").str.strip()
-            master["_con"] = split[1].fillna("").str.strip() if len(split.columns) > 1 else ""
+            # Dùng loai_hang + thuong_hieu nếu có, fallback nhom_hang cũ
+            if "loai_hang" in master.columns:
+                master["_cha"] = master["loai_hang"].fillna("")
+                master["_con"] = master.get("thuong_hieu", pd.Series([""] * len(master))).fillna("")
+            else:
+                nhom_col = master["nhom_hang"].fillna("") if "nhom_hang" in master.columns else pd.Series([""] * len(master))
+                split = nhom_col.str.split(">>", n=1, expand=True)
+                master["_cha"] = split[0].fillna("").str.strip()
+                master["_con"] = split[1].fillna("").str.strip() if len(split.columns) > 1 else ""
 
             nhom_cha_list = sorted([str(x) for x in master["_cha"].unique() if str(x)])
             
@@ -1694,6 +1701,11 @@ def module_nhap_hang():
                         hits = hh[hh["ma_hang"].apply(_fz) | hh["ten_hang"].apply(_fz)].head(6)
 
                     if not hits.empty:
+                        # Header labels cho các ô input
+                        hh1,hh2,hh3,hh4,hh5 = st.columns([3,1,2,2,1])
+                        with hh2: st.caption("Số lượng")
+                        with hh3: st.caption("Giá vốn")
+                        with hh4: st.caption("Giá bán")
                         for _, r in hits.iterrows():
                             gb_cu = int(r.get("gia_ban",0))
                             h1,h2,h3,h4,h5 = st.columns([3,1,2,2,1])
@@ -1706,39 +1718,79 @@ def module_nhap_hang():
                                         value=gb_cu,key=f"pnh_gb_{cnt}_{r['ma_hang']}", label_visibility="collapsed")
                             with h5:
                                 if st.button("➕",key=f"pnh_add_{cnt}_{r['ma_hang']}"):
-                                    st.session_state[items_key].append({
-                                        "ma_hang": str(r["ma_hang"]),
-                                        "ten_hang": str(r["ten_hang"]),
-                                        "so_luong": int(sl),
-                                        "gia_von": int(gv),
-                                        "gia_ban_moi": int(gb),
-                                        "gia_ban_cu": gb_cu,
-                                        "doi_gia": gb != gb_cu,
-                                    })
+                                    mh_str = str(r["ma_hang"])
+                                    existing = st.session_state.get(items_key, [])
+                                    # Gộp nếu mã hàng đã có trong giỏ
+                                    found = False
+                                    for item in existing:
+                                        if item["ma_hang"] == mh_str:
+                                            item["so_luong"] += int(sl)
+                                            # Cập nhật giá nếu khác
+                                            item["gia_von"]    = int(gv)
+                                            item["gia_ban_moi"]= int(gb)
+                                            item["doi_gia"]    = gb != gb_cu
+                                            found = True
+                                            break
+                                    if not found:
+                                        st.session_state[items_key].append({
+                                            "ma_hang": mh_str,
+                                            "ten_hang": str(r["ten_hang"]),
+                                            "so_luong": int(sl),
+                                            "gia_von": int(gv),
+                                            "gia_ban_moi": int(gb),
+                                            "gia_ban_cu": gb_cu,
+                                            "doi_gia": gb != gb_cu,
+                                        })
                                     st.rerun()
                     elif ma_tim.strip():
                         st.caption("Không tìm thấy — tạo mã mới:")
-                        n1,n2,n3,n4 = st.columns([2,2,2,2])
-                        with n1: new_ma  = st.text_input("Mã hàng:", key=f"pnh_new_ma_{cnt}")
-                        with n2: new_ten = st.text_input("Tên hàng:", key=f"pnh_new_ten_{cnt}")
-                        with n3: new_gv  = st.number_input("Giá vốn:",min_value=0,step=1000,key=f"pnh_new_gv_{cnt}")
-                        with n4: new_gb  = st.number_input("Giá bán:",min_value=0,step=1000,key=f"pnh_new_gb_{cnt}")
-                        nn1,nn2 = st.columns(2)
-                        with nn1: new_sl = st.number_input("Số lượng:",min_value=1,value=1,key=f"pnh_new_sl_{cnt}")
-                        with nn2:
-                            st.write("")
-                            if st.button("➕ Thêm mới",key=f"pnh_new_add_{cnt}") and new_ma.strip() and new_ten.strip():
-                                st.session_state[items_key].append({
-                                    "ma_hang": new_ma.strip().upper(),
-                                    "ten_hang": new_ten.strip(),
-                                    "so_luong": int(new_sl),
-                                    "gia_von": int(new_gv),
-                                    "gia_ban_moi": int(new_gb),
-                                    "gia_ban_cu": None,
-                                    "doi_gia": True,
-                                    "_is_new": True,
-                                })
-                                st.rerun()
+                        n1,n2,n3 = st.columns([2,2,2])
+                        with n1: new_ma   = st.text_input("Mã hàng:", key=f"pnh_new_ma_{cnt}")
+                        with n2: new_vach = st.text_input("Mã vạch:", key=f"pnh_new_vach_{cnt}")
+                        with n3: new_ten  = st.text_input("Tên hàng:", key=f"pnh_new_ten_{cnt}")
+                        # Nhóm hàng 2 cấp
+                        hh_master = load_hang_hoa()
+                        loai_opts = sorted(hh_master["loai_hang"].dropna().unique().tolist()) \
+                            if "loai_hang" in hh_master.columns else []
+                        n4,n5 = st.columns(2)
+                        with n4:
+                            loai_new = st.selectbox("Loại hàng:",
+                                ["-- Chọn --"] + loai_opts + ["(Nhập mới)"],
+                                key=f"pnh_new_loai_{cnt}")
+                            if loai_new == "(Nhập mới)":
+                                loai_new = st.text_input("Tên loại mới:", key=f"pnh_new_loai_txt_{cnt}")
+                            elif loai_new == "-- Chọn --":
+                                loai_new = ""
+                        with n5:
+                            th_opts = []
+                            if loai_new and "thuong_hieu" in hh_master.columns:
+                                th_opts = sorted(hh_master[hh_master["loai_hang"]==loai_new]["thuong_hieu"].dropna().unique().tolist())
+                            th_new = st.selectbox("Thương hiệu:",
+                                ["-- Chọn --"] + th_opts + ["(Nhập mới)"],
+                                key=f"pnh_new_th_{cnt}")
+                            if th_new == "(Nhập mới)":
+                                th_new = st.text_input("Tên thương hiệu mới:", key=f"pnh_new_th_txt_{cnt}")
+                            elif th_new == "-- Chọn --":
+                                th_new = ""
+                        n6,n7,n8 = st.columns(3)
+                        with n6: new_gv  = st.number_input("Giá vốn:",min_value=0,step=1000,key=f"pnh_new_gv_{cnt}")
+                        with n7: new_gb  = st.number_input("Giá bán:",min_value=0,step=1000,key=f"pnh_new_gb_{cnt}")
+                        with n8: new_sl  = st.number_input("Số lượng:",min_value=1,value=1,key=f"pnh_new_sl_{cnt}")
+                        if st.button("➕ Thêm mới",key=f"pnh_new_add_{cnt}") and new_ma.strip() and new_ten.strip():
+                            st.session_state[items_key].append({
+                                "ma_hang":    new_ma.strip().upper(),
+                                "ma_vach":    new_vach.strip() or None,
+                                "ten_hang":   new_ten.strip(),
+                                "loai_hang":  loai_new or None,
+                                "thuong_hieu":th_new or None,
+                                "so_luong":   int(new_sl),
+                                "gia_von":    int(new_gv),
+                                "gia_ban_moi":int(new_gb),
+                                "gia_ban_cu": None,
+                                "doi_gia":    False,
+                                "_is_new":    True,
+                            })
+                            st.rerun()
 
                 # Hiển thị giỏ
                 items = st.session_state.get(items_key, [])
@@ -1761,7 +1813,7 @@ def module_nhap_hang():
                         with c4: st.markdown(f"<span style='font-size:0.88rem'>{_fmt(item['gia_ban_moi'])}đ</span>",
                                              unsafe_allow_html=True)
                         with c5:
-                            if item.get("doi_gia") and item.get("gia_ban_cu") is not None:
+                            if item.get("doi_gia") and item.get("gia_ban_cu") is not None and not item.get("_is_new"):
                                 doi_gia_list.append(item)
                                 st.markdown("⚠️")
                         with c6:
@@ -1769,13 +1821,15 @@ def module_nhap_hang():
                                 st.session_state[items_key].pop(i); st.rerun()
 
                     # Tổng
+                    tong_sl  = sum(x["so_luong"] for x in items)
                     tong_von = sum(x["so_luong"]*x["gia_von"] for x in items)
                     tong_ban = sum(x["so_luong"]*x["gia_ban_moi"] for x in items)
-                    m1,m2 = st.columns(2)
-                    m1.metric("Tổng giá vốn", f"{_fmt(tong_von)}đ")
-                    m2.metric("Tổng giá bán", f"{_fmt(tong_ban)}đ")
+                    m1,m2,m3 = st.columns(3)
+                    m1.metric("Tổng số lượng", f"{tong_sl:,}".replace(",","."))
+                    m2.metric("Tổng giá vốn", f"{_fmt(tong_von)}đ")
+                    m3.metric("Tổng giá bán", f"{_fmt(tong_ban)}đ")
 
-                    # Cảnh báo thay đổi giá bán
+                    # Cảnh báo thay đổi giá bán — chỉ hàng đã tồn tại, không phải hàng mới
                     if doi_gia_list:
                         with st.expander(f"⚠️ {len(doi_gia_list)} mặt hàng thay đổi giá bán — cần in tem mới", expanded=True):
                             for x in doi_gia_list:
@@ -1877,7 +1931,11 @@ def module_nhap_hang():
                 # Bảng chi tiết
                 if not ct.empty:
                     st.markdown("---")
-                    doi_gia = ct[ct["gia_ban_cu"].notna() & (ct["gia_ban_moi"] != ct["gia_ban_cu"])]
+                    doi_gia = ct[
+                        ct["gia_ban_cu"].notna() &
+                        (ct["gia_ban_cu"] > 0) &
+                        (ct["gia_ban_moi"] != ct["gia_ban_cu"])
+                    ]
                     if not doi_gia.empty:
                         st.warning(f"⚠️ {len(doi_gia)} mặt hàng thay đổi giá bán — nhớ in tem mới sau khi nhập kho.")
                     ct_view = ct.copy()
@@ -1913,10 +1971,11 @@ def module_nhap_hang():
                             chi_nhanh = phieu.get("chi_nhanh","")
                             ma_hangs  = ct["ma_hang"].astype(str).tolist()
 
-                            # ── Batch 1: load tồn kho hiện tại cho toàn bộ mã hàng ──
+                            # Batch 1: load tồn kho — filter trong Python để tránh lỗi encode tên cột
                             kho_res = supabase.table("the_kho").select("id,Mã hàng,Tồn cuối kì") \
-                                .eq("Chi nhánh", chi_nhanh).in_("Mã hàng", ma_hangs).execute()
-                            kho_map = {r["Mã hàng"]: r for r in (kho_res.data or [])}
+                                .eq("Chi nhánh", chi_nhanh).execute()
+                            kho_map = {r["Mã hàng"]: r for r in (kho_res.data or [])
+                                       if r.get("Mã hàng") in ma_hangs}
 
                             # ── Batch 2: load giá bán hiện tại trong hang_hoa ──
                             hh_res = supabase.table("hang_hoa").select("ma_hang,gia_ban") \
@@ -1949,9 +2008,13 @@ def module_nhap_hang():
                                         hh_updates.append({"ma_hang": mh, "gia_ban": gb_moi})
                                 else:
                                     # Hàng mới — insert vào hang_hoa
-                                    hh_inserts.append({"ma_hang": mh,
-                                                       "ten_hang": str(r["ten_hang"]),
-                                                       "gia_ban": gb_moi})
+                                    hh_inserts.append({
+                                        "ma_hang":    mh,
+                                        "ten_hang":   str(r["ten_hang"]),
+                                        "gia_ban":    gb_moi,
+                                        "loai_hang":  str(r.get("loai_hang") or "") or None,
+                                        "thuong_hieu":str(r.get("thuong_hieu") or "") or None,
+                                    })
 
                             # ── Batch execute ──
                             # Tồn kho update: upsert theo id
@@ -2003,10 +2066,11 @@ def module_nhap_hang():
                             chi_nhanh = phieu.get("chi_nhanh","")
                             ma_hangs  = ct["ma_hang"].astype(str).tolist()
 
-                            # Batch load tồn kho
+                            # Batch load tồn kho — filter Python tránh lỗi encode
                             kho_res = supabase.table("the_kho").select("id,Mã hàng,Tồn cuối kì") \
-                                .eq("Chi nhánh", chi_nhanh).in_("Mã hàng", ma_hangs).execute()
-                            kho_map = {r["Mã hàng"]: r for r in (kho_res.data or [])}
+                                .eq("Chi nhánh", chi_nhanh).execute()
+                            kho_map = {r["Mã hàng"]: r for r in (kho_res.data or [])
+                                       if r.get("Mã hàng") in ma_hangs}
 
                             sl_map = {str(r["ma_hang"]): int(r["so_luong"]) for _, r in ct.iterrows()}
                             for mh, kho_row in kho_map.items():
@@ -2052,8 +2116,17 @@ def module_nhap_hang():
                     st.warning("Nhập tên NCC.")
                 else:
                     try:
+                        auto_ma = ncc_ma.strip().upper()
+                        if not auto_ma:
+                            res_ncc = supabase.table("nha_cung_cap").select("ma_ncc") \
+                                .like("ma_ncc","NCC%").order("ma_ncc",desc=True).limit(1).execute()
+                            if res_ncc.data:
+                                digits = "".join(filter(str.isdigit, res_ncc.data[0]["ma_ncc"]))
+                                auto_ma = f"NCC{int(digits)+1:03d}" if digits else "NCC001"
+                            else:
+                                auto_ma = "NCC001"
                         supabase.table("nha_cung_cap").insert({
-                            "ma_ncc": ncc_ma.strip().upper() or f"NCC{(datetime.now()+timedelta(hours=7)).strftime('%y%m%d%H%M')}",
+                            "ma_ncc": auto_ma,
                             "ten_ncc": ncc_ten.strip(),
                             "sdt": ncc_sdt.strip() or None,
                             "dia_chi": ncc_dc.strip() or None,
@@ -2061,7 +2134,7 @@ def module_nhap_hang():
                             "created_at": (datetime.now()+timedelta(hours=7)).isoformat(),
                         }).execute()
                         st.cache_data.clear()
-                        st.success(f"✓ Đã thêm NCC **{ncc_ten.strip()}**"); st.rerun()
+                        st.success(f"✓ Đã thêm NCC **{ncc_ten.strip()}** (mã: {auto_ma})"); st.rerun()
                     except Exception as e: st.error(f"Lỗi: {e}")
 
 
@@ -3199,14 +3272,19 @@ def module_hang_hoa():
             df = the_kho.groupby(["Mã hàng","Tên hàng"], as_index=False).agg(
                 Ton_cuoi=("Tồn cuối kì","sum"))
             df["ma_hang"]=""; df["ma_vach"]=""; df["ten_hang"]=df["Tên hàng"]
-            df["nhom_hang"]=""; df["thuong_hieu"]=""; df["gia_ban"]=0; df["bao_hanh"]=""
+            df["nhom_hang"]=""; df["thuong_hieu"]=""; df["loai_hang"]=""; df["gia_ban"]=0; df["bao_hanh"]=""
             df["ma_hang"] = df["Mã hàng"]; df["ma_vach"] = df["Mã hàng"]
 
-        nhom_col = df["nhom_hang"].fillna("") if "nhom_hang" in df.columns \
-                   else pd.Series([""] * len(df))
-        split = nhom_col.str.split(">>", n=1, expand=True)
-        df["_cha"] = split[0].str.strip()
-        df["_con"] = (split[1].str.strip() if 1 in split.columns else "").fillna("")
+        # Dùng loai_hang + thuong_hieu nếu có, fallback nhom_hang
+        if "loai_hang" in df.columns and df["loai_hang"].fillna("").str.strip().any():
+            df["_cha"] = df["loai_hang"].fillna("").str.strip()
+            df["_con"] = df.get("thuong_hieu", pd.Series([""] * len(df))).fillna("").str.strip()
+        else:
+            nhom_col = df["nhom_hang"].fillna("") if "nhom_hang" in df.columns \
+                       else pd.Series([""] * len(df))
+            split = nhom_col.str.split(">>", n=1, expand=True)
+            df["_cha"] = split[0].str.strip()
+            df["_con"] = (split[1].str.strip() if 1 in split.columns else "").fillna("")
 
         df["_norm_ma"]   = df["ma_hang"].apply(_normalize)
         df["_norm_vach"] = df.get("ma_vach", df["ma_hang"]).apply(
@@ -4491,9 +4569,11 @@ def module_quan_tri():
                         df_out = df[list(avail.keys())].rename(columns=avail).copy()
                         if "nhom_hang" in df_out.columns:
                             split = df_out["nhom_hang"].fillna("").str.split(">>", n=1, expand=True)
-                            df_out["nhom_cha"] = split[0].str.strip()
-                            df_out["nhom_con"] = split[1].str.strip() if 1 in split.columns else ""
-                            df_out["nhom_con"] = df_out["nhom_con"].fillna("")
+                            df_out["loai_hang"]  = split[0].str.strip()
+                            df_out["thuong_hieu"] = (split[1].str.strip() if 1 in split.columns else "").fillna("")
+                        # thuong_hieu từ cột KiotViet nếu có (override parse)
+                        if "thuong_hieu" in df_out.columns and "Thương hiệu" in df.columns:
+                            df_out["thuong_hieu"] = df["Thương hiệu"].fillna(df_out["thuong_hieu"])
                         df_out["ma_hang"]  = df_out["ma_hang"].astype(str).str.strip()
                         df_out["ten_hang"] = df_out["ten_hang"].astype(str).str.strip()
                         if "gia_ban" in df_out.columns:

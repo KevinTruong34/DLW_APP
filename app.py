@@ -106,7 +106,7 @@ html, body { overflow-x: hidden !important; max-width: 100vw !important; }
 /* ── Layout ── */
 .block-container {
     padding: 0.6rem 0.8rem 1.5rem 0.8rem !important;
-    max-width: 900px !important;
+    max-width: 1350px !important;
 }
 
 /* ── Metric ── */

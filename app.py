@@ -165,14 +165,6 @@ html, body { overflow-x: hidden !important; max-width: 100vw !important; }
     border-bottom-color: #e63946 !important;
 }
 
-/* ── Radio nav ── */
-[data-testid="stRadio"] > label:first-child { display: none; }
-[data-testid="stRadio"] label { font-size: 0.88rem !important; }
-[data-testid="stRadio"] [data-testid="stMarkdownContainer"] p {
-    font-size: 0.88rem !important;
-    color: #1a1a2e !important;
-}
-
 /* ── Dataframe ── */
 [data-testid="stDataFrame"] { border-radius: 8px !important; overflow: hidden !important; }
 [data-testid="stDataFrame"] > div { overscroll-behavior: contain !important; }
@@ -4200,10 +4192,10 @@ role_lbl  = {"admin":"Admin","ke_toan":"Kế toán","nhan_vien":"Nhân viên"}.g
 # Sắp xếp thứ tự theo ý anh: Tổng quan -> Hóa đơn -> Hàng hóa -> Chuyển hàng -> Kiểm kê
 menu = ["📊 Tổng quan", "🧾 Hóa đơn", "📦 Hàng hóa", "🔄 Chuyển hàng", "🧮 Kiểm kê", "🔧 Sửa chữa"]
 
-# Module Quản trị sẽ luôn được thêm vào cuối cùng NẾU là Admin
 if is_admin():
     menu.append("⚙️ Quản trị")
-page = st.radio("nav", menu, horizontal=True, label_visibility="collapsed")
+
+page = st.pills("nav", menu, default=menu[0], label_visibility="collapsed")
 
 # ── Hàng 2: reload + avatar ──
 col_rel, col_avatar = st.columns([1, 1])
@@ -4243,6 +4235,7 @@ with col_avatar:
             do_logout(); st.rerun()
 
 # strip icon từ page value để routing
+page = page or menu[0]  # fallback nếu pills trả None
 page_clean = page.split(" ", 1)[1] if " " in page else page
 st.markdown("<hr style='margin:4px 0 10px 0;'>", unsafe_allow_html=True)
 

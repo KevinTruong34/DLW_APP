@@ -1955,8 +1955,10 @@ def module_sua_chua():
                 kh_found = lookup_khach_hang(sdt_khach) if sdt_khach.strip() else None
                 st.session_state[kh_key] = kh_found
                 if kh_found:
-                    # Set trực tiếp vào session_state của text_input tên
                     st.session_state[ten_key] = kh_found["ten_kh"]
+                else:
+                    st.session_state[ten_key] = ""
+                st.rerun()
             kh_found = st.session_state.get(kh_key)
             if sdt_khach.strip() and not kh_found:
                 st.caption("⚠️ SĐT chưa có — khách mới sẽ được lưu tự động")

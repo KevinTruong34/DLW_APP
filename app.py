@@ -2080,6 +2080,12 @@ def module_nhap_hang():
 
                             if not kho_map:
                                 st.warning("Không tìm thấy dòng tồn kho để trừ — phiếu vẫn được hủy.")
+                                st.caption(f"DEBUG ma_hangs_set={ma_hangs_set}")
+                                st.caption(f"DEBUG kho_res rows={len(kho_res.data or [])}")
+                                if kho_res.data:
+                                    sample = kho_res.data[0]
+                                    st.caption(f"DEBUG sample keys={list(sample.keys())[:5]}")
+                                    st.caption(f"DEBUG sample Mã hàng='{sample.get('Mã hàng','MISSING')}'")
                             for mh, kho_row in kho_map.items():
                                 sl  = sl_map.get(mh, 0)
                                 cur = int(kho_row.get("Tồn cuối kì") or 0)

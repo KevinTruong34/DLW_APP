@@ -1935,23 +1935,26 @@ def module_sua_chua():
         c1, c2 = st.columns(2)
         with c1:
             sdt_khach = st.text_input("Số điện thoại: *", key=f"sc_sdt_kh_{cnt}")
-            # Auto-fill: lookup khi SĐT thay đổi, lưu vào session_state
-            sdt_key = f"sc_sdt_prev_{cnt}"
-            kh_key  = f"sc_kh_found_{cnt}"
-            if sdt_khach.strip() != st.session_state.get(sdt_key, ""):
-                st.session_state[sdt_key] = sdt_khach.strip()
-                st.session_state[kh_key]  = lookup_khach_hang(sdt_khach) if sdt_khach.strip() else None
+            # Auto-fill: khi SĐT thay đổi, lookup và set tên vào session_state
+            sdt_prev_key = f"sc_sdt_prev_{cnt}"
+            ten_key      = f"sc_ten_kh_{cnt}"
+            kh_key       = f"sc_kh_found_{cnt}"
+            if sdt_khach.strip() != st.session_state.get(sdt_prev_key, ""):
+                st.session_state[sdt_prev_key] = sdt_khach.strip()
+                kh_found = lookup_khach_hang(sdt_khach) if sdt_khach.strip() else None
+                st.session_state[kh_key] = kh_found
+                if kh_found:
+                    # Set trực tiếp vào session_state của text_input tên
+                    st.session_state[ten_key] = kh_found["ten_kh"]
             kh_found = st.session_state.get(kh_key)
-            ten_auto = kh_found["ten_kh"] if kh_found else ""
             if sdt_khach.strip() and not kh_found:
-                st.caption("⚠️ SĐT chưa có trong hệ thống — khách mới sẽ được lưu tự động")
-            hieu_dh   = st.text_input("Hiệu đồng hồ:", key=f"sc_hieu_dh_{cnt}",
-                                       placeholder="Casio, Citizen, Seiko...")
-            dac_diem  = st.text_input("Đặc điểm (IMEI / mô tả):", key=f"sc_dac_diem_{cnt}",
-                                       placeholder="Số serial, màu sắc, trầy xước...")
+                st.caption("⚠️ SĐT chưa có — khách mới sẽ được lưu tự động")
+            hieu_dh  = st.text_input("Hiệu đồng hồ:", key=f"sc_hieu_dh_{cnt}",
+                                      placeholder="Casio, Citizen, Seiko...")
+            dac_diem = st.text_input("Đặc điểm (IMEI / mô tả):", key=f"sc_dac_diem_{cnt}",
+                                      placeholder="Số serial, màu sắc, trầy xước...")
         with c2:
-            ten_khach = st.text_input("Tên khách hàng: *", value=ten_auto,
-                                       key=f"sc_ten_kh_{cnt}")
+            ten_khach = st.text_input("Tên khách hàng: *", key=ten_key)
             loai_yc   = st.selectbox("Loại yêu cầu:", LOAI_YC_LIST, key=f"sc_loai_yc_{cnt}")
             ngay_hen  = st.date_input("Ngày hẹn trả:", key=f"sc_ngay_hen_{cnt}",
                                        value=None, format="DD/MM/YYYY")
@@ -2518,21 +2521,24 @@ def module_hoa_don():
                 except (ValueError, TypeError):
                     pass
 
-        with st.expander(
-            f"{code}  ·  {row.get('Thời gian','')}  ·  {row.get('Tên khách hàng','Khách lẻ')}",
-            expanded=True
-        ):
-            # Status badge + Người bán + SĐT
-            sdt_hd = str(row.get("Điện thoại","") or "").strip()
+        # Chuẩn hóa SĐT: bỏ .0 nếu bị float
+        sdt_raw = row.get("Điện thoại","") or ""
+        try:
+            sdt_hd = str(int(float(str(sdt_raw)))) if sdt_raw and str(sdt_raw).strip() not in ("","nan","None") else ""
+        except Exception:
+            sdt_hd = str(sdt_raw).strip()
+
+        ten_kh = row.get("Tên khách hàng","Khách lẻ") or "Khách lẻ"
+        title_parts = [code, str(row.get("Thời gian","")), ten_kh]
+        if sdt_hd:
+            title_parts.append(f"SĐT: {sdt_hd}")
+
+        with st.expander("  ·  ".join(title_parts), expanded=True):
+            # Status badge + Người bán
             header_html = (
                 f'<span style="background:{color};color:#fff;padding:3px 12px;'
                 f'border-radius:20px;font-size:.8rem;font-weight:600;">{status}</span>'
             )
-            if sdt_hd and sdt_hd.lower() not in ("nan","none",""):
-                header_html += (
-                    f'<span style="margin-left:10px;font-size:0.82rem;color:#555;">'
-                    f'📞 {sdt_hd}</span>'
-                )
             if nguoi_ban:
                 header_html += (
                     f'<span style="margin-left:10px;font-size:0.82rem;color:#555;">'

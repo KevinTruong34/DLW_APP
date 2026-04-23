@@ -3341,7 +3341,8 @@ def module_hang_hoa():
 
         col_s, col_f = st.columns([5, 1])
         with col_s:
-            keyword = st.text_input("", key="hh_search",
+            _sc = st.session_state.get("hh_search_cnt", 0)
+            keyword = st.text_input("", key=f"hh_search_{_sc}",
                 placeholder="🔍  Tìm mã hàng, mã vạch hoặc tên...",
                 label_visibility="collapsed")
         with col_f:
@@ -3427,7 +3428,7 @@ def module_hang_hoa():
                 st.markdown("<div style='padding-top:10px;'>", unsafe_allow_html=True)
                 if st.button("✕", key="btn_close", help="Đóng"):
                     st.session_state.pop("hh_ma_chon", None)
-                    st.session_state["hh_search"] = ""
+                    st.session_state["hh_search_cnt"] = st.session_state.get("hh_search_cnt", 0) + 1
                     st.rerun()
                 st.markdown("</div>", unsafe_allow_html=True)
 

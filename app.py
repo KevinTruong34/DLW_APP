@@ -1855,8 +1855,9 @@ def module_nhap_hang():
                             supabase.table("phieu_nhap_hang_ct").insert([
                                 {"ma_phieu":ma,"ma_hang":x["ma_hang"],"ten_hang":x["ten_hang"],
                                  "so_luong":x["so_luong"],"gia_von":x["gia_von"],
-                                 "gia_ban_moi":x["gia_ban_moi"],
-                                 "gia_ban_cu":x.get("gia_ban_cu")} for x in items
+                                 "gia_ban_moi":x["gia_ban_moi"],"gia_ban_cu":x.get("gia_ban_cu"),
+                                 "ma_vach":x.get("ma_vach"),"loai_hang":x.get("loai_hang"),
+                                 "thuong_hieu":x.get("thuong_hieu")} for x in items
                             ]).execute()
                             st.session_state["pnh_cnt"] = cnt + 1
                             st.cache_data.clear()
@@ -1880,8 +1881,9 @@ def module_nhap_hang():
                             supabase.table("phieu_nhap_hang_ct").insert([
                                 {"ma_phieu":ma,"ma_hang":x["ma_hang"],"ten_hang":x["ten_hang"],
                                  "so_luong":x["so_luong"],"gia_von":x["gia_von"],
-                                 "gia_ban_moi":x["gia_ban_moi"],
-                                 "gia_ban_cu":x.get("gia_ban_cu")} for x in items
+                                 "gia_ban_moi":x["gia_ban_moi"],"gia_ban_cu":x.get("gia_ban_cu"),
+                                 "ma_vach":x.get("ma_vach"),"loai_hang":x.get("loai_hang"),
+                                 "thuong_hieu":x.get("thuong_hieu")} for x in items
                             ]).execute()
                             st.session_state["pnh_cnt"] = cnt + 1
                             st.cache_data.clear()
@@ -2023,6 +2025,7 @@ def module_nhap_hang():
                                         "ma_hang":    mh,
                                         "ten_hang":   str(r["ten_hang"]),
                                         "gia_ban":    gb_moi,
+                                        "ma_vach":    str(r.get("ma_vach") or "") or None,
                                         "loai_hang":  str(r.get("loai_hang") or "") or None,
                                         "thuong_hieu":str(r.get("thuong_hieu") or "") or None,
                                     })

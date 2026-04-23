@@ -593,9 +593,20 @@ def load_hoa_don(branches_key: tuple):
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
     if "Thời gian" in df.columns:
-        # Thử parse format KiotViet gốc trước, sau đó fallback các format khác
         df["_ngay"] = pd.to_datetime(df["Thời gian"], dayfirst=True, errors="coerce")
         df["_date"] = df["_ngay"].dt.date
+    # Chuẩn hóa SĐT: bỏ .0, khôi phục số 0 đầu nếu mất (Excel lưu thành số)
+    if "Điện thoại" in df.columns:
+        def _fix_sdt(v):
+            s = str(v).strip() if v is not None else ""
+            if s in ("", "nan", "None"): return ""
+            if s.endswith(".0"): s = s[:-2]
+            # Số VN 9-10 chữ số, thêm 0 nếu thiếu
+            digits = s.replace(" ", "")
+            if digits.isdigit() and len(digits) == 9:
+                digits = "0" + digits
+            return digits
+        df["Điện thoại"] = df["Điện thoại"].apply(_fix_sdt)
     return df
 
 
@@ -2521,11 +2532,8 @@ def module_hoa_don():
                 except (ValueError, TypeError):
                     pass
 
-        # Chuẩn hóa SĐT: bỏ .0 nếu bị lưu dạng float
-        sdt_raw = str(row.get("Điện thoại","") or "").strip()
-        if sdt_raw.endswith(".0"):
-            sdt_raw = sdt_raw[:-2]
-        sdt_hd = sdt_raw if sdt_raw.lower() not in ("","nan","none") else ""
+        sdt_hd = str(row.get("Điện thoại","") or "").strip()
+        if sdt_hd.lower() in ("nan","none",""): sdt_hd = ""
 
         ten_kh = row.get("Tên khách hàng","Khách lẻ") or "Khách lẻ"
         title_parts = [code, str(row.get("Thời gian","")), ten_kh]

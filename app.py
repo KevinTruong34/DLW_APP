@@ -3421,11 +3421,12 @@ def module_hang_hoa():
                 all_kho  = load_the_kho(branches_key=tuple(ALL_BRANCHES))
                 branch_tons = {cn: 0 for cn in ALL_BRANCHES}
                 if not all_kho.empty:
-                    rows_kho = all_kho[all_kho["Mã hàng"] == ma_chon]
-                    for _, kr in rows_kho.iterrows():
-                        cn = kr.get("Chi nhánh","")
-                        if cn in branch_tons:
-                            branch_tons[cn] = int(kr.get("Tồn cuối kì", 0))
+                    rows_kho = all_kho[all_kho["Mã hàng"].astype(str).str.strip() == str(ma_chon).strip()]
+                    if not rows_kho.empty:
+                        agg = rows_kho.groupby("Chi nhánh")["Tồn cuối kì"].sum()
+                        for cn, ton in agg.items():
+                            if cn in branch_tons:
+                                branch_tons[cn] = int(ton)
 
                 cn_cols = st.columns(3)
                 for idx, cn_name in enumerate(ALL_BRANCHES):

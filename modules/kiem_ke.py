@@ -67,7 +67,8 @@ def _kk_build_scope_rows(chi_nhanh: str, nhom_hang_chon: str) -> tuple[list, str
         return [], "Chưa đủ dữ liệu master/thẻ kho để tạo phiếu kiểm kê."
     
     kho_map = kho.groupby("Mã hàng", as_index=False).agg(ton=("Tồn cuối kì", "sum"))
-    df = master.merge(kho_map, left_on="ma_hang", right_on="Mã hàng", how="left")
+    # inner join: chỉ lấy hàng thực sự tồn tại trong kho chi nhánh này
+    df = master.merge(kho_map, left_on="ma_hang", right_on="Mã hàng", how="inner")
     df["ton"] = pd.to_numeric(df["ton"], errors="coerce").fillna(0).astype(int)
 
     # Dùng loai_hang + thuong_hieu nếu có, fallback nhom_hang cũ

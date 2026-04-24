@@ -7,8 +7,9 @@ st.set_page_config(
     layout="wide"
 )
 
+st.markdown('<link rel="apple-touch-icon" href="app/static/logo.png">', unsafe_allow_html=True)
+
 st.markdown("""
-<link rel="apple-touch-icon" href="app/static/logo.png">
 <style>
 /* ══════════════════════════════════════════
    PHIEN BAN: 15.0 — Force light theme

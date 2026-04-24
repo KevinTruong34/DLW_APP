@@ -1,5 +1,4 @@
 import streamlit as st
-
 from utils.config import ALL_BRANCHES, CN_SHORT
 
 st.set_page_config(page_title="Watch Store", layout="wide")
@@ -183,11 +182,15 @@ hr { border-color: #ebebeb !important; margin: 8px 0 !important; }
 """, unsafe_allow_html=True)
 
 
-# ── Imports sau set_page_config ──
-from utils.db import supabase, log_action
+# ── Auth gate — phải chạy trước khi import modules ──
 from utils.auth import (get_user, is_admin, get_active_branch,
                         get_accessible_branches, get_selectable_branches,
-                        do_logout, save_branch_to_url)
+                        do_logout, save_branch_to_url, run_auth_gate)
+from utils.db import supabase, log_action
+
+run_auth_gate()
+
+# ── Import modules sau khi auth đã xác nhận user ──
 from modules.tong_quan   import module_tong_quan, hien_thi_dashboard
 from modules.hoa_don     import module_hoa_don
 from modules.hang_hoa    import module_hang_hoa
@@ -210,7 +213,7 @@ cn_short  = CN_SHORT.get(active_cn, active_cn[:8])
 ho_ten    = user.get("ho_ten","") if user else ""
 initials  = "".join(w[0].upper() for w in ho_ten.split()[:2]) if ho_ten else "?"
 role_lbl  = {"admin":"Admin","ke_toan":"Kế toán","nhan_vien":"Nhân viên"}.get(
-    (user or {}).get("role",""), "")
+    user.get("role",""), "")
 
 # Menu: BỎ Tổng quan khỏi vị trí có dashboard — chỉ còn welcome
 # Sắp xếp thứ tự theo ý anh: Tổng quan -> Hóa đơn -> Hàng hóa -> Chuyển hàng -> Kiểm kê

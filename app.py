@@ -1,9 +1,14 @@
 import streamlit as st
 from utils.config import ALL_BRANCHES, CN_SHORT
 
-st.set_page_config(page_title="Watch Store", layout="wide")
+st.set_page_config(
+    page_title="DL Watch Store",
+    page_icon="static/favicon.png",
+    layout="wide"
+)
 
 st.markdown("""
+<link rel="apple-touch-icon" href="app/static/logo.png">
 <style>
 /* ══════════════════════════════════════════
    PHIEN BAN: 15.0 — Force light theme

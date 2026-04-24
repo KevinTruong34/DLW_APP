@@ -9,6 +9,7 @@ from utils.db import supabase, log_action, load_hoa_don, load_the_kho, load_hang
     load_khach_hang_list, lookup_khach_hang, _upsert_khach_hang, get_archive_reminder
 from utils.auth import get_user, is_admin, is_ke_toan_or_admin, \
     get_active_branch, get_accessible_branches
+from utils.helpers import _normalize
 
 PHIEU_PER_PAGE = 20
 SUGGEST_LIMIT  = 5

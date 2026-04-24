@@ -8,7 +8,7 @@ from utils.db import supabase, log_action, load_hoa_don, load_the_kho, load_hang
     load_phieu_chuyen_kho, load_phieu_kiem_ke, get_gia_ban_map, load_stock_deltas, \
     load_khach_hang_list, lookup_khach_hang, _upsert_khach_hang, get_archive_reminder
 from utils.auth import get_user, is_admin, is_ke_toan_or_admin, \
-    get_active_branch, get_accessible_branches
+    get_active_branch, get_accessible_branches, hash_password
 
 def module_nhan_vien():
     st.markdown("### Quản lý nhân viên")
@@ -314,7 +314,6 @@ def module_quan_tri():
                                         ok+=len(records[i:i+500])
                                         prog.progress(min(ok/total,1.0),text=f"{ok}/{total}...")
                                     except Exception as e: st.error(f"Batch {i}: {e}")
-                                    except Exception as e: st.error(f"Batch {i}: {e}")
                                 prog.empty()
                                 if ok==total:
                                     log_action("UPLOAD_HOA_DON", f"rows={ok}")
@@ -587,5 +586,3 @@ def module_quan_tri():
                                 st.cache_data.clear()
             except Exception as e:
                 st.error(f"Lỗi: {e}")
-
-

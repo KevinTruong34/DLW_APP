@@ -1,19 +1,6 @@
 import streamlit as st
 
 from utils.config import ALL_BRANCHES, CN_SHORT
-from utils.db import supabase, log_action
-from utils.auth import (get_user, is_admin, get_active_branch,
-                        get_accessible_branches, get_selectable_branches,
-                        do_logout, save_branch_to_url)
-from modules.tong_quan  import module_tong_quan, hien_thi_dashboard
-from modules.hoa_don    import module_hoa_don
-from modules.hang_hoa   import module_hang_hoa
-from modules.sua_chua   import module_sua_chua
-from modules.nhap_hang  import module_nhap_hang
-from modules.khach_hang import module_khach_hang
-from modules.kiem_ke    import module_kiem_ke
-from modules.chuyen_hang import module_chuyen_hang
-from modules.quan_tri   import module_quan_tri
 
 st.set_page_config(page_title="Watch Store", layout="wide")
 
@@ -196,6 +183,22 @@ hr { border-color: #ebebeb !important; margin: 8px 0 !important; }
 """, unsafe_allow_html=True)
 
 
+# ── Imports sau set_page_config ──
+from utils.db import supabase, log_action
+from utils.auth import (get_user, is_admin, get_active_branch,
+                        get_accessible_branches, get_selectable_branches,
+                        do_logout, save_branch_to_url)
+from modules.tong_quan   import module_tong_quan, hien_thi_dashboard
+from modules.hoa_don     import module_hoa_don
+from modules.hang_hoa    import module_hang_hoa
+from modules.sua_chua    import module_sua_chua
+from modules.nhap_hang   import module_nhap_hang
+from modules.khach_hang  import module_khach_hang
+from modules.kiem_ke     import module_kiem_ke
+from modules.chuyen_hang import module_chuyen_hang
+from modules.quan_tri    import module_quan_tri
+
+# ── Navigation ──
 # ==========================================
 # NAVIGATION  v15.0
 # ==========================================
@@ -207,7 +210,7 @@ cn_short  = CN_SHORT.get(active_cn, active_cn[:8])
 ho_ten    = user.get("ho_ten","") if user else ""
 initials  = "".join(w[0].upper() for w in ho_ten.split()[:2]) if ho_ten else "?"
 role_lbl  = {"admin":"Admin","ke_toan":"Kế toán","nhan_vien":"Nhân viên"}.get(
-    user.get("role",""), "")
+    (user or {}).get("role",""), "")
 
 # Menu: BỎ Tổng quan khỏi vị trí có dashboard — chỉ còn welcome
 # Sắp xếp thứ tự theo ý anh: Tổng quan -> Hóa đơn -> Hàng hóa -> Chuyển hàng -> Kiểm kê

@@ -41,7 +41,6 @@ def load_hoa_don(branches_key: tuple):
     rows, batch, offset = [], 1000, 0
     while True:
         res = supabase.table("hoa_don").select("*") \
-            .in_("Chi nhánh", list(branches_key)) \
             .range(offset, offset+batch-1).execute()
         if not res.data: break
         rows.extend(res.data)
@@ -49,6 +48,9 @@ def load_hoa_don(branches_key: tuple):
         offset += batch
     if not rows: return pd.DataFrame()
     df = pd.DataFrame(rows)
+    # Filter Chi nhánh trong Python — tránh lỗi encode tên cột tiếng Việt
+    if "Chi nhánh" in df.columns and branches_key:
+        df = df[df["Chi nhánh"].isin(list(branches_key))].copy()
     tong = len(df); df = df.drop_duplicates()
     st.session_state["so_dong_trung"] = tong - len(df)
     for col in ["Tổng tiền hàng","Khách cần trả","Khách đã trả","Đơn giá","Thành tiền"]:
@@ -187,7 +189,6 @@ def load_the_kho(branches_key: tuple):
     rows, batch, offset = [], 1000, 0
     while True:
         res = supabase.table("the_kho").select("*") \
-            .in_("Chi nhánh", list(branches_key)) \
             .range(offset, offset+batch-1).execute()
         if not res.data: break
         rows.extend(res.data)
@@ -195,6 +196,9 @@ def load_the_kho(branches_key: tuple):
         offset += batch
     if not rows: return pd.DataFrame()
     df = pd.DataFrame(rows)
+    # Filter Chi nhánh trong Python — tránh lỗi encode tên cột tiếng Việt qua PostgREST
+    if "Chi nhánh" in df.columns and branches_key:
+        df = df[df["Chi nhánh"].isin(list(branches_key))].copy()
     for col in ["Tồn đầu kì","Giá trị đầu kì","Nhập NCC","Giá trị nhập NCC",
                 "Xuất bán","Giá trị xuất bán","Tồn cuối kì","Giá trị cuối kì"]:
         if col in df.columns:
@@ -407,5 +411,3 @@ def load_khach_hang_list() -> pd.DataFrame:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
     return df
-
-

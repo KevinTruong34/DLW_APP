@@ -10,7 +10,6 @@ from utils.db import supabase, log_action, load_hoa_don, load_the_kho, load_hang
 from utils.auth import get_user, is_admin, is_ke_toan_or_admin, \
     get_active_branch, get_accessible_branches
 
-import plotly.graph_objects as go
 
 def module_hoa_don():
     # Các tên cột có thể chứa "người bán" trong KiotViet
@@ -187,4 +186,3 @@ def module_hoa_don():
 # ==========================================
 # MODULE: HÀNG HÓA
 # ==========================================
-

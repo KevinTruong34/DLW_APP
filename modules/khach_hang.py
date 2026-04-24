@@ -65,22 +65,29 @@ def module_khach_hang():
                 ma_pick = picked.split(" · ")[0]
                 kh = df_all[df_all["ma_kh"] == ma_pick].iloc[0]
 
+                # Helper lọc nan
+                def _val(v):
+                    if v is None: return "—"
+                    s = str(v).strip()
+                    return "—" if s.lower() in ("nan","none","") else s
+
                 # Thông tin khách
                 k1, k2, k3 = st.columns(3)
                 with k1:
-                    st.markdown(f"**Mã KH:** {kh.get('ma_kh','')}")
-                    st.markdown(f"**Tên:** {kh.get('ten_kh','')}")
-                    st.markdown(f"**SĐT:** {kh.get('sdt','')}")
+                    st.markdown(f"**Mã KH:** {_val(kh.get('ma_kh'))}")
+                    st.markdown(f"**Tên:** {_val(kh.get('ten_kh'))}")
+                    st.markdown(f"**SĐT:** {_val(kh.get('sdt'))}")
                 with k2:
-                    st.markdown(f"**Chi nhánh:** {kh.get('chi_nhanh_tao') or '—'}")
-                    st.markdown(f"**Nhóm KH:** {kh.get('nhom_kh') or '—'}")
-                    st.markdown(f"**Giới tính:** {kh.get('gioi_tinh') or '—'}")
+                    st.markdown(f"**Chi nhánh:** {_val(kh.get('chi_nhanh_tao'))}")
+                    st.markdown(f"**Nhóm KH:** {_val(kh.get('nhom_kh'))}")
+                    st.markdown(f"**Giới tính:** {_val(kh.get('gioi_tinh'))}")
                 with k3:
                     st.markdown(f"**Tổng mua:** {int(kh.get('tong_ban',0)):,}đ".replace(',','.'))
                     st.markdown(f"**Điểm:** {int(kh.get('diem_hien_tai',0))}")
-                    st.markdown(f"**GD cuối:** {kh.get('ngay_gd_cuoi') or '—'}")
-                if kh.get("ghi_chu"):
-                    st.markdown(f"**Ghi chú:** {kh.get('ghi_chu','')}")
+                    st.markdown(f"**GD cuối:** {_val(kh.get('ngay_gd_cuoi'))}")
+                ghi_chu = _val(kh.get('ghi_chu'))
+                if ghi_chu != "—":
+                    st.markdown(f"**Ghi chú:** {ghi_chu}")
 
                 st.markdown("---")
 
@@ -111,6 +118,11 @@ def module_khach_hang():
                     if sc_data.data:
                         st.markdown(f"**Lịch sử sửa chữa ({len(sc_data.data)} phiếu):**")
                         sc_df = pd.DataFrame(sc_data.data)
+                        # Format ngày tiếp nhận về giờ VN
+                        if "ngay_tiep_nhan" in sc_df.columns:
+                            sc_df["ngay_tiep_nhan"] = pd.to_datetime(
+                                sc_df["ngay_tiep_nhan"], utc=True, errors="coerce"
+                            ).dt.tz_convert("Asia/Ho_Chi_Minh").dt.strftime("%d/%m/%Y %H:%M")
                         sc_df = sc_df.rename(columns={
                             "ma_phieu":"Mã Phiếu","trang_thai":"Trạng Thái",
                             "mo_ta_loi":"Mô tả","ngay_tiep_nhan":"Ngày TN",
@@ -120,5 +132,3 @@ def module_khach_hang():
                     else:
                         st.caption("Chưa có phiếu sửa chữa.")
                 except Exception: st.caption("Không tải được lịch sử SC.")
-
-

@@ -95,7 +95,7 @@ def _kk_build_scope_rows(chi_nhanh: str, nhom_hang_chon: str) -> tuple[list, str
 
     # Tách thành 2 nhóm: có tồn > 0 (đưa vào phiếu luôn) và tồn = 0 (bỏ qua)
     # Nhân viên có thể quét phát sinh thêm nếu thực tế có hàng mà hệ thống chưa ghi nhận
-    df = df[df["ton"] >= 0].copy()  # giữ cả ton=0 để snapshot đúng thực tế
+    df = df[df["ton"] > 0].copy()
     
     rows = []
     for _, r in df.iterrows():

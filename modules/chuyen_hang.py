@@ -10,6 +10,9 @@ from utils.db import supabase, log_action, load_hoa_don, load_the_kho, load_hang
 from utils.auth import get_user, is_admin, is_ke_toan_or_admin, \
     get_active_branch, get_accessible_branches
 
+PHIEU_PER_PAGE = 20
+SUGGEST_LIMIT  = 5
+
 def _gen_ma_phieu() -> str:
     """
     Sinh mã phiếu serial tăng dần: CH000001, CH000002, ...
@@ -964,4 +967,3 @@ def module_chuyen_hang():
 # ==========================================
 # MODULE: QUẢN LÝ NHÂN VIÊN
 # ==========================================
-

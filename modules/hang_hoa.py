@@ -167,14 +167,15 @@ def module_hang_hoa():
                 "color:#555;margin:10px 0 6px;'>Tồn kho chi nhánh</div>",
                 unsafe_allow_html=True)
             try:
-                branch_tons = {}
-                for cn in ALL_BRANCHES:
-                    kho_cn = load_the_kho(branches_key=(cn,))
-                    if kho_cn.empty:
-                        branch_tons[cn] = 0
-                    else:
-                        rows_cn = kho_cn[kho_cn["Mã hàng"].astype(str).str.strip() == str(ma_chon).strip()]
-                        branch_tons[cn] = int(rows_cn["Tồn cuối kì"].sum()) if not rows_cn.empty else 0
+                # Load tất cả 3 chi nhánh trong 1 call thay vì loop 3 lần
+                all_kho = load_the_kho(branches_key=tuple(ALL_BRANCHES))
+                branch_tons = {cn: 0 for cn in ALL_BRANCHES}
+                if not all_kho.empty:
+                    rows_kho = all_kho[all_kho["Mã hàng"].astype(str).str.strip() == str(ma_chon).strip()]
+                    for _, kr in rows_kho.iterrows():
+                        cn = kr.get("Chi nhánh", "")
+                        if cn in branch_tons:
+                            branch_tons[cn] += int(kr.get("Tồn cuối kì", 0) or 0)
 
                 cn_cols = st.columns(3)
                 for idx, cn_name in enumerate(ALL_BRANCHES):
@@ -260,5 +261,3 @@ def module_hang_hoa():
 
 PHIEU_PER_PAGE   = 20    # Giới hạn 20 phiếu/trang
 SUGGEST_LIMIT    = 5     # Giới hạn 5 sản phẩm gợi ý
-
-

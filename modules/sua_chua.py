@@ -88,6 +88,7 @@ def module_sua_chua():
         rows = []
         base = {
             "Mã hóa đơn": ma_hd, "Chi nhánh": phieu.get("chi_nhanh",""),
+            "Mã YCSC": phieu.get("ma_phieu", ""),  # FIX: liên kết với phiếu sửa SC
             "Thời gian": now_str, "Thời gian tạo": now_str,
             "Tên khách hàng": phieu.get("ten_khach",""),
             "Điện thoại": phieu.get("sdt_khach",""),
@@ -629,5 +630,3 @@ def module_sua_chua():
                     st.rerun()
                 except Exception as e:
                     st.error(f"Lỗi tạo hóa đơn: {e}")
-
-

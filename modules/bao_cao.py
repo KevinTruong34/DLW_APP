@@ -460,7 +460,7 @@ def _tab_tong_quan_dt():
         )
         cn_sum = hd_u.groupby("Chi nhánh")["Khách đã trả"].sum().reset_index()
         cn_sum.columns = ["Chi nhánh", "Doanh thu"]
-        cn_sum["Doanh thu (đ)"] = cn_sum["Doanh thu"].apply(_fmt) + "đ"
+        cn_sum["Doanh thu (đ)"] = cn_sum["Doanh thu"].apply(lambda x: _fmt(x) + "đ")
         cn_sum["Tỷ lệ"] = (cn_sum["Doanh thu"] / cn_sum["Doanh thu"].sum() * 100).round(1).astype(str) + "%"
         st.dataframe(cn_sum[["Chi nhánh", "Doanh thu (đ)", "Tỷ lệ"]],
                      use_container_width=True, hide_index=True)
@@ -535,7 +535,7 @@ def _tab_ban_hang():
             so_dong=("Mã hàng", "count"),
         ).reset_index().sort_values("doanh_thu", ascending=False)
         grp.columns = [nhom_chon, "Doanh thu", "Số lượng", "Số dòng HĐ"]
-        grp["Doanh thu (đ)"] = grp["Doanh thu"].apply(_fmt) + "đ"
+        grp["Doanh thu (đ)"] = grp["Doanh thu"].apply(lambda x: _fmt(x) + "đ")
         grp["Tỷ lệ"] = (grp["Doanh thu"] / grp["Doanh thu"].sum() * 100).round(1).astype(str) + "%"
         st.dataframe(
             grp[[nhom_chon, "Doanh thu (đ)", "Số lượng", "Tỷ lệ"]],
@@ -741,7 +741,7 @@ def _tab_nhan_vien():
             doanh_thu=("Khách đã trả", "sum"),
         ).reset_index().sort_values("doanh_thu", ascending=False)
         grp_tao.columns = ["Người tạo HĐ", "Số HĐ", "Doanh thu"]
-        grp_tao["Doanh thu (đ)"] = grp_tao["Doanh thu"].apply(_fmt) + "đ"
+        grp_tao["Doanh thu (đ)"] = grp_tao["Doanh thu"].apply(lambda x: _fmt(x) + "đ")
         st.dataframe(grp_tao[["Người tạo HĐ", "Số HĐ", "Doanh thu (đ)"]],
                      use_container_width=True, hide_index=True)
     else:
@@ -759,7 +759,7 @@ def _tab_nhan_vien():
             doanh_thu=("Khách đã trả", "sum"),
         ).reset_index().sort_values("doanh_thu", ascending=False)
         grp_ban.columns = ["Người bán", "Số HĐ", "Doanh thu"]
-        grp_ban["Doanh thu (đ)"] = grp_ban["Doanh thu"].apply(_fmt) + "đ"
+        grp_ban["Doanh thu (đ)"] = grp_ban["Doanh thu"].apply(lambda x: _fmt(x) + "đ")
         st.dataframe(grp_ban[["Người bán", "Số HĐ", "Doanh thu (đ)"]],
                      use_container_width=True, hide_index=True)
     else:

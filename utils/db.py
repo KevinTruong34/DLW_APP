@@ -186,8 +186,10 @@ def get_archive_reminder() -> dict:
 def load_the_kho(branches_key: tuple):
     rows, batch, offset = [], 1000, 0
     while True:
+        # FIX: thêm .order() để pagination ổn định, tránh trùng/sót rows
         res = supabase.table("the_kho").select("*") \
             .in_("Chi nhánh", list(branches_key)) \
+            .order("Mã hàng").order("Chi nhánh") \
             .range(offset, offset+batch-1).execute()
         if not res.data: break
         rows.extend(res.data)

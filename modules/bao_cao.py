@@ -307,15 +307,8 @@ def _tab_cuoi_ngay():
     today = datetime.now().date()
     raw = _load_hd(load_cns, today, today)
 
-    # ── Hóa đơn ──
+    # ── Hóa đơn — data chung của CN, không filter theo cá nhân ──
     df = raw.copy()
-    if not is_kt_adm and not df.empty:
-        # Nhân viên: chỉ thấy HĐ mình tạo
-        mask = pd.Series([False] * len(df), index=df.index)
-        if "Người tạo" in df.columns:
-            mask = mask | (df["Người tạo"].astype(str).str.strip() == ho_ten)
-        df = df[mask]
-
     hd_unique = df.drop_duplicates(subset=["Mã hóa đơn"], keep="first") if not df.empty else pd.DataFrame()
     tong_dt   = int(hd_unique["Khách đã trả"].sum()) if not hd_unique.empty else 0
     so_hd     = len(hd_unique)
@@ -336,11 +329,8 @@ def _tab_cuoi_ngay():
     with m3: st.metric("Bán hàng", f"{_fmt(dt_ban)}đ")
     with m4: st.metric("Sửa chữa (APSC)", f"{_fmt(dt_apsc)}đ")
 
-    # ── Phiếu sửa chữa hôm nay ──
+    # ── Phiếu sửa chữa hôm nay — data chung CN ──
     df_sc = _load_sc_phieu(load_cns, today, today)
-    if not is_kt_adm and not df_sc.empty:
-        # NV: chỉ thấy phiếu mình tạo (nguoi_tiep_nhan = ho_ten)
-        df_sc = df_sc[df_sc["nguoi_tiep_nhan"].astype(str).str.strip() == ho_ten]
 
     so_sc_tao    = len(df_sc)
     so_sc_xong   = len(df_sc[df_sc["trang_thai"] == "Hoàn thành"]) if not df_sc.empty else 0
@@ -703,9 +693,6 @@ def _tab_xuat_nhap_ton():
 # ══════════════════════════════════════════════════════════
 
 def _tab_nhan_vien():
-    if not is_admin():
-        st.info("Chỉ admin được xem báo cáo nhân viên.")
-        return
 
     accessible = get_accessible_branches()
     col_cn, col_date = st.columns([1, 2])
@@ -773,20 +760,26 @@ def _tab_nhan_vien():
 def module_bao_cao():
     st.markdown("### 📊 Báo cáo")
 
-    tab_dt, tab_xnt, tab_nv = st.tabs(
-        ["💰 Doanh thu", "📦 Xuất nhập tồn", "👥 Nhân viên"]
-    )
+    # ── Tab chính: ẩn "Nhân viên" nếu không phải admin ──
+    main_tab_labels = ["💰 Doanh thu", "📦 Xuất nhập tồn"]
+    if is_admin():
+        main_tab_labels.append("👥 Nhân viên")
+    main_tabs = st.tabs(main_tab_labels)
 
-    with tab_dt:
-        sub_cd, sub_tq, sub_bh = st.tabs(
-            ["Cuối ngày", "Tổng quan", "Bán hàng theo nhóm"]
-        )
-        with sub_cd: _tab_cuoi_ngay()
-        with sub_tq: _tab_tong_quan_dt()
-        with sub_bh: _tab_ban_hang()
+    with main_tabs[0]:
+        # Sub-tab Doanh thu: ẩn "Tổng quan" và "Bán hàng theo nhóm" nếu không phải admin/ke_toan
+        if is_ke_toan_or_admin():
+            sub_labels = ["Cuối ngày", "Tổng quan", "Bán hàng theo nhóm"]
+            sub_tabs = st.tabs(sub_labels)
+            with sub_tabs[0]: _tab_cuoi_ngay()
+            with sub_tabs[1]: _tab_tong_quan_dt()
+            with sub_tabs[2]: _tab_ban_hang()
+        else:
+            _tab_cuoi_ngay()
 
-    with tab_xnt:
+    with main_tabs[1]:
         _tab_xuat_nhap_ton()
 
-    with tab_nv:
-        _tab_nhan_vien()
+    if is_admin():
+        with main_tabs[2]:
+            _tab_nhan_vien()

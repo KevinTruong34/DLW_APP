@@ -126,6 +126,7 @@ def module_quan_tri():
                     df = pd.read_excel(up)
                     st.success(f"Đọc được {len(df)} dòng")
                     col_map = {
+                        "Loại hàng":        "loai_sp",
                         "Mã hàng":          "ma_hang",
                         "Mã vạch":          "ma_vach",
                         "Tên hàng":         "ten_hang",

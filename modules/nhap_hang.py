@@ -57,12 +57,21 @@ def module_nhap_hang():
         except Exception:
             return f"PNH{(datetime.now()+timedelta(hours=7)).strftime('%y%m%d%H%M')}"
 
+    def _gen_ma_th() -> str:
+        try:
+            res = supabase.rpc("get_next_th_num", {}).execute()
+            data = res.data
+            num = int(data[0] if isinstance(data, list) else data) if data else 1
+            return f"TH{num:06d}"
+        except Exception:
+            return f"TH{(datetime.now()+timedelta(hours=7)).strftime('%y%m%d%H%M')}"
+
     def _fmt(v): return f"{int(v):,}".replace(",",".")
 
-    tabs = ["Danh sách phiếu", "Tạo phiếu nhập", "Chi tiết / Duyệt"]
+    tabs = ["Danh sách phiếu", "Tạo phiếu nhập", "Chi tiết / Duyệt", "Trả hàng NCC"]
     if is_admin():
         tabs.append("Nhà cung cấp")
-    tab_list, tab_create, tab_detail, *rest = st.tabs(tabs)
+    tab_list, tab_create, tab_detail, tab_tra, *rest = st.tabs(tabs)
     tab_ncc = rest[0] if rest else None
 
     # ══════ TAB 1 — DANH SÁCH ══════
@@ -454,13 +463,11 @@ def module_nhap_hang():
                                     })
 
                             # ── Batch execute ──
-                            # Tồn kho update: upsert theo id
                             for u in kho_updates:
                                 supabase.table("the_kho").update({"Tồn cuối kì": u["Tồn cuối kì"]}) \
                                     .eq("id", u["id"]).execute()
                             if kho_inserts:
                                 supabase.table("the_kho").insert(kho_inserts).execute()
-                            # Giá bán: update batch
                             for u in hh_updates:
                                 supabase.table("hang_hoa").update({"gia_ban": u["gia_ban"]}) \
                                     .eq("ma_hang", u["ma_hang"]).execute()
@@ -505,7 +512,7 @@ def module_nhap_hang():
                             ma_hangs_set = set(ma_hangs)
                             sl_map = {str(r["ma_hang"]).strip(): int(r["so_luong"]) for _, r in ct.iterrows()}
 
-                            # Load the_kho với pagination — tránh bị giới hạn 1000 rows
+                            # Load the_kho với pagination
                             kho_rows, batch, offset = [], 1000, 0
                             while True:
                                 r2 = supabase.table("the_kho").select("*") \
@@ -516,7 +523,6 @@ def module_nhap_hang():
                                 if len(r2.data) < batch: break
                                 offset += batch
 
-                            # Tìm key thực tế của "Mã hàng" trong response
                             ma_key = next((k for k in (kho_rows[0].keys() if kho_rows else [])
                                            if "m" in k.lower() and "h" in k.lower() and len(k) <= 8), "Mã hàng")
 
@@ -539,6 +545,13 @@ def module_nhap_hang():
                             log_action("PNH_REVERT", f"ma={ma_pick}", level="warning")
                             st.success("✓ Đã hoàn tác — tồn kho trừ lại."); st.rerun()
                         except Exception as e: st.error(f"Lỗi hoàn tác: {e}")
+
+    # ══════ TAB 4 — TRẢ HÀNG NCC ══════
+    with tab_tra:
+        if not is_ke_toan_or_admin():
+            st.info("Chỉ kế toán và admin được tạo phiếu trả hàng.")
+        else:
+            _render_tab_tra_hang(active, ho_ten, _load_ncc, _gen_ma_th, _fmt)
 
     # ══════ TAB NCC (Admin only) ══════
     if tab_ncc:
@@ -606,3 +619,390 @@ def module_nhap_hang():
                     except Exception as e: st.error(f"Lỗi: {e}")
 
 
+# ══════════════════════════════════════════
+# PHIẾU TRẢ HÀNG NCC
+# ══════════════════════════════════════════
+
+def _load_phieu_tra(chi_nhanh: str) -> pd.DataFrame:
+    try:
+        res = supabase.table("phieu_tra_hang").select("*") \
+            .eq("chi_nhanh", chi_nhanh).order("created_at", desc=True).execute()
+        return pd.DataFrame(res.data) if res.data else pd.DataFrame()
+    except Exception:
+        return pd.DataFrame()
+
+
+def _load_ct_tra(ma: str) -> pd.DataFrame:
+    try:
+        res = supabase.table("phieu_tra_hang_ct").select("*").eq("ma_phieu", ma).execute()
+        if not res.data:
+            return pd.DataFrame()
+        df = pd.DataFrame(res.data)
+        for c in ["so_luong", "gia_tra"]:
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0).astype(int)
+        return df
+    except Exception:
+        return pd.DataFrame()
+
+
+def _render_tab_tra_hang(active: str, ho_ten: str, _load_ncc, _gen_ma_th, _fmt):
+    """Nội dung tab Trả hàng NCC."""
+
+    TRANG_THAI_TH = ["Nháp", "Chờ xác nhận", "Đã trả hàng", "Đã hủy"]
+
+    sub_list, sub_create, sub_detail = st.tabs(
+        ["Danh sách phiếu trả", "Tạo phiếu trả", "Chi tiết / Duyệt"]
+    )
+
+    # ── SUB-TAB 1: DANH SÁCH ──
+    with sub_list:
+        tt_f = st.selectbox("Trạng thái:", ["Tất cả"] + TRANG_THAI_TH, key="th_tt_filter")
+        df = _load_phieu_tra(active)
+        if not df.empty and tt_f != "Tất cả":
+            df = df[df["trang_thai"] == tt_f]
+        if df.empty:
+            st.info("Chưa có phiếu trả hàng nào.")
+        else:
+            view = df.rename(columns={
+                "ma_phieu": "Mã Phiếu", "ten_ncc": "NCC", "trang_thai": "Trạng Thái",
+                "created_by": "Người Tạo", "confirmed_by": "Người Duyệt",
+                "chi_nhanh": "Chi Nhánh"
+            })
+            cols = ["Mã Phiếu", "NCC", "Chi Nhánh", "Trạng Thái", "Người Tạo", "Người Duyệt"]
+            cols = [c for c in cols if c in view.columns]
+            st.dataframe(view[cols], use_container_width=True, hide_index=True, height=400)
+            st.caption(f"Tổng: {len(df)} phiếu")
+
+    # ── SUB-TAB 2: TẠO PHIẾU TRẢ ──
+    with sub_create:
+        cnt = st.session_state.get("th_cnt", 0)
+        st.info(f"Chi nhánh: **{active}**")
+
+        df_ncc = _load_ncc()
+        if df_ncc.empty:
+            st.warning("Chưa có NCC nào.")
+        else:
+            ncc_opts = {"-- Chọn NCC --": ("", "")}
+            for _, r in df_ncc.iterrows():
+                ncc_opts[f"{r['ma_ncc']} — {r['ten_ncc']}"] = (r["ma_ncc"], r["ten_ncc"])
+            ncc_label = st.selectbox("Nhà cung cấp: *", list(ncc_opts.keys()), key=f"th_ncc_{cnt}")
+            ma_ncc, ten_ncc = ncc_opts[ncc_label]
+
+            ghi_chu = st.text_area("Ghi chú:", key=f"th_gc_{cnt}",
+                                    placeholder="Lý do trả hàng, số biên bản...")
+
+            # Giỏ hàng trả
+            st.markdown("**Danh sách hàng trả:**")
+            items_key = f"th_items_{cnt}"
+            st.session_state.setdefault(items_key, [])
+
+            with st.expander(f"➕ Thêm hàng trả ({len(st.session_state[items_key])} mục)",
+                              expanded=True):
+                hh = load_hang_hoa()
+                ma_tim = st.text_input("Tìm mã / tên hàng:", key=f"th_tim_{cnt}",
+                                       placeholder="Nhập mã hoặc tên...")
+                hits = pd.DataFrame()
+                if ma_tim.strip() and not hh.empty:
+                    s = ma_tim.strip().lower().replace(" ", "")
+                    def _fz2(v): v2 = str(v).lower(); return s in v2 or s in v2.replace(" ", "")
+                    hits = hh[hh["ma_hang"].apply(_fz2) | hh["ten_hang"].apply(_fz2)].head(6)
+
+                if not hits.empty:
+                    h_lbl1, h_lbl2, h_lbl3, h_lbl4 = st.columns([3, 1, 2, 1])
+                    with h_lbl2: st.markdown("**Số lượng**")
+                    with h_lbl3: st.markdown("**Giá trả**")
+                    for _, r in hits.iterrows():
+                        c1, c2, c3, c4 = st.columns([3, 1, 2, 1])
+                        with c1:
+                            st.markdown(f"**{r['ma_hang']}** — {r['ten_hang']}")
+                        with c2:
+                            sl = st.number_input("SL", min_value=1, value=1,
+                                                  key=f"th_sl_{cnt}_{r['ma_hang']}",
+                                                  label_visibility="collapsed")
+                        with c3:
+                            gia = st.number_input("Giá trả", min_value=0, step=1000,
+                                                   value=int(r.get("gia_ban", 0)),
+                                                   key=f"th_gia_{cnt}_{r['ma_hang']}",
+                                                   label_visibility="collapsed")
+                        with c4:
+                            if st.button("➕", key=f"th_add_{cnt}_{r['ma_hang']}"):
+                                mh_str = str(r["ma_hang"])
+                                existing = st.session_state.get(items_key, [])
+                                found = False
+                                for item in existing:
+                                    if item["ma_hang"] == mh_str:
+                                        item["so_luong"] += int(sl)
+                                        item["gia_tra"] = int(gia)
+                                        found = True
+                                        break
+                                if not found:
+                                    st.session_state[items_key].append({
+                                        "ma_hang":  mh_str,
+                                        "ten_hang": str(r["ten_hang"]),
+                                        "so_luong": int(sl),
+                                        "gia_tra":  int(gia),
+                                    })
+                                st.rerun()
+                elif ma_tim.strip():
+                    st.caption("Không tìm thấy hàng hóa.")
+
+            # Hiển thị giỏ hàng trả
+            items = st.session_state.get(items_key, [])
+            if items:
+                st.markdown("---")
+                hdr = st.columns([3, 1, 2, 1])
+                for lbl, col in zip(["Tên hàng", "SL", "Giá trả", ""], hdr):
+                    col.caption(lbl)
+                for i, item in enumerate(items):
+                    c1, c2, c3, c4 = st.columns([3, 1, 2, 1])
+                    with c1:
+                        st.markdown(f"<span style='font-size:0.88rem'>"
+                                    f"{item['ma_hang']} — {item['ten_hang']}</span>",
+                                    unsafe_allow_html=True)
+                    with c2:
+                        st.markdown(f"<span style='font-size:0.88rem'>x{item['so_luong']}</span>",
+                                    unsafe_allow_html=True)
+                    with c3:
+                        st.markdown(f"<span style='font-size:0.88rem'>{_fmt(item['gia_tra'])}đ</span>",
+                                    unsafe_allow_html=True)
+                    with c4:
+                        if st.button("✕", key=f"th_del_{cnt}_{i}"):
+                            st.session_state[items_key].pop(i); st.rerun()
+
+                tong_sl  = sum(x["so_luong"] for x in items)
+                tong_gt  = sum(x["so_luong"] * x["gia_tra"] for x in items)
+                m1, m2 = st.columns(2)
+                m1.metric("Tổng số lượng trả", f"{tong_sl:,}".replace(",", "."))
+                m2.metric("Tổng giá trị trả", f"{_fmt(tong_gt)}đ")
+
+            st.markdown("---")
+            can_save = bool(ma_ncc) and len(items) > 0
+            c_draft, c_submit = st.columns(2)
+            with c_draft:
+                if st.button("💾 Lưu nháp", use_container_width=True,
+                             disabled=not can_save, key="th_save_draft"):
+                    try:
+                        ma = _gen_ma_th()
+                        supabase.table("phieu_tra_hang").insert({
+                            "ma_phieu": ma, "ma_ncc": ma_ncc, "ten_ncc": ten_ncc,
+                            "chi_nhanh": active, "trang_thai": "Nháp",
+                            "ghi_chu": ghi_chu.strip() or None,
+                            "created_by": ho_ten,
+                            "created_at": (datetime.now() + timedelta(hours=7)).isoformat(),
+                            "updated_at": (datetime.now() + timedelta(hours=7)).isoformat(),
+                        }).execute()
+                        supabase.table("phieu_tra_hang_ct").insert([
+                            {"ma_phieu": ma, "ma_hang": x["ma_hang"],
+                             "ten_hang": x["ten_hang"], "so_luong": x["so_luong"],
+                             "gia_tra": x["gia_tra"]} for x in items
+                        ]).execute()
+                        st.session_state["th_cnt"] = cnt + 1
+                        st.cache_data.clear()
+                        log_action("TH_DRAFT", f"ma={ma} ncc={ten_ncc}")
+                        st.success(f"✓ Đã lưu nháp **{ma}**"); st.rerun()
+                    except Exception as e: st.error(f"Lỗi: {e}")
+            with c_submit:
+                if st.button("📤 Gửi chờ xác nhận", type="primary",
+                             use_container_width=True, disabled=not can_save,
+                             key="th_submit"):
+                    try:
+                        ma = _gen_ma_th()
+                        supabase.table("phieu_tra_hang").insert({
+                            "ma_phieu": ma, "ma_ncc": ma_ncc, "ten_ncc": ten_ncc,
+                            "chi_nhanh": active, "trang_thai": "Chờ xác nhận",
+                            "ghi_chu": ghi_chu.strip() or None,
+                            "created_by": ho_ten,
+                            "created_at": (datetime.now() + timedelta(hours=7)).isoformat(),
+                            "updated_at": (datetime.now() + timedelta(hours=7)).isoformat(),
+                        }).execute()
+                        supabase.table("phieu_tra_hang_ct").insert([
+                            {"ma_phieu": ma, "ma_hang": x["ma_hang"],
+                             "ten_hang": x["ten_hang"], "so_luong": x["so_luong"],
+                             "gia_tra": x["gia_tra"]} for x in items
+                        ]).execute()
+                        st.session_state["th_cnt"] = cnt + 1
+                        st.cache_data.clear()
+                        log_action("TH_SUBMIT", f"ma={ma} ncc={ten_ncc}")
+                        st.success(f"✓ Đã gửi **{ma}** chờ xác nhận"); st.rerun()
+                    except Exception as e: st.error(f"Lỗi: {e}")
+
+    # ── SUB-TAB 3: CHI TIẾT / DUYỆT ──
+    with sub_detail:
+        df_all = _load_phieu_tra(active)
+        if df_all.empty:
+            st.info("Chưa có phiếu trả hàng nào.")
+        else:
+            search = st.text_input("Tìm mã phiếu / NCC:", key="th_search_dt",
+                                    placeholder="TH000001 hoặc tên NCC...")
+            df_f = df_all.copy()
+            if search.strip():
+                s = search.strip().lower()
+                df_f = df_f[df_f["ma_phieu"].str.lower().str.contains(s, na=False) |
+                            df_f["ten_ncc"].astype(str).str.lower().str.contains(s, na=False)]
+
+            if df_f.empty:
+                st.info("Không tìm thấy.")
+            else:
+                opts = [f"{r['ma_phieu']} · {r.get('ten_ncc', '')} · {r.get('trang_thai', '')}"
+                        for _, r in df_f.iterrows()]
+                picked = st.selectbox("Chọn phiếu:", opts, key="th_detail_pick")
+                ma_pick = picked.split(" · ")[0]
+                phieu = df_all[df_all["ma_phieu"] == ma_pick].iloc[0]
+                ct = _load_ct_tra(ma_pick)
+                tt = phieu.get("trang_thai", "")
+
+                # Thông tin phiếu
+                p1, p2, p3 = st.columns(3)
+                with p1:
+                    st.markdown(f"**Mã phiếu:** {ma_pick}")
+                    st.markdown(f"**NCC:** {phieu.get('ten_ncc', '—')}")
+                with p2:
+                    st.markdown(f"**Chi nhánh:** {phieu.get('chi_nhanh', '')}")
+                    st.markdown(f"**Người tạo:** {phieu.get('created_by', '—')}")
+                with p3:
+                    st.markdown(f"**Trạng thái:** {tt}")
+                    st.markdown(f"**Người duyệt:** {phieu.get('confirmed_by') or '—'}")
+                if phieu.get("ghi_chu"):
+                    st.markdown(f"**Ghi chú:** {phieu.get('ghi_chu', '')}")
+
+                # Bảng chi tiết
+                if not ct.empty:
+                    st.markdown("---")
+                    ct_view = ct[["ma_hang", "ten_hang", "so_luong", "gia_tra"]].copy()
+                    ct_view["thanh_tien"] = ct_view["so_luong"] * ct_view["gia_tra"]
+                    ct_view = ct_view.rename(columns={
+                        "ma_hang": "Mã", "ten_hang": "Tên",
+                        "so_luong": "SL", "gia_tra": "Giá trả",
+                        "thanh_tien": "Thành tiền"
+                    })
+                    st.dataframe(ct_view, use_container_width=True, hide_index=True)
+                    tong_gt = int((ct["so_luong"] * ct["gia_tra"]).sum())
+                    st.metric("Tổng giá trị trả", f"{_fmt(tong_gt)}đ")
+
+                st.markdown("---")
+
+                # Gửi chờ xác nhận (từ Nháp)
+                if tt == "Nháp" and is_ke_toan_or_admin():
+                    if st.button("📤 Gửi chờ xác nhận", type="primary",
+                                 use_container_width=True, key="th_to_cho"):
+                        supabase.table("phieu_tra_hang").update({
+                            "trang_thai": "Chờ xác nhận",
+                            "updated_at": (datetime.now() + timedelta(hours=7)).isoformat()
+                        }).eq("ma_phieu", ma_pick).execute()
+                        st.cache_data.clear()
+                        st.success("✓ Đã gửi chờ xác nhận"); st.rerun()
+
+                # Xác nhận trả hàng — trừ tồn kho
+                if tt == "Chờ xác nhận" and is_admin():
+                    st.info("Xác nhận sẽ **trừ** số lượng các mặt hàng khỏi tồn kho.")
+                    if st.button("✅ Xác nhận — Trả hàng", type="primary",
+                                 use_container_width=True, key="th_confirm"):
+                        try:
+                            chi_nhanh = phieu.get("chi_nhanh", "")
+                            now_vn = (datetime.now() + timedelta(hours=7)).isoformat()
+                            ma_hangs = ct["ma_hang"].astype(str).str.strip().tolist()
+                            ma_hangs_set = set(ma_hangs)
+                            sl_map = {str(r["ma_hang"]).strip(): int(r["so_luong"])
+                                      for _, r in ct.iterrows()}
+
+                            # Load tồn kho chi nhánh
+                            kho_rows, batch, offset = [], 1000, 0
+                            while True:
+                                r2 = supabase.table("the_kho").select("*") \
+                                    .eq("Chi nhánh", chi_nhanh) \
+                                    .range(offset, offset + batch - 1).execute()
+                                if not r2.data: break
+                                kho_rows.extend(r2.data)
+                                if len(r2.data) < batch: break
+                                offset += batch
+
+                            ma_key = next((k for k in (kho_rows[0].keys() if kho_rows else [])
+                                           if "m" in k.lower() and "h" in k.lower()
+                                           and len(k) <= 8), "Mã hàng")
+                            kho_map = {str(r.get(ma_key, "")).strip(): r
+                                       for r in kho_rows
+                                       if str(r.get(ma_key, "")).strip() in ma_hangs_set}
+
+                            # Trừ tồn từng mặt hàng
+                            for mh, kho_row in kho_map.items():
+                                sl = sl_map.get(mh, 0)
+                                cur = int(kho_row.get("Tồn cuối kì") or 0)
+                                supabase.table("the_kho").update(
+                                    {"Tồn cuối kì": max(0, cur - sl)}
+                                ).eq("id", kho_row["id"]).execute()
+
+                            # Cập nhật trạng thái phiếu
+                            supabase.table("phieu_tra_hang").update({
+                                "trang_thai": "Đã trả hàng",
+                                "confirmed_by": ho_ten,
+                                "confirmed_at": now_vn,
+                                "updated_at": now_vn,
+                            }).eq("ma_phieu", ma_pick).execute()
+
+                            st.cache_data.clear()
+                            log_action("TH_CONFIRM", f"ma={ma_pick} cn={chi_nhanh}")
+                            st.success(f"✓ Đã trả hàng **{ma_pick}** — tồn kho đã trừ!")
+                            st.rerun()
+                        except Exception as e: st.error(f"Lỗi xác nhận: {e}")
+
+                # Hủy phiếu (admin, chưa trả)
+                if is_admin() and tt in ("Nháp", "Chờ xác nhận"):
+                    st.markdown("---")
+                    if st.button("🗑️ Hủy phiếu", type="secondary",
+                                 use_container_width=True, key="th_cancel"):
+                        supabase.table("phieu_tra_hang").update({
+                            "trang_thai": "Đã hủy",
+                            "updated_at": (datetime.now() + timedelta(hours=7)).isoformat()
+                        }).eq("ma_phieu", ma_pick).execute()
+                        st.cache_data.clear()
+                        log_action("TH_CANCEL", f"ma={ma_pick}", level="warning")
+                        st.success("Đã hủy phiếu."); st.rerun()
+
+                # Hoàn tác trả hàng — cộng lại tồn kho
+                if is_admin() and tt == "Đã trả hàng":
+                    st.markdown("---")
+                    if st.button("↩️ Hoàn tác trả hàng", type="secondary",
+                                 use_container_width=True, key="th_revert"):
+                        try:
+                            chi_nhanh = phieu.get("chi_nhanh", "")
+                            ma_hangs = ct["ma_hang"].astype(str).str.strip().tolist()
+                            ma_hangs_set = set(ma_hangs)
+                            sl_map = {str(r["ma_hang"]).strip(): int(r["so_luong"])
+                                      for _, r in ct.iterrows()}
+
+                            # Load tồn kho
+                            kho_rows, batch, offset = [], 1000, 0
+                            while True:
+                                r2 = supabase.table("the_kho").select("*") \
+                                    .eq("Chi nhánh", chi_nhanh) \
+                                    .range(offset, offset + batch - 1).execute()
+                                if not r2.data: break
+                                kho_rows.extend(r2.data)
+                                if len(r2.data) < batch: break
+                                offset += batch
+
+                            ma_key = next((k for k in (kho_rows[0].keys() if kho_rows else [])
+                                           if "m" in k.lower() and "h" in k.lower()
+                                           and len(k) <= 8), "Mã hàng")
+                            kho_map = {str(r.get(ma_key, "")).strip(): r
+                                       for r in kho_rows
+                                       if str(r.get(ma_key, "")).strip() in ma_hangs_set}
+
+                            # Cộng lại tồn
+                            for mh, kho_row in kho_map.items():
+                                sl = sl_map.get(mh, 0)
+                                cur = int(kho_row.get("Tồn cuối kì") or 0)
+                                supabase.table("the_kho").update(
+                                    {"Tồn cuối kì": cur + sl}
+                                ).eq("id", kho_row["id"]).execute()
+
+                            supabase.table("phieu_tra_hang").update({
+                                "trang_thai": "Đã hủy",
+                                "updated_at": (datetime.now() + timedelta(hours=7)).isoformat()
+                            }).eq("ma_phieu", ma_pick).execute()
+
+                            st.cache_data.clear()
+                            log_action("TH_REVERT", f"ma={ma_pick}", level="warning")
+                            st.success("✓ Đã hoàn tác — tồn kho cộng lại."); st.rerun()
+                        except Exception as e: st.error(f"Lỗi hoàn tác: {e}")

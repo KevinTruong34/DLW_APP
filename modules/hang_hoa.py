@@ -169,6 +169,32 @@ def module_hang_hoa():
             try:
                 # Load tất cả 3 chi nhánh trong 1 call thay vì loop 3 lần
                 all_kho = load_the_kho(branches_key=tuple(ALL_BRANCHES))
+
+                # ═══════════════════ DEBUG TẠM ═══════════════════
+                # Mục đích: xem all_kho thực sự chứa gì cho ma_chon hiện tại.
+                # Sau khi debug xong → XÓA toàn bộ block này.
+                with st.expander("🔧 DEBUG — all_kho cho mã đang chọn", expanded=True):
+                    st.write(f"ma_chon = `{ma_chon}` · view_branches = `{view_branches}` · active = `{active}`")
+                    st.write(f"all_kho.shape = {all_kho.shape if not all_kho.empty else 'EMPTY'}")
+                    if not all_kho.empty:
+                        debug_rows = all_kho[
+                            all_kho["Mã hàng"].astype(str).str.strip() == str(ma_chon).strip()
+                        ]
+                        st.write(f"Số dòng match ma_chon: {len(debug_rows)}")
+                        if not debug_rows.empty:
+                            st.dataframe(
+                                debug_rows[["Mã hàng", "Chi nhánh", "Tồn cuối kì"]],
+                                hide_index=True, use_container_width=True
+                            )
+                        else:
+                            st.warning("Không có dòng nào match trong all_kho!")
+                        # Show distinct chi nhánh để verify branches_key đã filter đúng
+                        st.write(
+                            "Distinct Chi nhánh trong all_kho:",
+                            sorted(all_kho["Chi nhánh"].astype(str).unique().tolist())
+                        )
+                # ═══════════════════ /DEBUG TẠM ═══════════════════
+
                 branch_tons = {cn: 0 for cn in ALL_BRANCHES}
                 if not all_kho.empty:
                     rows_kho = all_kho[all_kho["Mã hàng"].astype(str).str.strip() == str(ma_chon).strip()]

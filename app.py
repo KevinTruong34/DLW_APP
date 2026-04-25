@@ -221,7 +221,7 @@ role_lbl  = {"admin":"Admin","ke_toan":"Kế toán","nhan_vien":"Nhân viên"}.g
 
 # Menu: BỎ Tổng quan khỏi vị trí có dashboard — chỉ còn welcome
 # Sắp xếp thứ tự theo ý anh: Tổng quan -> Hóa đơn -> Hàng hóa -> Chuyển hàng -> Kiểm kê
-menu = ["📊 Tổng quan", "🧾 Hóa đơn", "📦 Hàng hóa", "🔄 Chuyển hàng", "🧮 Kiểm kê", "🔧 Sửa chữa", "👥 Khách hàng", "📥 Nhập hàng"]
+menu = ["📊 Tổng quan", "🧾 Hóa đơn", "📦 Hàng hóa", "🔄 Chuyển hàng", "🧮 Kiểm kê", "🔧 Sửa chữa", "👥 Khách hàng", "📥 Nhập/Trả hàng"]
 
 if is_admin():
     menu.append("⚙️ Quản trị")
@@ -278,4 +278,4 @@ elif page_clean == "Quản trị":    module_quan_tri()
 elif page_clean == "Kiểm kê":     module_kiem_ke()
 elif page_clean == "Sửa chữa":    module_sua_chua()
 elif page_clean == "Khách hàng":  module_khach_hang()
-elif page_clean == "Nhập hàng":   module_nhap_hang()
+elif page_clean == "Nhập/Trả hàng": module_nhap_hang()

@@ -17,12 +17,17 @@ def _fmt(v) -> str:
     return f"{int(v):,}".replace(",", ".")
 
 
+def _today_vn() -> date:
+    """Trả về ngày hôm nay theo giờ VN (Asia/Ho_Chi_Minh), reset 00:00."""
+    return pd.Timestamp.now(tz="Asia/Ho_Chi_Minh").date()
+
+
 # ══════════════════════════════════════════════════════════
 # WIDGET — Date filter
 # ══════════════════════════════════════════════════════════
 
 def _date_filter(key: str, default_days: int = 30) -> tuple[date, date]:
-    today = datetime.now().date()
+    today = _today_vn()
     presets = {
         "Hôm nay":     (today, today),
         "Hôm qua":     (today - timedelta(1), today - timedelta(1)),
@@ -143,7 +148,7 @@ def _load_sc_can_luu_y(branches_key: tuple) -> pd.DataFrame:
     df["_created"] = pd.to_datetime(
         df["created_at"], errors="coerce", utc=True
     ).dt.tz_convert("Asia/Ho_Chi_Minh")
-    today = pd.Timestamp.now(tz="Asia/Ho_Chi_Minh").normalize()
+    today = pd.Timestamp(_today_vn(), tz="Asia/Ho_Chi_Minh")
     df["_so_ngay"] = (today - df["_created"].dt.normalize()).dt.days
     return df.reset_index(drop=True)
 
@@ -356,7 +361,7 @@ def _tab_cuoi_ngay():
         load_cns = (active,)
         st.caption(f"📍 {active}")
 
-    today     = datetime.now().date()
+    today     = _today_vn()
     yesterday = today - timedelta(days=1)
 
     # Load 2 ngày: hôm nay + hôm qua (để so sánh delta)

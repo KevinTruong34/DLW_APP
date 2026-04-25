@@ -1,1 +1,7 @@
+[server]
+# Watch tất cả file (kể cả trong subfolder modules/, utils/) bằng poll mode.
+# Mặc định Streamlit dùng inotify chỉ watch app.py — không nhận file trong subfolder.
+fileWatcherType = "poll"
 
+# Tự rerun app khi phát hiện file thay đổi
+runOnSave = true

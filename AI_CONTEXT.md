@@ -1,319 +1,217 @@
-# AI_CONTEXT.md — DL Watch Store Management App
-*Cập nhật: 24/04/2026 — Bản bàn giao đầy đủ*
+# AI_CONTEXT.md — DL Watch Store App
+> Cập nhật: 27/04/2026 — Bàn giao sau session phát triển
 
 ---
 
 ## 1. TỔNG QUAN DỰ ÁN
 
-**Tên app:** DL Watch Store
-**Loại:** Web app quản lý cửa hàng đồng hồ nội bộ
-**Stack:** Streamlit (Python, multi-file) + Supabase (PostgreSQL)
-**Deploy:** Streamlit Cloud
-**Trạng thái:** Chạy song song KiotViet, đang dần thay thế
+**App:** DL Watch Store — quản lý cửa hàng đồng hồ nội bộ  
+**Stack:** Streamlit (Python, multi-file) + Supabase (PostgreSQL)  
+**Deploy:** Streamlit Cloud  
+**3 chi nhánh:** 100 Lê Quý Đôn · Coop Vũng Tàu · GO BÀ RỊA
 
 ---
 
-## 2. CẤU TRÚC FILE (sau khi tách code)
+## 2. CẤU TRÚC CODEBASE
 
 ```
-app.py                    ← Entry point: CSS + auth gate + navigation
+app.py                        # Entry point, CSS, auth gate, navigation (st.pills)
 utils/
-  __init__.py
-  config.py               ← Constants: ALL_BRANCHES, CN_SHORT, markers
-  db.py                   ← Supabase client, log_action, tất cả load_* functions
-  auth.py                 ← Login, session, get_user, run_auth_gate()
-  helpers.py              ← _normalize, _build_phieu_html, _in_phieu_sc
+  config.py                   # ALL_BRANCHES, CN_SHORT, IN_APP_MARKER, ARCHIVED_MARKER
+  db.py                       # Supabase client, log_action(), tất cả load_* functions
+  auth.py                     # Login, session, role helpers
+  helpers.py                  # _normalize, _build_phieu_html, _in_phieu_sc
 modules/
-  __init__.py
-  tong_quan.py            ← Dashboard + hien_thi_dashboard()
-  hoa_don.py              ← Module hóa đơn
-  hang_hoa.py             ← Module hàng hóa
-  sua_chua.py             ← Module sửa chữa
-  nhap_hang.py            ← Module nhập hàng + NCC
-  khach_hang.py           ← Module khách hàng
-  kiem_ke.py              ← Module kiểm kê
-  chuyen_hang.py          ← Module chuyển hàng
-  quan_tri.py             ← Module quản trị + nhân viên
+  tong_quan.py
+  hoa_don.py
+  hang_hoa.py
+  sua_chua.py
+  nhap_hang.py                # Nhập hàng NCC + Trả hàng NCC
+  khach_hang.py
+  kiem_ke.py
+  chuyen_hang.py
+  quan_tri.py
+  bao_cao.py                  # Module báo cáo (mới)
 ```
 
 ---
 
-## 3. STACK & CONVENTIONS
+## 3. DATABASE SCHEMA — CÁC BẢNG QUAN TRỌNG
 
-### Tech
-- Python + Streamlit (multi-file, entry point `app.py`)
-- Supabase (PostgREST API qua supabase-py)
-- Pandas, Plotly, bcrypt, openpyxl
-
-### Conventions bắt buộc
-- Giờ VN: `datetime.now() + timedelta(hours=7)`
-- Format số: dấu `.` phân cách (100.000đ) — `.replace(",",".")`
-- SĐT: chuẩn hóa bỏ `.0`, thêm `0` đầu nếu 9 chữ số (trong `load_hoa_don`)
-- Navigation: `st.pills` (không dùng `st.radio`)
-
-### Mã nội bộ app (không trùng KiotViet)
-| Prefix | Module | Ví dụ |
-|--------|--------|-------|
-| `APSC` | HĐ sửa chữa app | APSC000001 |
-| `AKH` | Khách hàng app | AKH000001 |
-| `SC` | Phiếu sửa chữa | SC000001 |
-| `PNH` | Phiếu nhập hàng | PNH000001 |
-| `KK` | Kiểm kê | KK000001 |
-| `CH` | Chuyển hàng app | CH000001 |
-
-### Postgres RPC Functions (đã tạo trong Supabase)
-```sql
-get_next_apsc_num()  -- regex ^APSC[0-9]{6}$ để tránh lỗi timestamp dài
-get_next_akh_num()   -- regex ^AKH[0-9]{6}$
-get_next_pnh_num()   -- regex ^PNH[0-9]{6}$
-```
-
-**Pattern đọc kết quả RPC:**
-```python
-data = res.data
-num = int(data[0] if isinstance(data, list) else data) if data else 1
-```
-
-### In phiếu (UTF-8 Blob URL — tránh lỗi atob tiếng Việt)
-```python
-b64 = base64.b64encode(html.encode("utf-8")).decode("ascii")
-# JS: new Blob([new TextDecoder('utf-8').decode(Uint8Array.from(atob(b64),...))], {type:'text/html'})
-```
-
-### Auto-fill khách hàng (session_state + rerun)
-```python
-if sdt != st.session_state.get(sdt_prev_key, ""):
-    st.session_state[sdt_prev_key] = sdt
-    kh = lookup_khach_hang(sdt)
-    st.session_state[kh_key] = kh
-    st.session_state[ten_key] = kh["ten_kh"] if kh else ""
-    st.rerun()
-```
-
-### QUAN TRỌNG: Tên cột tiếng Việt trong Supabase PostgREST
-| Trường hợp | Kết quả |
-|-----------|---------|
-| `.in_("Chi nhánh", list)` | ✅ HOẠT ĐỘNG — đừng thay thế |
-| `.in_("Mã hàng", list)` | ❌ LỖI ENCODE — dùng `.select("*")` rồi filter Python |
-| `.select("Mã hàng, Tồn cuối kì")` | ❌ LỖI ENCODE — dùng `.select("*")` |
-| `.eq("Chi nhánh", value)` | ✅ HOẠT ĐỘNG |
-
----
-
-## 4. DATABASE SCHEMA
-
-### Bảng từ KiotViet (upload định kỳ)
-| Bảng | Mô tả | Upload |
-|------|-------|--------|
-| `hoa_don` | Hóa đơn bán hàng (cột tiếng Việt có dấu) | Delete by mã HĐ + insert |
-| `hang_hoa` | Danh mục hàng hóa | Upsert theo `ma_hang` |
-| `the_kho` | Tồn kho snapshot | Delete-insert theo CN |
-| `khach_hang` | Danh sách khách | Upsert theo `sdt` |
-
-### Bảng do app tạo
+### Bảng cốt lõi
 | Bảng | Mô tả |
 |------|-------|
-| `nhan_vien` | Tài khoản, role, bcrypt password |
-| `sessions` | Session token, TTL 3 ngày |
-| `chi_nhanh` | Danh sách chi nhánh |
-| `nhan_vien_chi_nhanh` | Phân quyền NV theo CN |
-| `phieu_chuyen_kho` | Phiếu chuyển hàng |
+| `hoa_don` | HĐ KiotViet upload + HĐ App (prefix APSC) |
+| `hang_hoa` | Master hàng hóa, có cột `loai_sp` (Hàng hóa/Dịch vụ) |
+| `the_kho` | Snapshot tồn kho hiện tại theo CN |
+| `phieu_sua_chua` | Phiếu sửa chữa |
+| `phieu_chuyen_kho` | Phiếu chuyển kho (IN_APP_MARKER = nội bộ App) |
 | `phieu_kiem_ke` + `phieu_kiem_ke_chi_tiet` | Kiểm kê |
-| `phieu_sua_chua` + `phieu_sua_chua_chi_tiet` | Sửa chữa |
-| `nha_cung_cap` | Nhà cung cấp |
-| `phieu_nhap_hang` + `phieu_nhap_hang_ct` | Nhập hàng |
+| `phieu_nhap_hang` + `phieu_nhap_hang_ct` | Nhập hàng NCC |
+| `phieu_tra_hang` + `phieu_tra_hang_ct` | Trả hàng NCC ✅ đã tạo |
+| `action_logs` | Log thao tác toàn app |
+| `khach_hang` | Danh sách khách hàng |
 
-### Cột đặc biệt trong hang_hoa
-- `loai_hang` = cấp 1 (vd: "Đồng hồ đeo tay")
-- `thuong_hieu` = cấp 2 (vd: "Casio")
-- Upload: parse `nhom_hang` dạng `"Đồng hồ>>Casio"` thành 2 cột mới
-- `nhom_hang` gốc vẫn giữ làm backup
-- `ma_vach` — mã vạch riêng (khác `ma_hang`)
-
-### Cột đặc biệt trong phieu_nhap_hang_ct
+### SQL đã chạy (không cần chạy lại)
 ```sql
--- Đã thêm sau khi tạo ban đầu:
-ALTER TABLE phieu_nhap_hang_ct
-ADD COLUMN ma_vach text,
-ADD COLUMN loai_hang text,
-ADD COLUMN thuong_hieu text;
+-- Bảng trả hàng NCC
+CREATE TABLE phieu_tra_hang (...);
+CREATE TABLE phieu_tra_hang_ct (...);
+ALTER TABLE phieu_tra_hang DISABLE ROW LEVEL SECURITY;
+ALTER TABLE phieu_tra_hang_ct DISABLE ROW LEVEL SECURITY;
+
+-- RPC đánh số phiếu trả hàng
+CREATE FUNCTION get_next_th_num() ...;
+
+-- Action logs
+CREATE TABLE action_logs (
+  id uuid DEFAULT gen_random_uuid(),
+  created_at timestamptz DEFAULT now(),
+  username text, ho_ten text, chi_nhanh text,
+  action text, detail text, level text
+);
+ALTER TABLE action_logs DISABLE ROW LEVEL SECURITY;
+
+-- Cột loai_sp vào hang_hoa
+ALTER TABLE hang_hoa ADD COLUMN loai_sp text;
 ```
 
-### Tồn kho
-- `the_kho` = snapshot từ KiotViet
-- Delta từ phiếu chuyển hàng App tính qua `load_stock_deltas()`
-- Tồn thực = snapshot + delta
-- Module nhập hàng: cộng thẳng vào `the_kho."Tồn cuối kì"` khi xác nhận
+> **Lưu ý RLS:** Tất cả bảng nội bộ App dùng service key → DISABLE RLS.
 
 ---
 
-## 5. PHÂN QUYỀN
+## 4. PHÂN QUYỀN
 
 | Role | Quyền |
 |------|-------|
-| `admin` | Toàn quyền, xác nhận phiếu nhập, duyệt kiểm kê, xóa data |
-| `ke_toan` | Xem tất cả CN, tạo phiếu nhập, xem giá vốn |
-| `nhan_vien` | Chỉ CN của mình, tạo phiếu SC/chuyển/kiểm kê, xem nhập hàng |
+| `nhan_vien` | Xem CN mình, tạo phiếu SC, tạo phiếu nhập/trả (nháp) |
+| `ke_toan` | Tất cả CN, xem báo cáo XNT, tạo phiếu nhập/trả |
+| `admin` | Toàn quyền — xác nhận/hoàn tác mọi phiếu |
 
 ---
 
-## 6. AUTH FLOW
+## 5. CÁC MODULE ĐÃ HOÀN CHỈNH
 
-```
-app.py
-  ├── set_page_config()       ← PHẢI là lệnh Streamlit đầu tiên
-  ├── CSS inject
-  ├── from utils.auth import run_auth_gate
-  ├── run_auth_gate()          ← PHẢI gọi TRƯỚC khi import modules
-  │     ├── restore_session(token từ URL)
-  │     ├── chưa login → show_login() → st.stop()
-  │     └── chưa chọn CN → branch picker → st.stop()
-  └── import modules (chỉ sau khi auth OK)
-```
+### `modules/nhap_hang.py` — Nhập/Trả hàng NCC
+- **2 tab chính:** 📦 Nhập hàng / ↩️ Trả hàng NCC + 🏭 Nhà cung cấp (admin)
+- **Mỗi tab:** Danh sách / Tạo phiếu / Chi tiết·Duyệt
+- **Workflow trả hàng:** Nháp → Chờ xác nhận → Đã trả hàng
+- Xác nhận trả → trừ tồn `the_kho`; Hoàn tác → cộng lại
+- Phân quyền: ke_toan + admin tạo; chỉ admin xác nhận/hoàn tác
 
-**Session:** URL token (`?token=uuid&branch=tên`), TTL 3 ngày, bcrypt
+### `modules/bao_cao.py` — Báo cáo ✅ hoàn chỉnh
+**Hằng số:** `APP_INVOICE_PREFIXES = ["APSC"]` — thêm prefix khi có POS
 
----
+**Cấu trúc tab theo role:**
+- `nhan_vien`: Tab Doanh thu → Cuối ngày only
+- `ke_toan/admin`: Tab Doanh thu (3 sub) + Tab Xuất nhập tồn (2 sub)
+- `admin`: thêm Tab Nhân viên
 
-## 7. MODULES ĐÃ HOÀN THÀNH
+**Tab Doanh thu:**
+- *Cuối ngày*: metrics hôm nay vs hôm qua (delta %), phiếu SC hôm nay, phiếu SC cần lưu ý (>5 ngày sửa / >14 ngày chờ giao), danh sách HĐ
+- *Tổng quan*: chart doanh thu theo ngày/CN, bảng theo CN
+- *Bán hàng theo nhóm*: group theo loai_sp / loai_hang / thuong_hieu
 
-### Module Hóa đơn
-- Search SĐT / mã HĐ / ngày, hỗ trợ HD/HDSC/HDD/APSC
-- SĐT hiển thị trong header, fix leading zero
+**Tab Xuất nhập tồn:**
+- *Tổng hợp*: bảng nhập kho + xuất kho từ tất cả nguồn, tồn đầu/cuối kỳ (tính ngược)
+- *Tra cứu mã hàng*: tìm mã → chọn CN + khoảng ngày → lịch sử phát sinh running balance (5 nguồn: Bán hàng / Nhập NCC / Trả NCC / Chuyển hàng / Kiểm kê) + 4 metrics
 
-### Module Hàng hóa
-- Filter 2 cấp loai_hang + thuong_hieu
-- Detail card tồn kho 3 CN (dùng cache per CN riêng)
-- Nút ✕ clear search + bỏ chọn
+**Tab Nhân viên** (admin): doanh thu APSC theo Người tạo + Người bán
 
-### Module Chuyển hàng
-- Tạo/xác nhận/nhận/hủy/kết sổ, delta tồn kho
+**Load functions quan trọng trong bao_cao.py:**
+- `_load_hd`, `_load_sc_phieu`, `_load_sc_can_luu_y` — hoa_don + SC
+- `_load_nhap_hang`, `_load_tra_hang` — nhập/trả NCC
+- `_load_chuyen_hang`, `_load_kiem_ke` — chuyển kho + kiểm kê
+- Tất cả: `@st.cache_data(ttl=300)`, pagination với `.order()`, filter ngày sau load
 
-### Module Kiểm kê
-- `inner join` với the_kho (chỉ hàng tồn > 0)
-- Quét phát sinh vẫn ghi nhận dù không có trong danh sách
-- Duyệt admin, xuất Excel KiotViet
+**Lưu ý `_load_tra_hang`:** đã uncomment và active (bảng `phieu_tra_hang` đã tồn tại).
 
-### Module Sửa chữa ✅ Hoàn chỉnh
-- Trạng thái: Đang sửa → Chờ linh kiện → Chờ giao khách
-- Tab "Tạo HĐ sửa": giảm giá + PTTT → APSC → phiếu Hoàn thành
-- In phiếu A5, UTF-8 Blob, pending print qua session_state
-- Auto-fill tên từ SĐT
-
-### Module Khách hàng ✅
-- Upload KiotViet, chi tiết lịch sử HĐ + SC
-- Fix hiển thị `nan` → `—`, format ngày TN
-
-### Module Nhập hàng ✅
-- Nháp → Chờ XN → Đã nhập kho
-- Fuzzy search + inline create (loai_hang, thuong_hieu, ma_vach)
-- Gộp dòng trùng mã, flag ⚠️ thay đổi giá
-- Batch query tồn kho + giá bán (pagination đầy đủ)
-- Hoàn tác trừ lại tồn kho
-
-### Module Quản trị
-- Upload 5 loại file, xóa data, kết sổ phiếu App
-- Quản lý nhân viên
-
----
-
-## 8. KNOWN ISSUES & TECH DEBT
-
-| ID | Mô tả | Mức độ |
-|----|-------|--------|
-| DEBT-01 | 4 phiếu chuyển format cũ CH26... chưa migrate | Low |
-| WARN-01 | `use_container_width` deprecated → `width=` sau 2025-12-31 | Medium |
-| NOTE-01 | `hien_thi_dashboard()` giữ cho module Báo cáo | — |
-| NOTE-02 | In iOS: `window.open()` bị block — by design | — |
-| NOTE-03 | `the_kho` cần `.select("*")` + filter Python khi filter theo `Mã hàng` | Low |
-| NOTE-04 | Apple Touch Icon iOS hạn chế do Streamlit sandbox | — |
-
----
-
-## 9. ROADMAP
-
-```
-✅ HOÀN THÀNH
-├── Auth, Session, Navigation
-├── Hóa đơn, Hàng hóa, Chuyển hàng, Kiểm kê
-├── Sửa chữa, Khách hàng, Nhập hàng + NCC
-└── Tách code multi-file
-
-📋 TIẾP THEO
-│
-├── 1. Module Báo cáo                         ← TIẾP THEO
-│   ├── Doanh thu theo CN / thời gian / loại HĐ
-│   ├── Tồn kho tổng hợp
-│   └── Tái dụng hien_thi_dashboard() trong tong_quan.py
-│
-├── 2. Module POS — App Streamlit riêng
-│   ├── [ARCH] Cloud-to-LAN Print Spooler
-│   │   ├── Bảng print_queue (Supabase)
-│   │   │   └── id, chi_nhanh, payload(base64 ESC/POS),
-│   │   │       status(pending/printing/done/error), created_at
-│   │   ├── POS App (Streamlit Cloud) → INSERT vào print_queue
-│   │   ├── print_daemon.py (local tại mỗi cửa hàng)
-│   │   │   ├── Poll Supabase 1Hz, filter chi_nhanh
-│   │   │   └── TCP socket → máy in port 9100
-│   │   └── config.py: CHI_NHANH, PRINTER_IP (Static!), PORT=9100
-│   ├── Máy in: Xprinter XP-365B (WiFi+LAN, ESC/POS, K80)
-│   │   └── ⚠️ Switch DIP sang Receipt mode trước khi dùng
-│   ├── In điện thoại: data URI (iOS/Android/Win)
-│   └── Bấm "Tạo HĐ" → in ngay
-│
-├── 3. Module Chấm công — App Streamlit riêng
-│
-└── 4. Li dị KiotViet hoàn toàn
-    ├── Bật cân bằng the_kho từ kiểm kê
-    └── Tồn kho tính động 100% nội bộ
+### `modules/hoa_don.py`
+- Fix `_render_recent`: thêm reorder sau `.isin()` để 6 HĐ gần nhất đúng thứ tự mới nhất lên đầu
+```python
+order = {ma: i for i, ma in enumerate(recent_codes)}
+res = res.assign(_order=res["Mã hóa đơn"].map(order)) \
+         .sort_values("_order").drop(columns="_order")
 ```
 
+### `modules/quan_tri.py`
+- Cột `"Loại hàng": "loai_sp"` trong `col_map` upload Hàng hóa master
+- Tab "Logs" (tab thứ 5): filter ngày/user/action, hiện 500 logs gần nhất có màu level
+
+### `utils/db.py` — log_action()
+```python
+def log_action(action, detail="", level="info"):
+    # Ghi logger như cũ
+    # THÊM: lưu vào action_logs
+    try:
+        supabase.table("action_logs").insert({
+            "username": ..., "ho_ten": ..., "chi_nhanh": ...,
+            "action": action, "detail": detail, "level": level
+        }).execute()
+    except Exception:
+        pass
+```
+
+### `app.py`
+- Menu: `"📊 Báo cáo"`, `"📥 Nhập/Trả hàng"`
+- Import + routing cho `module_bao_cao()` và `module_nhap_hang()`
+
 ---
 
-## 10. QUYẾT ĐỊNH KIẾN TRÚC
+## 6. KỸ THUẬT QUAN TRỌNG — GHI NHỚ
+
+| # | Vấn đề | Giải pháp |
+|---|---------|-----------|
+| T1 | GROUP BY mã HĐ bị nhân đôi | `drop_duplicates(["Mã hóa đơn"])` trước khi SUM |
+| T2 | Pagination Supabase | Mọi query phải có `.order()` + loop range |
+| T3 | Giờ VN | `pd.Timestamp.now(tz="Asia/Ho_Chi_Minh")` |
+| T4 | loai_sp NULL | `_filter_chi_hang_hoa()` fallback giữ nguyên nếu không có master |
+| T5 | Tồn đầu kỳ | Tính ngược: `cuối - nhập + xuất` — chấp nhận ước tính, caveat rõ trong UI |
+| T6 | Tab ẩn theo role | Build list tab có điều kiện, không dùng `st.info("không có quyền")` |
+| T7 | `.isin()` không giữ thứ tự | Sau `.isin()` phải reorder thủ công nếu cần thứ tự |
+
+---
+
+## 7. QUYẾT ĐỊNH KIẾN TRÚC
 
 | # | Quyết định | Lý do |
 |---|-----------|-------|
-| D1 | 1 DB, phân biệt bằng cột `chi_nhanh` | Không tách DB theo CN |
-| D2 | Kiểm kê xuất Excel → import KiotViet | Giai đoạn song song |
-| D3 | POS là app riêng, chung Supabase | Tách UX mobile vs desktop |
-| D4 | Nhập hàng cộng thẳng `the_kho` | Chỉ dùng thật khi li dị KiotViet |
-| D5 | Mã APSC (không phải HDSC) | Tránh trùng KiotViet |
-| D6 | Cloud-to-LAN print qua Supabase queue | Streamlit Cloud không kết nối LAN |
-| D7 | Static IP máy in | DHCP reboot = mất TCP |
-| D8 | Tách code multi-file | 5000+ dòng, dễ maintain |
-| D9 | `.in_("Chi nhánh")` HOẠT ĐỘNG bình thường | Đã xác nhận, không filter Python |
+| D1 | Thẻ kho chi tiết làm sau | Không có lịch sử cũ → tồn đầu kỳ sai |
+| D2 | Tra cứu mã hàng thay thẻ kho | Đủ đáp ứng nhu cầu truy vết |
+| D3 | loai_sp từ cột "Loại hàng" KiotViet | Phân biệt HH/DV cho XNT |
+| D4 | log_action() duy nhất ghi DB | Không sửa call sites, chỉ sửa 1 hàm |
+| D5 | APP_INVOICE_PREFIXES = ["APSC"] | Dễ mở rộng khi có POS |
 
 ---
 
-## 11. THÔNG TIN SUPABASE & APP
+## 8. ROADMAP
 
-**Supabase URL:** `gmxuolueecjhffqigmoy.supabase.co`
-**Secrets:** `SUPABASE_URL`, `SUPABASE_KEY`
+### ✅ Hoàn thành
+- Module Nhập/Trả hàng NCC
+- Module Báo cáo (đầy đủ 3 tab, 7 sub-tab)
+- Action logs lưu DB
+- Cột `loai_sp` + upload master
+- Fix thứ tự 6 HĐ gần nhất
 
-**Ba chi nhánh:**
-- `100 Lê Quý Đôn`
-- `Coop Vũng Tàu`
-- `GO BÀ RỊA`
-
-**Tài khoản admin:** username `admin` / ho_ten `Đăng Khoa`
-
-### SQL xóa data test
-```sql
--- Phiếu sửa chữa
-DELETE FROM phieu_sua_chua_chi_tiet WHERE ma_phieu IN
-    (SELECT ma_phieu FROM phieu_sua_chua WHERE created_by = 'Đăng Khoa');
-DELETE FROM phieu_sua_chua WHERE created_by = 'Đăng Khoa';
-
--- Hóa đơn APSC
-DELETE FROM hoa_don WHERE "Mã hóa đơn" LIKE 'APSC%';
-
--- Phiếu nhập
-DELETE FROM phieu_nhap_hang_ct WHERE ma_phieu IN
-    (SELECT ma_phieu FROM phieu_nhap_hang WHERE created_by = 'Đăng Khoa');
-DELETE FROM phieu_nhap_hang WHERE created_by = 'Đăng Khoa';
-
--- Mã hàng test
-DELETE FROM the_kho WHERE "Mã hàng" IN ('MA1', 'MA2');
-DELETE FROM hang_hoa WHERE ma_hang IN ('MA1', 'MA2');
+### 📋 Tiếp theo
 ```
+1. Li dị KiotViet hoàn toàn
+   ├── Bật cân bằng the_kho từ kiểm kê (hiện đang tắt)
+   └── Tồn kho tính động 100% nội bộ
+
+2. Module POS (App Streamlit riêng)
+   ├── Tạo HĐ bán hàng trực tiếp
+   └── Khi xong: thêm prefix vào APP_INVOICE_PREFIXES
+
+3. Module Chấm công (App Streamlit riêng)
+```
+
+---
+
+## 9. QUY TẮC LÀM VIỆC VỚI AI
+
+- Tuân theo `CLAUDE.md`: Think Before Coding · Simplicity First · Surgical Changes · Goal-Driven
+- **Luôn đọc file thực tế** trước khi sửa — không làm việc trên file cũ trong context
+- Khi user upload file mới → đó là source of truth, ghi đè lên bất kỳ version nào đang có
+- Hỏi trước khi implement nếu có nhiều cách giải quyết
+- Không thêm tính năng ngoài yêu cầu

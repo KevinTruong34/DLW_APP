@@ -450,6 +450,10 @@ def module_sua_chua():
                 # ── Cập nhật phiếu ──
                 if "sc_upd_open" not in st.session_state:
                     st.session_state["sc_upd_open"] = False
+                # Giữ expander mở nếu user đang tương tác bên trong
+                if (st.session_state.get("sc_upd_dv_ma_tim", "").strip()
+                        or st.session_state.get("sc_upd_items", [])):
+                    st.session_state["sc_upd_open"] = True
                 with st.expander("✏️ Cập nhật phiếu", expanded=st.session_state["sc_upd_open"]):
                     cur_tt = phieu.get("trang_thai", "Đang sửa")
                     new_tt = st.selectbox("Trạng thái:", TRANG_THAI_LIST,

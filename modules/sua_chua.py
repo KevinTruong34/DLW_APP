@@ -66,7 +66,6 @@ def module_sua_chua():
         try:
             res = supabase.rpc("get_next_apsc_num", {}).execute()
             data = res.data
-            # supabase-py có thể trả scalar int hoặc list tuỳ version
             if isinstance(data, list):
                 num = int(data[0]) if data else 1
             elif data is not None:
@@ -88,7 +87,7 @@ def module_sua_chua():
         rows = []
         base = {
             "Mã hóa đơn": ma_hd, "Chi nhánh": phieu.get("chi_nhanh",""),
-            "Mã YCSC": phieu.get("ma_phieu", ""),  # FIX: liên kết với phiếu sửa SC
+            "Mã YCSC": phieu.get("ma_phieu", ""),
             "Thời gian": now_str, "Thời gian tạo": now_str,
             "Tên khách hàng": phieu.get("ten_khach",""),
             "Điện thoại": phieu.get("sdt_khach",""),
@@ -128,7 +127,6 @@ def module_sua_chua():
         hh = load_hang_hoa()
         ma_tim = st.text_input("🔍 Tìm mã / tên hàng hóa:", key=f"{key_prefix}_ma_tim",
                                 placeholder="VD: PDH, pin, lau dầu...")
-        # Tìm kết quả — chuẩn hoá bỏ dấu cách để "pin150" khớp "pin 150"
         hits = pd.DataFrame()
         if ma_tim.strip() and not hh.empty:
             s = ma_tim.strip().lower()
@@ -176,7 +174,6 @@ def module_sua_chua():
 
     def _hien_thi_items(items_key: str):
         items = st.session_state.get(items_key, [])
-        # Luôn hiện container kể cả khi rỗng để tránh collapse đột ngột
         if not items:
             st.caption("_(Chưa có mục nào)_")
             return
@@ -233,7 +230,6 @@ def module_sua_chua():
                 st.dataframe(view[cols], use_container_width=True, hide_index=True, height=360)
                 st.caption(f"Tổng: {len(df)} phiếu")
 
-                # Xem chi tiết phiếu
                 st.markdown("---")
                 st.caption("📋 Xem chi tiết dịch vụ / linh kiện của một phiếu:")
                 ma_opts = view["Mã Phiếu"].tolist() if "Mã Phiếu" in view.columns else []
@@ -267,7 +263,6 @@ def module_sua_chua():
         c1, c2 = st.columns(2)
         with c1:
             sdt_khach = st.text_input("Số điện thoại: *", key=f"sc_sdt_kh_{cnt}")
-            # Auto-fill: khi SĐT thay đổi, lookup và set tên vào session_state
             sdt_prev_key = f"sc_sdt_prev_{cnt}"
             ten_key      = f"sc_ten_kh_{cnt}"
             kh_key       = f"sc_kh_found_{cnt}"
@@ -302,7 +297,6 @@ def module_sua_chua():
         ghi_chu   = st.text_area("Ghi chú nội bộ:", key=f"sc_ghi_chu_nb_{cnt}",
                                   placeholder="Thợ kỹ thuật ghi chú...")
 
-        # Dịch vụ / linh kiện
         st.markdown("**Dịch vụ / Linh kiện dự kiến:**")
         st.caption("Có thể bỏ trống — thêm sau khi thợ đánh giá")
         items_key = f"sc_items_{cnt}"
@@ -341,10 +335,8 @@ def module_sua_chua():
                         [{"ma_phieu": ma, **item} for item in items]
                     ).execute()
 
-                # Lưu khách hàng mới vào DB nếu chưa tồn tại
                 _upsert_khach_hang(ten_khach.strip(), sdt_khach.strip(), cn_create)
 
-                # Lưu HTML phiếu vào session_state để render sau rerun
                 ct_new = pd.DataFrame(items) if items else pd.DataFrame()
                 if not ct_new.empty:
                     for col in ["so_luong","don_gia"]:
@@ -360,7 +352,6 @@ def module_sua_chua():
                 }
                 st.session_state["sc_pending_print_html"] = _build_phieu_html(phieu_data, ct_new)
 
-                # Reset form
                 st.session_state["sc_create_count"] = cnt + 1
                 st.session_state["sc_active_ma"] = ma
                 st.cache_data.clear()
@@ -369,7 +360,6 @@ def module_sua_chua():
             except Exception as e:
                 st.error(f"Lỗi tạo phiếu: {e}")
 
-        # Render lệnh in sau rerun (nếu có)
         if st.session_state.get("sc_pending_print_html"):
             _in_phieu_sc(st.session_state.pop("sc_pending_print_html"), key="sc_print_new")
             st.success(f"✓ Đã tạo phiếu — cửa sổ in đang mở")
@@ -377,12 +367,10 @@ def module_sua_chua():
     # ══════ TAB 3 — CHI TIẾT / CẬP NHẬT (chỉ phiếu chưa Hoàn thành) ══════
     with tab_detail:
         df_all = _load_phieu(tuple(accessible))
-        # Không hiện phiếu đã Hoàn thành — chúng đã có hóa đơn
         df_chua_xong = df_all[df_all["trang_thai"] != "Hoàn thành"].copy() if not df_all.empty else df_all
         if df_chua_xong.empty:
             st.info("Không có phiếu nào đang xử lý.")
         else:
-            # Search giống tab danh sách
             search_dt = st.text_input("Tìm SĐT / Mã phiếu / Tên khách:", key="sc_search_dt",
                                        placeholder="VD: '900' tìm SC000900...")
             df_filtered = df_chua_xong.copy()
@@ -433,7 +421,7 @@ def module_sua_chua():
                 if phieu.get("ghi_chu_noi_bo"):
                     st.markdown(f"**Ghi chú nội bộ:** {phieu.get('ghi_chu_noi_bo','')}")
 
-                # ── Bảng dịch vụ ──
+                # ── Bảng dịch vụ (chỉ đọc — summary) ──
                 if not ct.empty:
                     st.markdown("**Dịch vụ / Linh kiện:**")
                     ct["Thành tiền"] = ct["so_luong"] * ct["don_gia"]
@@ -468,6 +456,31 @@ def module_sua_chua():
                                              if phieu.get("ngay_hen_tra") else None,
                                              format="DD/MM/YYYY")
 
+                    # ── Dịch vụ đã lưu — có thể xóa ──
+                    if not ct.empty:
+                        st.markdown("**Dịch vụ / Linh kiện đã lưu:**")
+                        for _, row in ct.iterrows():
+                            ci1, ci2, ci3, ci4, ci5 = st.columns([2, 4, 1, 2, 1])
+                            with ci1:
+                                st.markdown(f"<span style='font-size:0.9rem'>{row.get('loai_dong','')}</span>", unsafe_allow_html=True)
+                            with ci2:
+                                st.markdown(f"<span style='font-size:0.9rem'>{row.get('ten_hang','')}</span>", unsafe_allow_html=True)
+                            with ci3:
+                                st.markdown(f"<span style='font-size:0.9rem'>x{int(row.get('so_luong',1))}</span>", unsafe_allow_html=True)
+                            with ci4:
+                                st.markdown(f"<span style='font-size:0.9rem'>{int(row.get('don_gia',0)):,}đ</span>".replace(",","."), unsafe_allow_html=True)
+                            with ci5:
+                                if st.button("✕", key=f"del_ct_{row['id']}"):
+                                    try:
+                                        supabase.table("phieu_sua_chua_chi_tiet").delete() \
+                                            .eq("id", int(row["id"])).execute()
+                                        st.cache_data.clear()
+                                        log_action("SC_DEL_ITEM", f"ma={ma_pick} item={row.get('ten_hang','')}")
+                                        st.rerun()
+                                    except Exception as e:
+                                        st.error(f"Lỗi xóa: {e}")
+                        st.markdown("---")
+
                     # Thêm dịch vụ/linh kiện ngay trong cập nhật
                     st.markdown("**Thêm dịch vụ / Linh kiện:**")
                     _widget_them_dv("sc_upd_dv", "sc_upd_items")
@@ -486,7 +499,6 @@ def module_sua_chua():
                                 "updated_at":     datetime.now().isoformat(),
                             }).eq("ma_phieu", ma_pick).execute()
 
-                            # Thêm các dịch vụ mới nếu có
                             new_items = st.session_state.get("sc_upd_items", [])
                             if new_items:
                                 supabase.table("phieu_sua_chua_chi_tiet").insert(
@@ -528,7 +540,6 @@ def module_sua_chua():
     # ══════ TAB 4 — TẠO HÓA ĐƠN SỬA ══════
     with tab_hoadon:
         df_all_hd = _load_phieu(tuple(accessible))
-        # Chỉ hiện phiếu "Chờ giao khách" — sẵn sàng xuất hóa đơn
         cho_giao = df_all_hd[df_all_hd["trang_thai"] == "Chờ giao khách"].copy() \
             if not df_all_hd.empty else pd.DataFrame()
 
@@ -544,7 +555,6 @@ def module_sua_chua():
             phieu_hd = cho_giao[cho_giao["ma_phieu"] == ma_hd_pick].iloc[0]
             ct_hd    = _load_chi_tiet(ma_hd_pick)
 
-            # Tóm tắt phiếu
             st.markdown(f"**{ma_hd_pick}** — {phieu_hd.get('ten_khach','')} | {phieu_hd.get('sdt_khach','')}")
             st.caption(f"Hiệu ĐH: {phieu_hd.get('hieu_dong_ho') or '—'} · "
                        f"Mô tả: {phieu_hd.get('mo_ta_loi','')}")
@@ -619,7 +629,6 @@ def module_sua_chua():
                           disabled=ct_hd.empty):
                 try:
                     apsc_ma = _tao_hoa_don_apsc(dict(phieu_hd), ct_hd, giam_gia, pttt)
-                    # Chuyển phiếu sang Hoàn thành
                     supabase.table("phieu_sua_chua").update({
                         "trang_thai": "Hoàn thành",
                         "updated_at": (datetime.now() + timedelta(hours=7)).isoformat(),

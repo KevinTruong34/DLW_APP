@@ -366,6 +366,12 @@ def module_sua_chua():
 
     # ══════ TAB 3 — CHI TIẾT / CẬP NHẬT (chỉ phiếu chưa Hoàn thành) ══════
     with tab_detail:
+        # Scroll lên đầu sau khi lưu cập nhật
+        if st.session_state.pop("sc_scroll_top", False):
+            st.components.v1.html(
+                "<script>window.parent.document.querySelector('section.main').scrollTo(0,0);</script>",
+                height=0
+            )
         df_all = _load_phieu(tuple(accessible))
         df_chua_xong = df_all[df_all["trang_thai"] != "Hoàn thành"].copy() if not df_all.empty else df_all
         if df_chua_xong.empty:
@@ -509,6 +515,7 @@ def module_sua_chua():
                             st.cache_data.clear()
                             log_action("SC_UPDATE", f"ma={ma_pick} trang_thai={new_tt}")
                             st.session_state["sc_upd_open"] = False
+                            st.session_state["sc_scroll_top"] = True
                             st.success("✓ Đã cập nhật!")
                             st.rerun()
                         except Exception as e:
@@ -549,6 +556,19 @@ def module_sua_chua():
         else:
             opts_hd = [f"{r['ma_phieu']} · {r.get('ten_khach','')} · {r.get('sdt_khach','')}"
                        for _, r in cho_giao.iterrows()]
+
+            # Ô tìm kiếm lọc phiếu
+            search_hd = st.text_input("Tìm SĐT / Mã phiếu / Tên khách:", key="sc_hd_search",
+                                       placeholder="VD: '900' tìm SC000900...")
+            if search_hd.strip():
+                s_hd = search_hd.strip().lower()
+                def _match_hd(opt):
+                    return s_hd in opt.lower()
+                opts_hd = [o for o in opts_hd if _match_hd(o)]
+                if not opts_hd:
+                    st.warning("Không tìm thấy phiếu phù hợp.")
+                    st.stop()
+
             picked_hd = st.selectbox("Chọn phiếu:", opts_hd, key="sc_hd_pick")
             ma_hd_pick = picked_hd.split(" · ")[0]
 

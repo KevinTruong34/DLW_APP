@@ -886,6 +886,276 @@ def _tab_xuat_nhap_ton():
     except Exception as e:
         st.caption(f"Không tính được tồn đầu/cuối kỳ: {e}")
 
+    # ══════ TRA CỨU MÃ HÀNG ══════
+    _phan_tra_cuu_ma_hang(load_cns, d_from, d_to)
+
+
+# ══════════════════════════════════════════════════════════
+# TRA CỨU MÃ HÀNG — lịch sử giao dịch chi tiết của 1 mã
+# ══════════════════════════════════════════════════════════
+
+@st.cache_data(ttl=300)
+def _load_lich_su_ma_hang(ma_hang: str, chi_nhanh: str,
+                            d_from: date, d_to: date) -> pd.DataFrame:
+    """
+    Tổng hợp tất cả giao dịch ảnh hưởng đến tồn kho của 1 mã hàng,
+    tại 1 chi nhánh, trong khoảng thời gian.
+
+    Returns DataFrame với columns:
+        _ngay (date), Loại, Mã chứng từ, Ghi chú, Nhập, Xuất
+    """
+    rows = []
+    ma = str(ma_hang).strip()
+    cn = chi_nhanh
+
+    # ── 1. Nhập hàng NCC ──
+    try:
+        res = supabase.table("phieu_nhap_hang_ct").select(
+            "ma_phieu,so_luong,phieu_nhap_hang(chi_nhanh,confirmed_at,trang_thai,nha_cung_cap)"
+        ).eq("ma_hang", ma).execute()
+        for r in res.data or []:
+            ph = r.get("phieu_nhap_hang") or {}
+            if ph.get("chi_nhanh") != cn: continue
+            if ph.get("trang_thai") != "Đã nhập kho": continue
+            ngay = pd.to_datetime(ph.get("confirmed_at"), errors="coerce", utc=True)
+            if pd.isna(ngay): continue
+            ngay_vn = ngay.tz_convert("Asia/Ho_Chi_Minh").date()
+            if not (d_from <= ngay_vn <= d_to): continue
+            rows.append({
+                "_ngay": ngay_vn,
+                "Loại":  "Nhập hàng NCC",
+                "Mã chứng từ": r.get("ma_phieu", ""),
+                "Ghi chú": ph.get("nha_cung_cap", "") or "",
+                "Nhập": int(r.get("so_luong", 0) or 0),
+                "Xuất": 0,
+            })
+    except Exception:
+        pass
+
+    # ── 2. Bán hàng + APSC linh kiện (hoa_don) ──
+    # Lưu ý: hoa_don denormalized — mỗi item là 1 dòng
+    try:
+        res = supabase.table("hoa_don").select(
+            '"Mã hóa đơn","Chi nhánh","Thời gian","Trạng thái",'
+            '"Số lượng","Tên khách hàng","Mã hàng"'
+        ).eq("Mã hàng", ma) \
+         .eq("Chi nhánh", cn) \
+         .eq("Trạng thái", "Hoàn thành").execute()
+        # Lookup loai_sp để loại trừ dịch vụ trong APSC
+        loai_map = _get_loai_sp_map()
+        for r in res.data or []:
+            ngay_str = r.get("Thời gian", "")
+            ngay = pd.to_datetime(ngay_str, dayfirst=True, errors="coerce")
+            if pd.isna(ngay): continue
+            ngay_vn = ngay.date()
+            if not (d_from <= ngay_vn <= d_to): continue
+            ma_hd = str(r.get("Mã hóa đơn", "") or "")
+            sl = int(r.get("Số lượng", 0) or 0)
+            if sl <= 0: continue
+            # APSC: chỉ tính nếu là Hàng hóa
+            if _is_app_hd(ma_hd):
+                if loai_map and loai_map.get(ma) != "Hàng hóa":
+                    continue
+                loai = "Sửa chữa (linh kiện)"
+            else:
+                loai = "Bán hàng"
+            rows.append({
+                "_ngay": ngay_vn,
+                "Loại":  loai,
+                "Mã chứng từ": ma_hd,
+                "Ghi chú": r.get("Tên khách hàng", "") or "Khách lẻ",
+                "Nhập": 0,
+                "Xuất": sl,
+            })
+    except Exception:
+        pass
+
+    # ── 3. Chuyển hàng (gửi đi + nhận về) ──
+    # Bao gồm cả KiotViet và App, miễn là trạng thái "Đã nhận"
+    try:
+        res = supabase.table("phieu_chuyen_kho").select(
+            "ma_phieu,tu_chi_nhanh,toi_chi_nhanh,ngay_nhan,trang_thai,"
+            "ma_hang,so_luong_nhan"
+        ).eq("ma_hang", ma) \
+         .eq("trang_thai", "Đã nhận").execute()
+        for r in res.data or []:
+            ngay = pd.to_datetime(r.get("ngay_nhan"), errors="coerce", utc=True)
+            if pd.isna(ngay): continue
+            ngay_vn = ngay.tz_convert("Asia/Ho_Chi_Minh").date()
+            if not (d_from <= ngay_vn <= d_to): continue
+            tu = r.get("tu_chi_nhanh", "")
+            toi = r.get("toi_chi_nhanh", "")
+            sl = int(r.get("so_luong_nhan", 0) or 0)
+            if sl <= 0: continue
+            if tu == cn:
+                rows.append({
+                    "_ngay": ngay_vn,
+                    "Loại":  "Chuyển hàng (gửi)",
+                    "Mã chứng từ": r.get("ma_phieu", ""),
+                    "Ghi chú": f"Đến {CN_SHORT.get(toi, toi)}",
+                    "Nhập": 0,
+                    "Xuất": sl,
+                })
+            elif toi == cn:
+                rows.append({
+                    "_ngay": ngay_vn,
+                    "Loại":  "Chuyển hàng (nhận)",
+                    "Mã chứng từ": r.get("ma_phieu", ""),
+                    "Ghi chú": f"Từ {CN_SHORT.get(tu, tu)}",
+                    "Nhập": sl,
+                    "Xuất": 0,
+                })
+    except Exception:
+        pass
+
+    # ── 4. Kiểm kê ──
+    try:
+        res = supabase.table("phieu_kiem_ke_chi_tiet").select(
+            "ma_phieu_kk,chenh_lech,phieu_kiem_ke(chi_nhanh,approved_at,trang_thai)"
+        ).eq("ma_hang", ma).execute()
+        for r in res.data or []:
+            ph = r.get("phieu_kiem_ke") or {}
+            if ph.get("chi_nhanh") != cn: continue
+            if ph.get("trang_thai") != "Đã duyệt": continue
+            ngay = pd.to_datetime(ph.get("approved_at"), errors="coerce", utc=True)
+            if pd.isna(ngay): continue
+            ngay_vn = ngay.tz_convert("Asia/Ho_Chi_Minh").date()
+            if not (d_from <= ngay_vn <= d_to): continue
+            cl = int(r.get("chenh_lech", 0) or 0)
+            if cl == 0: continue
+            rows.append({
+                "_ngay": ngay_vn,
+                "Loại":  "Kiểm kê",
+                "Mã chứng từ": r.get("ma_phieu_kk", ""),
+                "Ghi chú": f"Chênh lệch {'+' if cl > 0 else ''}{cl}",
+                "Nhập": cl if cl > 0 else 0,
+                "Xuất": abs(cl) if cl < 0 else 0,
+            })
+    except Exception:
+        pass
+
+    if not rows:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(rows).sort_values("_ngay").reset_index(drop=True)
+    return df
+
+
+def _phan_tra_cuu_ma_hang(load_cns: tuple, d_from: date, d_to: date):
+    """Section tra cứu lịch sử mã hàng — gọi từ _tab_xuat_nhap_ton."""
+    st.markdown(
+        "<div style='font-size:0.88rem;font-weight:600;color:#555;"
+        "margin:18px 0 6px;'>🔎 Tra cứu lịch sử mã hàng</div>",
+        unsafe_allow_html=True
+    )
+
+    # Bắt buộc 1 chi nhánh để tính tồn sau chính xác
+    if len(load_cns) != 1:
+        st.caption("⚠️ Chọn **1 chi nhánh cụ thể** (không 'Tất cả') để tra cứu.")
+        return
+    chi_nhanh = load_cns[0]
+
+    # ── Input mã hàng với autocomplete ──
+    col_in, col_btn = st.columns([4, 1])
+    with col_in:
+        ma_input = st.text_input(
+            "Mã hàng:", key="bc_tc_ma",
+            placeholder="VD: PV13K, PDH130...",
+            label_visibility="collapsed"
+        )
+
+    if not ma_input.strip():
+        st.caption(f"Nhập mã hàng để xem lịch sử giao dịch tại **{chi_nhanh}**.")
+        return
+
+    # ── Autocomplete: tìm các mã match ──
+    hh = load_hang_hoa()
+    ma_chon = ma_input.strip()
+    if not hh.empty and "ma_hang" in hh.columns:
+        ma_norm = ma_input.strip().lower().replace(" ", "")
+        mask = hh["ma_hang"].astype(str).apply(
+            lambda x: ma_norm in str(x).lower().replace(" ", "")
+        )
+        # Tìm match chính xác trước
+        exact = hh[hh["ma_hang"].astype(str).str.strip().str.lower() == ma_input.strip().lower()]
+        if exact.empty:
+            # Show suggestions
+            hits = hh[mask].head(5)
+            if hits.empty:
+                st.warning(f"Không tìm thấy mã hàng khớp với '{ma_input}'.")
+                return
+            st.caption("Gợi ý — chọn 1 mã:")
+            for _, r in hits.iterrows():
+                ma_h = str(r["ma_hang"])
+                ten = str(r.get("ten_hang", ""))
+                if st.button(f"`{ma_h}` — {ten}", key=f"bc_tc_sug_{ma_h}",
+                             use_container_width=True):
+                    st.session_state["bc_tc_ma"] = ma_h
+                    st.rerun()
+            return
+        else:
+            # Match chính xác → dùng để query
+            ma_chon = str(exact.iloc[0]["ma_hang"])
+            ten_hang = str(exact.iloc[0].get("ten_hang", ""))
+            st.caption(f"📦 **{ma_chon}** — {ten_hang}")
+
+    # ── Load lịch sử ──
+    df = _load_lich_su_ma_hang(ma_chon, chi_nhanh, d_from, d_to)
+
+    if df.empty:
+        st.info(f"Không có giao dịch nào của **{ma_chon}** tại **{chi_nhanh}** "
+                f"trong khoảng {d_from.strftime('%d/%m/%Y')} → "
+                f"{d_to.strftime('%d/%m/%Y')}.")
+        return
+
+    # ── Tính "Tồn sau" chạy ngược từ tồn hiện tại ──
+    # Lấy tồn hiện tại của mã hàng tại chi nhánh này
+    try:
+        the_kho = load_the_kho(branches_key=(chi_nhanh,))
+        ton_hien_tai = 0
+        if not the_kho.empty:
+            row = the_kho[
+                (the_kho["Mã hàng"].astype(str).str.strip() == ma_chon)
+                & (the_kho["Chi nhánh"] == chi_nhanh)
+            ]
+            if not row.empty:
+                ton_hien_tai = int(row["Tồn cuối kì"].sum())
+    except Exception:
+        ton_hien_tai = 0
+
+    # Chạy ngược: tồn sau giao dịch cuối = tồn hiện tại
+    # Tồn sau giao dịch trước = tồn sau hiện tại + xuất giao dịch sau − nhập giao dịch sau
+    ton_sau = [0] * len(df)
+    cur = ton_hien_tai
+    for i in range(len(df) - 1, -1, -1):
+        ton_sau[i] = cur
+        cur = cur - int(df.iloc[i]["Nhập"]) + int(df.iloc[i]["Xuất"])
+
+    df["Tồn sau"] = ton_sau
+
+    # ── Hiển thị bảng ──
+    view = df.copy()
+    view["Ngày"] = view["_ngay"].apply(lambda d: d.strftime("%d/%m"))
+    view["Nhập"] = view["Nhập"].apply(lambda x: f"+{x}" if x > 0 else "—")
+    view["Xuất"] = view["Xuất"].apply(lambda x: f"−{x}" if x > 0 else "—")
+    cols_show = ["Ngày", "Loại", "Mã chứng từ", "Ghi chú", "Nhập", "Xuất", "Tồn sau"]
+    st.dataframe(view[cols_show], use_container_width=True, hide_index=True,
+                 height=min(500, 42 + len(view) * 35))
+
+    # Tổng kết
+    tong_nhap = int(df["Nhập"].sum())
+    tong_xuat = int(df["Xuất"].sum())
+    st.caption(
+        f"📊 **{len(df)}** giao dịch · "
+        f"Nhập: **+{tong_nhap}** · Xuất: **−{tong_xuat}** · "
+        f"Tồn hiện tại: **{ton_hien_tai}**"
+    )
+    st.caption(
+        "⚠️ Tồn sau tính ngược từ tồn hiện tại. Nếu có giao dịch ngoài 4 loại trên "
+        "(VD: bán hàng KiotViet trước khi upload snapshot mới), tồn sau có thể không "
+        "khớp thực tế tại thời điểm đó."
+    )
+
 
 # ══════════════════════════════════════════════════════════
 # TAB 3 — NHÂN VIÊN

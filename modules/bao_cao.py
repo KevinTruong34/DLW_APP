@@ -1056,6 +1056,11 @@ def _phan_tra_cuu_ma_hang(load_cns: tuple, d_from: date, d_to: date):
     chi_nhanh = load_cns[0]
 
     # ── Input mã hàng với autocomplete ──
+    # Dùng key trung gian để tránh lỗi Streamlit khi click suggestion
+    # (không thể set session_state[widget_key] sau khi widget đã render)
+    if "bc_tc_ma_pending" in st.session_state:
+        st.session_state["bc_tc_ma"] = st.session_state.pop("bc_tc_ma_pending")
+
     col_in, col_btn = st.columns([4, 1])
     with col_in:
         ma_input = st.text_input(
@@ -1090,7 +1095,7 @@ def _phan_tra_cuu_ma_hang(load_cns: tuple, d_from: date, d_to: date):
                 ten = str(r.get("ten_hang", ""))
                 if st.button(f"`{ma_h}` — {ten}", key=f"bc_tc_sug_{ma_h}",
                              use_container_width=True):
-                    st.session_state["bc_tc_ma"] = ma_h
+                    st.session_state["bc_tc_ma_pending"] = ma_h
                     st.rerun()
             return
         else:

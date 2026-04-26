@@ -20,11 +20,23 @@ def log_action(action: str, detail: str = "", level: str = "info"):
     user = st.session_state.get("user") or {}
     cn   = st.session_state.get("active_chi_nhanh", "-")
     username = user.get("username", "anonymous")
+    ho_ten   = user.get("ho_ten", "")
     prefix = f"[{username}@{cn}]"
     msg = f"{prefix} {action}"
     if detail:
         msg += f" — {detail}"
     getattr(_logger, level, _logger.info)(msg)
+    try:
+        supabase.table("action_logs").insert({
+            "username":  username,
+            "ho_ten":    ho_ten,
+            "chi_nhanh": cn,
+            "action":    action,
+            "detail":    detail or None,
+            "level":     level,
+        }).execute()
+    except Exception:
+        pass  # Không để lỗi log làm crash app
 
 
 # ── Supabase client ──

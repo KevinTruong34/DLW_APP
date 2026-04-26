@@ -113,7 +113,7 @@ def module_quan_tri():
             f"rồi sang tab **Xóa dữ liệu** để nhấn nút **Kết sổ tất cả phiếu App**."
         )
 
-    tab_up, tab_del, tab_nv, tab_kh = st.tabs(["Upload","Xóa dữ liệu","Nhân viên","Upload KH"])
+    tab_up, tab_del, tab_nv, tab_kh, tab_logs = st.tabs(["Upload","Xóa dữ liệu","Nhân viên","Upload KH","Logs"])
 
     with tab_up:
         s1, s2, s3, s4 = st.tabs(["Hàng hóa (master)","Thẻ kho","Hóa đơn","Chuyển kho"])
@@ -592,3 +592,59 @@ def module_quan_tri():
                                 st.cache_data.clear()
             except Exception as e:
                 st.error(f"Lỗi: {e}")
+with tab_logs:
+        st.caption("Lịch sử thao tác của tất cả người dùng trên App.")
+
+        col_f, col_t, col_u, col_a = st.columns([1, 1, 1, 1])
+        today_vn = (datetime.now() + timedelta(hours=7)).date()
+        with col_f:
+            d_from = st.date_input("Từ:", value=today_vn, key="log_from",
+                                   format="DD/MM/YYYY", label_visibility="collapsed")
+        with col_t:
+            d_to = st.date_input("Đến:", value=today_vn, key="log_to",
+                                 format="DD/MM/YYYY", label_visibility="collapsed")
+        with col_u:
+            user_filter = st.text_input("Lọc user:", key="log_user",
+                                        placeholder="username hoặc họ tên...",
+                                        label_visibility="collapsed")
+        with col_a:
+            action_filter = st.text_input("Lọc action:", key="log_action_f",
+                                          placeholder="VD: SC_CREATE, PNH...",
+                                          label_visibility="collapsed")
+        try:
+            res = supabase.table("action_logs").select("*") \
+                .gte("created_at", d_from.isoformat()) \
+                .lte("created_at", (d_to + timedelta(days=1)).isoformat()) \
+                .order("created_at", desc=True) \
+                .limit(500).execute()
+            if not res.data:
+                st.info("Không có logs trong khoảng này.")
+            else:
+                df_log = pd.DataFrame(res.data)
+                df_log["Thời gian"] = pd.to_datetime(df_log["created_at"], utc=True) \
+                    .dt.tz_convert("Asia/Ho_Chi_Minh") \
+                    .dt.strftime("%d/%m %H:%M:%S")
+                if user_filter.strip():
+                    s = user_filter.strip().lower()
+                    df_log = df_log[
+                        df_log["username"].astype(str).str.lower().str.contains(s, na=False) |
+                        df_log["ho_ten"].astype(str).str.lower().str.contains(s, na=False)
+                    ]
+                if action_filter.strip():
+                    df_log = df_log[df_log["action"].astype(str).str.upper().str.contains(
+                        action_filter.strip().upper(), na=False)]
+                if df_log.empty:
+                    st.info("Không có logs phù hợp.")
+                else:
+                    st.caption(f"{len(df_log)} logs (tối đa 500/lần tải)")
+                    df_log["level"] = df_log["level"].map(
+                        {"warning": "⚠️", "error": "❌"}).fillna("✓")
+                    view_log = df_log[["Thời gian", "ho_ten", "chi_nhanh",
+                                       "action", "detail", "level"]].rename(columns={
+                        "ho_ten": "Người dùng", "chi_nhanh": "Chi nhánh",
+                        "action": "Action", "detail": "Chi tiết", "level": ""
+                    })
+                    st.dataframe(view_log, use_container_width=True, hide_index=True,
+                                 height=min(600, 42 + len(view_log) * 35))
+        except Exception as e:
+            st.error(f"Lỗi tải logs: {e}")

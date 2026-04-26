@@ -116,6 +116,9 @@ def module_hoa_don():
             )
             res = data[data["Mã hóa đơn"].isin(recent_codes)]
             if not res.empty:
+                order = {ma: i for i, ma in enumerate(recent_codes)}
+                res = res.assign(_order=res["Mã hóa đơn"].map(order)) \
+                         .sort_values("_order").drop(columns="_order")
                 st.caption(f"📋 {len(recent_codes)} hóa đơn gần nhất:")
                 render_list(res)
             else:

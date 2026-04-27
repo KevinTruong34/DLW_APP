@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime, timedelta
 import numpy as np
 
+from utils.helpers import _normalize, now_vn, now_vn_iso, today_vn, fmt_vn
 from utils.config import ALL_BRANCHES, CN_SHORT, IN_APP_MARKER, ARCHIVED_MARKER
 from utils.db import supabase, log_action, load_hoa_don, load_the_kho, load_hang_hoa, \
     load_phieu_chuyen_kho, load_phieu_kiem_ke, get_gia_ban_map, load_stock_deltas, \
@@ -130,7 +131,7 @@ def _kk_create_phieu(chi_nhanh: str, nhom_cha: str, ghi_chu: str) -> tuple[bool,
             "nhom_cha": nhom_cha,
             "ghi_chu": ghi_chu.strip(),
             "created_by": user.get("ho_ten", ""),
-            "created_at": datetime.now().isoformat(),
+            "created_at": now_vn_iso(),
             "completed_at": None,
             "approved_by": None,
             "approved_at": None,
@@ -241,7 +242,7 @@ def _kk_approve(ma_phieu: str) -> tuple[bool, str]:
         supabase.table("phieu_kiem_ke").update({
             "trang_thai": "Đã duyệt",
             "approved_by": (get_user() or {}).get("ho_ten", ""),
-            "approved_at": datetime.now().isoformat(),
+            "approved_at": now_vn_iso(),
         }).eq("ma_phieu_kk", ma_phieu).execute()
         st.cache_data.clear()
         log_action("KIEMKE_APPROVE", f"ma={ma_phieu}")

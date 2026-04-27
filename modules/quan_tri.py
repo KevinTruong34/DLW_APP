@@ -58,8 +58,11 @@ def module_nhan_vien():
             cur = get_user()
             for nv in nv_list:
                 cn2      = supabase.table("nhan_vien_chi_nhanh") \
-                    .select("chi_nhanh(ten)").eq("nhan_vien_id",nv["id"]).execute()
+                    .select("chi_nhanh_id,chi_nhanh(ten)").eq("nhan_vien_id",nv["id"]).execute()
                 cn_names = [x["chi_nhanh"]["ten"] for x in cn2.data] if cn2.data else []
+                # Map tên → id cho các CN đang được gán
+                cn_id_map = {x["chi_nhanh"]["ten"]: x["chi_nhanh_id"]
+                             for x in cn2.data} if cn2.data else {}
                 status   = "Hoạt động" if nv["active"] else "Đã khóa"
                 role_lbl = {"admin":"Admin","ke_toan":"Kế toán","nhan_vien":"Nhân viên"}.get(nv["role"],"")
                 is_self  = (nv["id"]==cur.get("id"))
@@ -68,6 +71,8 @@ def module_nhan_vien():
                     + (" (bạn)" if is_self else "")
                 ):
                     st.caption(f"Username: `{nv['username']}` · Chi nhánh: {', '.join(cn_names) if cn_names else '—'}")
+
+                    # ── Row 1: Role + Mật khẩu + Khóa ──
                     ci,cp,ca = st.columns([2,2,1])
                     with ci:
                         nr2 = st.selectbox("Role:",["nhan_vien","ke_toan","admin"],
@@ -91,6 +96,45 @@ def module_nhan_vien():
                                     {"active":not nv["active"]}).eq("id",nv["id"]).execute()
                                 st.rerun()
                         else: st.caption("(bạn)")
+
+                    # ── Row 2: Chi nhánh ──
+                    st.markdown("<div style='margin-top:8px;'>", unsafe_allow_html=True)
+                    new_cns = st.multiselect(
+                        "Chi nhánh truy cập:",
+                        options=list(cn_map.keys()),
+                        default=cn_names,
+                        key=f"cn_{nv['id']}"
+                    )
+                    if st.button("Lưu chi nhánh", key=f"scn_{nv['id']}"):
+                        try:
+                            # Tính diff: thêm mới và xóa bớt
+                            new_set = set(new_cns)
+                            old_set = set(cn_names)
+                            to_add  = new_set - old_set
+                            to_del  = old_set - new_set
+
+                            for cn_name in to_del:
+                                cn_id = cn_id_map.get(cn_name)
+                                if cn_id:
+                                    supabase.table("nhan_vien_chi_nhanh").delete() \
+                                        .eq("nhan_vien_id", nv["id"]) \
+                                        .eq("chi_nhanh_id", cn_id).execute()
+                            for cn_name in to_add:
+                                cn_id = cn_map.get(cn_name)
+                                if cn_id:
+                                    supabase.table("nhan_vien_chi_nhanh").insert({
+                                        "nhan_vien_id": nv["id"],
+                                        "chi_nhanh_id": cn_id,
+                                    }).execute()
+
+                            log_action("NV_CN_UPDATE",
+                                       f"nv={nv['ho_ten']} add={list(to_add)} del={list(to_del)}")
+                            st.success("✓ Đã cập nhật chi nhánh!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Lỗi: {e}")
+                    st.markdown("</div>", unsafe_allow_html=True)
+
         except Exception as e: st.error(f"Lỗi: {e}")
 
 

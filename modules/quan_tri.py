@@ -642,12 +642,12 @@ def module_quan_tri():
         st.caption("Lịch sử thao tác của tất cả người dùng trên App.")
 
         col_f, col_t, col_u, col_a = st.columns([1, 1, 1, 1])
-        today_vn = (now_vn_iso()).date()
+        today_local = now_vn().date()
         with col_f:
-            d_from = st.date_input("Từ:", value=today_vn, key="log_from",
+            d_from = st.date_input("Từ:", value=today_local, key="log_from",
                                    format="DD/MM/YYYY", label_visibility="collapsed")
         with col_t:
-            d_to = st.date_input("Đến:", value=today_vn, key="log_to",
+            d_to = st.date_input("Đến:", value=today_local, key="log_to",
                                  format="DD/MM/YYYY", label_visibility="collapsed")
         with col_u:
             user_filter = st.text_input("Lọc user:", key="log_user",

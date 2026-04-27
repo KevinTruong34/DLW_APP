@@ -1228,20 +1228,212 @@ def _tab_nhan_vien():
 
 
 # ══════════════════════════════════════════════════════════
-# ENTRY POINT
+# TAB TỒN KHO
+# ══════════════════════════════════════════════════════════
+
+def _tab_ton_kho():
+    if not is_ke_toan_or_admin():
+        st.info("Chỉ kế toán và admin được xem báo cáo tồn kho.")
+        return
+
+    accessible = get_accessible_branches()
+    active     = get_active_branch()
+
+    # ── Filter bar ──
+    col_cn, col_opt = st.columns([2, 2])
+    with col_cn:
+        cn_sel = st.selectbox(
+            "Chi nhánh:", ["Tất cả"] + accessible,
+            key="bc_tk_cn", label_visibility="collapsed"
+        )
+        load_cns = tuple(accessible) if cn_sel == "Tất cả" else (cn_sel,)
+
+    with col_opt:
+        hien_het = st.checkbox("Hiện cả hàng hết tồn (= 0)", key="bc_tk_het", value=False)
+
+    # ── Load data ──
+    master  = load_hang_hoa()
+    the_kho = load_the_kho(branches_key=tuple(accessible))  # load tất cả CN để pivot
+
+    if master.empty or the_kho.empty:
+        st.info("Chưa có dữ liệu tồn kho.")
+        return
+
+    # ── Build pivot tồn kho theo CN ──
+    # Gộp the_kho theo (Mã hàng, Chi nhánh)
+    kho_agg = the_kho.groupby(
+        ["Mã hàng", "Chi nhánh"], as_index=False
+    ).agg(ton=("Tồn cuối kì", "sum"))
+
+    # Pivot: mỗi CN là 1 cột
+    kho_pivot = kho_agg.pivot_table(
+        index="Mã hàng", columns="Chi nhánh",
+        values="ton", fill_value=0
+    ).reset_index()
+    kho_pivot.columns.name = None
+
+    # Join với master để lấy tên, loại, thương hiệu, giá bán
+    df = master[["ma_hang", "ten_hang", "loai_hang", "thuong_hieu", "gia_ban"]].copy()
+    df = df.merge(kho_pivot, left_on="ma_hang", right_on="Mã hàng", how="left")
+    df = df.drop(columns=["Mã hàng"], errors="ignore")
+
+    # Cột tồn cho từng CN trong load_cns
+    cn_cols = [cn for cn in accessible if cn in df.columns]
+
+    # Nếu chọn 1 CN cụ thể → chỉ giữ cột đó
+    if cn_sel != "Tất cả":
+        cn_cols_show = [cn for cn in [cn_sel] if cn in df.columns]
+    else:
+        cn_cols_show = cn_cols
+
+    # Fill NaN tồn kho = 0
+    for c in cn_cols_show:
+        df[c] = df[c].fillna(0).astype(int)
+
+    # Cột tổng tồn (theo các CN đang xem)
+    df["Tổng tồn"] = df[cn_cols_show].sum(axis=1).astype(int)
+
+    # Giá trị = Tổng tồn × giá bán
+    df["gia_ban"] = pd.to_numeric(df["gia_ban"], errors="coerce").fillna(0).astype(int)
+    df["Giá trị"] = df["Tổng tồn"] * df["gia_ban"]
+
+    # ── Filter hết tồn ──
+    if not hien_het:
+        df = df[df["Tổng tồn"] > 0]
+
+    if df.empty:
+        st.info("Không có hàng hóa nào còn tồn kho trong kỳ lọc này.")
+        return
+
+    # ── Filter nhóm / thương hiệu ──
+    col_loai, col_th, col_search = st.columns([2, 2, 3])
+    with col_loai:
+        loai_list = sorted([x for x in df["loai_hang"].dropna().unique() if x])
+        loai_chon = st.selectbox(
+            "Loại hàng:", ["Tất cả"] + loai_list,
+            key="bc_tk_loai", label_visibility="collapsed"
+        )
+    with col_th:
+        df_for_th = df[df["loai_hang"] == loai_chon] if loai_chon != "Tất cả" else df
+        th_list = sorted([x for x in df_for_th["thuong_hieu"].dropna().unique() if x])
+        th_chon = st.selectbox(
+            "Thương hiệu:", ["Tất cả"] + th_list,
+            key="bc_tk_th", label_visibility="collapsed"
+        )
+    with col_search:
+        kw = st.text_input(
+            "Tìm mã / tên:", key="bc_tk_kw",
+            placeholder="🔍 Tìm mã hàng hoặc tên...",
+            label_visibility="collapsed"
+        )
+
+    # Áp filter
+    if loai_chon != "Tất cả":
+        df = df[df["loai_hang"] == loai_chon]
+    if th_chon != "Tất cả":
+        df = df[df["thuong_hieu"] == th_chon]
+    if kw.strip():
+        kw_n = kw.strip().lower()
+        df = df[
+            df["ma_hang"].astype(str).str.lower().str.contains(kw_n, na=False) |
+            df["ten_hang"].astype(str).str.lower().str.contains(kw_n, na=False)
+        ]
+
+    if df.empty:
+        st.info("Không có sản phẩm phù hợp.")
+        return
+
+    # ── Metrics tóm tắt ──
+    tong_sl   = int(df["Tổng tồn"].sum())
+    tong_gtri = int(df["Giá trị"].sum())
+    so_ma     = len(df)
+    so_het    = int((df["Tổng tồn"] == 0).sum())
+
+    m1, m2, m3, m4 = st.columns(4)
+    with m1: st.metric("Số mã hàng", f"{so_ma:,}".replace(",", "."))
+    with m2: st.metric("Tổng số lượng", f"{tong_sl:,}".replace(",", "."))
+    with m3: st.metric("Giá trị tồn kho", f"{_fmt(tong_gtri)}đ")
+    with m4: st.metric("Mã hết tồn", str(so_het))
+
+    st.caption("Giá trị = Tổng tồn × giá bán hiện tại.")
+
+    # ── Bảng chi tiết ──
+    # Sắp xếp: theo loại → thương hiệu → tên
+    df = df.sort_values(
+        ["loai_hang", "thuong_hieu", "ten_hang"],
+        na_position="last"
+    ).reset_index(drop=True)
+
+    # Build display dataframe
+    disp = df[["ma_hang", "ten_hang", "loai_hang", "thuong_hieu"]].copy()
+    disp = disp.rename(columns={
+        "ma_hang":    "Mã hàng",
+        "ten_hang":   "Tên hàng",
+        "loai_hang":  "Loại hàng",
+        "thuong_hieu":"Thương hiệu",
+    })
+
+    # Thêm cột tồn từng CN
+    for cn in cn_cols_show:
+        short = CN_SHORT.get(cn, cn)
+        disp[short] = df[cn].astype(int)
+
+    disp["Tổng tồn"]  = df["Tổng tồn"].astype(int)
+    disp["Giá bán"]   = df["gia_ban"].apply(lambda x: f"{_fmt(x)}đ" if x > 0 else "—")
+    disp["Giá trị"]   = df["Giá trị"].apply(lambda x: f"{_fmt(x)}đ" if x > 0 else "—")
+
+    # Column config
+    col_cfg = {
+        "Mã hàng":     st.column_config.TextColumn(width="small"),
+        "Tên hàng":    st.column_config.TextColumn(width="large"),
+        "Loại hàng":   st.column_config.TextColumn(width="medium"),
+        "Thương hiệu": st.column_config.TextColumn(width="medium"),
+        "Tổng tồn":    st.column_config.NumberColumn(width="small", format="%d"),
+        "Giá bán":     st.column_config.TextColumn(width="small"),
+        "Giá trị":     st.column_config.TextColumn(width="medium"),
+    }
+    for cn in cn_cols_show:
+        short = CN_SHORT.get(cn, cn)
+        col_cfg[short] = st.column_config.NumberColumn(short, width="small", format="%d")
+
+    n_rows = len(disp)
+    st.dataframe(
+        disp, use_container_width=True, hide_index=True,
+        column_config=col_cfg,
+        height=min(600, 42 + n_rows * 35),
+    )
+
+    # ── Tóm tắt theo nhóm (chỉ khi xem tất cả / không filter quá sâu) ──
+    if loai_chon == "Tất cả" and th_chon == "Tất cả" and not kw.strip():
+        st.markdown(
+            "<div style='font-size:0.88rem;font-weight:600;color:#555;"
+            "margin:14px 0 6px;'>Tóm tắt theo loại hàng</div>",
+            unsafe_allow_html=True
+        )
+        grp = df.groupby("loai_hang", dropna=False).agg(
+            so_ma=("ma_hang", "count"),
+            tong_sl=("Tổng tồn", "sum"),
+            tong_gtri=("Giá trị", "sum"),
+        ).reset_index().sort_values("tong_gtri", ascending=False)
+        grp.columns = ["Loại hàng", "Số mã", "Tổng SL", "Giá trị"]
+        grp["Giá trị"] = grp["Giá trị"].apply(lambda x: f"{_fmt(x)}đ")
+        grp["Loại hàng"] = grp["Loại hàng"].fillna("(Chưa phân loại)")
+        st.dataframe(grp, use_container_width=True, hide_index=True)
+
+
+# ══════════════════════════════════════════════════════════
+# ENTRY POINT — PATCHED
 # ══════════════════════════════════════════════════════════
 
 def module_bao_cao():
     st.markdown("### 📊 Báo cáo")
 
-    # ── Tab chính: ẩn "Nhân viên" nếu không phải admin ──
-    main_tab_labels = ["💰 Doanh thu", "📦 Xuất nhập tồn"]
+    main_tab_labels = ["💰 Doanh thu", "📦 Xuất nhập tồn", "📊 Tồn kho"]
     if is_admin():
         main_tab_labels.append("👥 Nhân viên")
     main_tabs = st.tabs(main_tab_labels)
 
     with main_tabs[0]:
-        # Sub-tab Doanh thu: ẩn "Tổng quan" và "Bán hàng theo nhóm" nếu không phải admin/ke_toan
         if is_ke_toan_or_admin():
             sub_labels = ["Cuối ngày", "Tổng quan", "Bán hàng theo nhóm"]
             sub_tabs = st.tabs(sub_labels)
@@ -1254,6 +1446,9 @@ def module_bao_cao():
     with main_tabs[1]:
         _tab_xuat_nhap_ton()
 
+    with main_tabs[2]:
+        _tab_ton_kho()
+
     if is_admin():
-        with main_tabs[2]:
+        with main_tabs[3]:
             _tab_nhan_vien()

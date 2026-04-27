@@ -199,51 +199,50 @@ def _load_nhap_hang(branches_key: tuple, d_from: date, d_to: date) -> pd.DataFra
                        on="ma_phieu", how="left")
 
 
-# TODO: enable when POS module adds bảng phieu_tra_hang
-# @st.cache_data(ttl=300)
-# def _load_tra_hang(branches_key: tuple, d_from: date, d_to: date) -> pd.DataFrame:
-#     """Load phieu_tra_hang + ct đã trả."""
-#     rows, batch, offset = [], 1000, 0
-#     while True:
-#         res = supabase.table("phieu_tra_hang").select(
-#             "ma_phieu,chi_nhanh,confirmed_at,created_by"
-#         ).in_("chi_nhanh", list(branches_key)) \
-#          .eq("trang_thai", "Đã trả hàng") \
-#          .order("confirmed_at", desc=True) \
-#          .range(offset, offset + batch - 1).execute()
-#         if not res.data: break
-#         rows.extend(res.data)
-#         if len(res.data) < batch: break
-#         offset += batch
-#     if not rows:
-#         return pd.DataFrame()
-#     df_h = pd.DataFrame(rows)
-#     df_h["_date"] = pd.to_datetime(
-#         df_h["confirmed_at"], errors="coerce", utc=True
-#     ).dt.tz_convert("Asia/Ho_Chi_Minh").dt.date
-#     df_h = df_h[df_h["_date"].between(d_from, d_to)]
-#     if df_h.empty:
-#         return pd.DataFrame()
-#
-#     ma_list = df_h["ma_phieu"].tolist()
-#     ct, batch2, offset2 = [], 1000, 0
-#     while True:
-#         res2 = supabase.table("phieu_tra_hang_ct").select(
-#             "ma_phieu,ma_hang,ten_hang,so_luong,gia_tra"
-#         ).in_("ma_phieu", ma_list) \
-#          .order("ma_phieu") \
-#          .range(offset2, offset2 + batch2 - 1).execute()
-#         if not res2.data: break
-#         ct.extend(res2.data)
-#         if len(res2.data) < batch2: break
-#         offset2 += batch2
-#     if not ct:
-#         return pd.DataFrame()
-#     df_ct = pd.DataFrame(ct)
-#     for c in ["so_luong", "gia_tra"]:
-#         df_ct[c] = pd.to_numeric(df_ct[c], errors="coerce").fillna(0).astype(int)
-#     return df_ct.merge(df_h[["ma_phieu", "chi_nhanh", "_date", "created_by"]],
-#                        on="ma_phieu", how="left")
+@st.cache_data(ttl=300)
+def _load_tra_hang(branches_key: tuple, d_from: date, d_to: date) -> pd.DataFrame:
+    """Load phieu_tra_hang + ct đã trả."""
+    rows, batch, offset = [], 1000, 0
+    while True:
+        res = supabase.table("phieu_tra_hang").select(
+            "ma_phieu,chi_nhanh,confirmed_at,created_by"
+        ).in_("chi_nhanh", list(branches_key)) \
+         .eq("trang_thai", "Đã trả hàng") \
+         .order("confirmed_at", desc=True) \
+         .range(offset, offset + batch - 1).execute()
+        if not res.data: break
+        rows.extend(res.data)
+        if len(res.data) < batch: break
+        offset += batch
+    if not rows:
+        return pd.DataFrame()
+    df_h = pd.DataFrame(rows)
+    df_h["_date"] = pd.to_datetime(
+        df_h["confirmed_at"], errors="coerce", utc=True
+    ).dt.tz_convert("Asia/Ho_Chi_Minh").dt.date
+    df_h = df_h[df_h["_date"].between(d_from, d_to)]
+    if df_h.empty:
+        return pd.DataFrame()
+ 
+    ma_list = df_h["ma_phieu"].tolist()
+    ct, batch2, offset2 = [], 1000, 0
+    while True:
+        res2 = supabase.table("phieu_tra_hang_ct").select(
+            "ma_phieu,ma_hang,ten_hang,so_luong,gia_tra"
+        ).in_("ma_phieu", ma_list) \
+         .order("ma_phieu") \
+         .range(offset2, offset2 + batch2 - 1).execute()
+        if not res2.data: break
+        ct.extend(res2.data)
+        if len(res2.data) < batch2: break
+        offset2 += batch2
+    if not ct:
+        return pd.DataFrame()
+    df_ct = pd.DataFrame(ct)
+    for c in ["so_luong", "gia_tra"]:
+        df_ct[c] = pd.to_numeric(df_ct[c], errors="coerce").fillna(0).astype(int)
+    return df_ct.merge(df_h[["ma_phieu", "chi_nhanh", "_date", "created_by"]],
+                       on="ma_phieu", how="left")
 
 
 @st.cache_data(ttl=300)
@@ -697,7 +696,7 @@ def _tab_xuat_nhap_ton():
     df_ck   = _load_chuyen_hang(load_cns, d_from, d_to)
     df_kk   = _load_kiem_ke(load_cns, d_from, d_to)
     df_hd   = _load_hd(load_cns, d_from, d_to)
-    # TODO: df_tra = _load_tra_hang(load_cns, d_from, d_to)  # khi có module POS
+    df_tra = _load_tra_hang(load_cns, d_from, d_to)
 
     # ── Build bảng NHẬP ──
     nhap_rows = []
@@ -760,16 +759,15 @@ def _tab_xuat_nhap_ton():
                     if "Thành tiền" in hd_apsc_hh.columns else "—",
             })
 
-    # TODO: when POS module adds phieu_tra_hang
-    # if not df_tra.empty:
-    #     xuat_rows.append({
-    #         "Nguồn xuất": "Trả hàng NCC",
-    #         "Số phiếu/dòng": df_tra["ma_phieu"].nunique(),
-    #         "Tổng SL": int(df_tra["so_luong"].sum()),
-    #         "Giá trị (đ)": _fmt(int(
-    #             (df_tra["so_luong"] * df_tra["gia_tra"]).sum()
-    #         )) + "đ",
-    #     })
+    if not df_tra.empty:
+        xuat_rows.append({
+            "Nguồn xuất": "Trả hàng NCC",
+            "Số phiếu/dòng": df_tra["ma_phieu"].nunique(),
+            "Tổng SL": int(df_tra["so_luong"].sum()),
+            "Giá trị (đ)": _fmt(int(
+                (df_tra["so_luong"] * df_tra["gia_tra"]).sum()
+            )) + "đ",
+        })
 
     if not df_ck.empty:
         ck_xuat = df_ck[df_ck["tu_chi_nhanh"].isin(set(load_cns))]
@@ -866,6 +864,10 @@ def _tab_xuat_nhap_ton():
             kk_g = df_kk[df_kk["chenh_lech"] < 0]
             kk_g_hh = _filter_chi_hang_hoa(kk_g, ma_col="ma_hang")
             xuat_sl += int(kk_g_hh["chenh_lech"].abs().sum()) if not kk_g_hh.empty else 0
+
+        if not df_tra.empty:
+            tra_hh = _filter_chi_hang_hoa(df_tra, ma_col="ma_hang")
+            xuat_sl += int(tra_hh["so_luong"].sum()) if not tra_hh.empty else 0
 
         # Tồn cuối kỳ từ the_kho hiện tại (chỉ hàng hóa)
         the_kho = load_the_kho(branches_key=tuple(load_cns))

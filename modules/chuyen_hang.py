@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime
 import numpy as np
 
 from utils.config import ALL_BRANCHES, CN_SHORT, IN_APP_MARKER, ARCHIVED_MARKER

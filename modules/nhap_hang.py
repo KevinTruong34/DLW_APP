@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 import numpy as np
 
+from utils.helpers import _normalize, now_vn, now_vn_iso, today_vn, fmt_vn
 from utils.config import ALL_BRANCHES, CN_SHORT, IN_APP_MARKER, ARCHIVED_MARKER
 from utils.db import supabase, log_action, load_hoa_don, load_the_kho, load_hang_hoa, \
     load_phieu_chuyen_kho, load_phieu_kiem_ke, get_gia_ban_map, load_stock_deltas, \
@@ -35,7 +36,7 @@ def module_nhap_hang():
             num = int(data[0] if isinstance(data, list) else data) if data else 1
             return f"PNH{num:06d}"
         except Exception:
-            return f"PNH{(datetime.now()+timedelta(hours=7)).strftime('%y%m%d%H%M')}"
+            return f"PNH{now_vn().strftime('%y%m%d%H%M')}"
 
     def _gen_ma_th() -> str:
         try:
@@ -44,7 +45,7 @@ def module_nhap_hang():
             num = int(data[0] if isinstance(data, list) else data) if data else 1
             return f"TH{num:06d}"
         except Exception:
-            return f"TH{(datetime.now()+timedelta(hours=7)).strftime('%y%m%d%H%M')}"
+            return f"TH{now_vn().strftime('%y%m%d%H%M')}"
 
     # ── Tabs chính ──
     main_tabs = ["📦 Nhập hàng", "↩️ Trả hàng NCC"]
@@ -311,8 +312,8 @@ def module_nhap_hang():
                                     "chi_nhanh": active, "trang_thai": "Nháp",
                                     "ghi_chu": ghi_chu.strip() or None,
                                     "created_by": ho_ten,
-                                    "created_at": (datetime.now()+timedelta(hours=7)).isoformat(),
-                                    "updated_at": (datetime.now()+timedelta(hours=7)).isoformat(),
+                                    "created_at": now_vn_iso(),
+                                    "updated_at": now_vn_iso(),
                                 }).execute()
                                 supabase.table("phieu_nhap_hang_ct").insert([
                                     {"ma_phieu": ma, "ma_hang": x["ma_hang"], "ten_hang": x["ten_hang"],
@@ -337,8 +338,8 @@ def module_nhap_hang():
                                     "chi_nhanh": active, "trang_thai": "Chờ xác nhận",
                                     "ghi_chu": ghi_chu.strip() or None,
                                     "created_by": ho_ten,
-                                    "created_at": (datetime.now()+timedelta(hours=7)).isoformat(),
-                                    "updated_at": (datetime.now()+timedelta(hours=7)).isoformat(),
+                                    "created_at": now_vn_iso(),
+                                    "updated_at": now_vn_iso(),
                                 }).execute()
                                 supabase.table("phieu_nhap_hang_ct").insert([
                                     {"ma_phieu": ma, "ma_hang": x["ma_hang"], "ten_hang": x["ten_hang"],
@@ -419,7 +420,7 @@ def module_nhap_hang():
                                      use_container_width=True, key="pnh_to_cho"):
                             supabase.table("phieu_nhap_hang").update({
                                 "trang_thai": "Chờ xác nhận",
-                                "updated_at": (datetime.now()+timedelta(hours=7)).isoformat()
+                                "updated_at": now_vn_iso()
                             }).eq("ma_phieu", ma_pick).execute()
                             st.cache_data.clear(); st.success("✓ Đã gửi chờ xác nhận"); st.rerun()
 
@@ -428,7 +429,7 @@ def module_nhap_hang():
                         if st.button("✅ Xác nhận — Nhập kho", type="primary",
                                      use_container_width=True, key="pnh_confirm"):
                             try:
-                                now_vn = (datetime.now()+timedelta(hours=7)).isoformat()
+                                now_vn = now_vn_iso()
                                 chi_nhanh = phieu.get("chi_nhanh", "")
                                 ma_hangs  = ct["ma_hang"].astype(str).tolist()
 
@@ -509,7 +510,7 @@ def module_nhap_hang():
                                      use_container_width=True, key="pnh_cancel"):
                             supabase.table("phieu_nhap_hang").update({
                                 "trang_thai": "Đã hủy",
-                                "updated_at": (datetime.now()+timedelta(hours=7)).isoformat()
+                                "updated_at": now_vn_iso()
                             }).eq("ma_phieu", ma_pick).execute()
                             st.cache_data.clear()
                             log_action("PNH_CANCEL", f"ma={ma_pick}", level="warning")
@@ -551,7 +552,7 @@ def module_nhap_hang():
 
                                 supabase.table("phieu_nhap_hang").update({
                                     "trang_thai": "Đã hủy",
-                                    "updated_at": (datetime.now()+timedelta(hours=7)).isoformat()
+                                    "updated_at": now_vn_iso()
                                 }).eq("ma_phieu", ma_pick).execute()
                                 st.cache_data.clear()
                                 log_action("PNH_REVERT", f"ma={ma_pick}", level="warning")
@@ -748,8 +749,8 @@ def module_nhap_hang():
                                     "chi_nhanh": active, "trang_thai": "Nháp",
                                     "ghi_chu": ghi_chu_th.strip() or None,
                                     "created_by": ho_ten,
-                                    "created_at": (datetime.now()+timedelta(hours=7)).isoformat(),
-                                    "updated_at": (datetime.now()+timedelta(hours=7)).isoformat(),
+                                    "created_at": now_vn_iso(),
+                                    "updated_at": now_vn_iso(),
                                 }).execute()
                                 supabase.table("phieu_tra_hang_ct").insert([
                                     {"ma_phieu": ma_th, "ma_hang": x["ma_hang"],
@@ -772,8 +773,8 @@ def module_nhap_hang():
                                     "chi_nhanh": active, "trang_thai": "Chờ xác nhận",
                                     "ghi_chu": ghi_chu_th.strip() or None,
                                     "created_by": ho_ten,
-                                    "created_at": (datetime.now()+timedelta(hours=7)).isoformat(),
-                                    "updated_at": (datetime.now()+timedelta(hours=7)).isoformat(),
+                                    "created_at": now_vn_iso(),
+                                    "updated_at": now_vn_iso(),
                                 }).execute()
                                 supabase.table("phieu_tra_hang_ct").insert([
                                     {"ma_phieu": ma_th, "ma_hang": x["ma_hang"],
@@ -846,7 +847,7 @@ def module_nhap_hang():
                                          use_container_width=True, key="th_to_cho"):
                                 supabase.table("phieu_tra_hang").update({
                                     "trang_thai": "Chờ xác nhận",
-                                    "updated_at": (datetime.now()+timedelta(hours=7)).isoformat()
+                                    "updated_at": now_vn_iso()
                                 }).eq("ma_phieu", ma_pick_th).execute()
                                 st.cache_data.clear()
                                 st.success("✓ Đã gửi chờ xác nhận"); st.rerun()
@@ -857,7 +858,7 @@ def module_nhap_hang():
                                          use_container_width=True, key="th_confirm"):
                                 try:
                                     chi_nhanh_th = phieu_th.get("chi_nhanh", "")
-                                    now_vn_th = (datetime.now()+timedelta(hours=7)).isoformat()
+                                    now_vn_th = now_vn_iso()
                                     ma_hangs_th  = ct_th["ma_hang"].astype(str).str.strip().tolist()
                                     ma_hangs_set_th = set(ma_hangs_th)
                                     sl_map_th = {str(r["ma_hang"]).strip(): int(r["so_luong"])
@@ -910,7 +911,7 @@ def module_nhap_hang():
                                          use_container_width=True, key="th_cancel"):
                                 supabase.table("phieu_tra_hang").update({
                                     "trang_thai": "Đã hủy",
-                                    "updated_at": (datetime.now()+timedelta(hours=7)).isoformat()
+                                    "updated_at": now_vn_iso()
                                 }).eq("ma_phieu", ma_pick_th).execute()
                                 st.cache_data.clear()
                                 log_action("TH_CANCEL", f"ma={ma_pick_th}", level="warning")
@@ -957,7 +958,7 @@ def module_nhap_hang():
 
                                     supabase.table("phieu_tra_hang").update({
                                         "trang_thai": "Đã hủy",
-                                        "updated_at": (datetime.now()+timedelta(hours=7)).isoformat()
+                                        "updated_at": now_vn_iso()
                                     }).eq("ma_phieu", ma_pick_th).execute()
 
                                     st.cache_data.clear()
@@ -1022,7 +1023,7 @@ def module_nhap_hang():
                             "ma_ncc": auto_ma, "ten_ncc": ncc_ten.strip(),
                             "sdt": ncc_sdt.strip() or None, "dia_chi": ncc_dc.strip() or None,
                             "ghi_chu": ncc_gc.strip() or None,
-                            "created_at": (datetime.now()+timedelta(hours=7)).isoformat(),
+                            "created_at": now_vn_iso(),
                         }).execute()
                         st.cache_data.clear()
                         st.success(f"✓ Đã thêm NCC **{ncc_ten.strip()}** (mã: {auto_ma})"); st.rerun()

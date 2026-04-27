@@ -567,10 +567,21 @@ def _tao_phieu_chuyen():
         with cart_container:
             for idx, it in enumerate(st.session_state["ck_items"]):
                 ton_src = int(it.get("ton_src", 0))
-                over    = it["so_luong"] > ton_src
-                if over: has_overflow = True
 
                 c_tn, c_sl, c_del = st.columns([4, 2, 1])
+                with c_sl:
+                    new_sl = st.number_input(
+                        "SL", min_value=1, max_value=99999,
+                        value=int(it["so_luong"]),
+                        step=1, key=f"sl_{idx}", label_visibility="collapsed"
+                    )
+                    # Apply ngay để has_overflow tính đúng trong cùng lần render
+                    st.session_state["ck_items"][idx]["so_luong"] = int(new_sl)
+
+                # Tính over từ new_sl (giá trị widget hiện tại), không phải it["so_luong"] cũ
+                over = int(new_sl) > ton_src
+                if over: has_overflow = True
+
                 with c_tn:
                     ton_color = "#cf4c2c" if over else "#888"
                     ton_label = (f"Tồn nguồn: <b style='color:{ton_color};'>{ton_src}</b>"
@@ -583,14 +594,6 @@ def _tao_phieu_chuyen():
                         f"</div>",
                         unsafe_allow_html=True
                     )
-                with c_sl:
-                    new_sl = st.number_input(
-                        "SL", min_value=1, max_value=99999,
-                        value=int(it["so_luong"]),
-                        step=1, key=f"sl_{idx}", label_visibility="collapsed"
-                    )
-                    if new_sl != it["so_luong"]:
-                        st.session_state["ck_items"][idx]["so_luong"] = int(new_sl)
                 with c_del:
                     st.markdown("<div style='padding-top:5px;'>", unsafe_allow_html=True)
                     if st.button("🗑", key=f"del_{idx}", use_container_width=True):
@@ -598,8 +601,8 @@ def _tao_phieu_chuyen():
                         st.rerun()
                     st.markdown("</div>", unsafe_allow_html=True)
 
-                total_sl += it["so_luong"]
-                total_gb += it["so_luong"] * it["gia_ban"]
+                total_sl += int(new_sl)
+                total_gb += int(new_sl) * it["gia_ban"]
 
         if has_overflow:
             st.warning(

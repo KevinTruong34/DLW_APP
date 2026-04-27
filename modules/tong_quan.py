@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 import numpy as np
 
+from utils.helpers import today_vn
 from utils.config import ALL_BRANCHES, CN_SHORT, IN_APP_MARKER, ARCHIVED_MARKER
 from utils.db import supabase, log_action, load_hoa_don, load_the_kho, load_hang_hoa, \
     load_phieu_chuyen_kho, load_phieu_kiem_ke, get_gia_ban_map, load_stock_deltas, \
@@ -46,7 +47,7 @@ def module_tong_quan():
     try:
         raw = load_hoa_don(branches_key=(active,))
         if not raw.empty and "_date" in raw.columns:
-            today = datetime.now().date()
+            today = today_vn()
             yest  = today - timedelta(days=1)
             ht    = raw[raw["Trạng thái"] == "Hoàn thành"].copy()
 
@@ -113,7 +114,7 @@ def hien_thi_dashboard(show_filter: bool = True):
         if raw.empty or "_date" not in raw.columns:
             st.info("Chưa có dữ liệu hóa đơn."); return
 
-        today       = datetime.now().date()
+        today       = today_vn()
         yesterday   = today - timedelta(1)
         first_month = today.replace(day=1)
         first_last  = (first_month - timedelta(1)).replace(day=1)

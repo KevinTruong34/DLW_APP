@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 import numpy as np
 
+from utils.helpers import _normalize, now_vn, now_vn_iso, today_vn, fmt_vn
 from utils.config import ALL_BRANCHES, CN_SHORT, IN_APP_MARKER, ARCHIVED_MARKER
 from utils.db import supabase, log_action, load_hoa_don, load_the_kho, load_hang_hoa, \
     load_phieu_chuyen_kho, load_phieu_kiem_ke, get_gia_ban_map, load_stock_deltas, \
@@ -613,7 +614,7 @@ def module_quan_tri():
                                     "ngay_gd_cuoi":   _cv(r.get("Ngày giao dịch cuối")),
                                     "ghi_chu":        _cv(r.get("Ghi chú")),
                                     "trang_thai":     _to_int(r.get("Trạng thái"), default=1),
-                                    "updated_at":     (datetime.now() + timedelta(hours=7)).isoformat(),
+                                    "updated_at":     now_vn_iso(),
                                 })
 
                             total, ok = len(rows_kh), 0
@@ -641,7 +642,7 @@ def module_quan_tri():
         st.caption("Lịch sử thao tác của tất cả người dùng trên App.")
 
         col_f, col_t, col_u, col_a = st.columns([1, 1, 1, 1])
-        today_vn = (datetime.now() + timedelta(hours=7)).date()
+        today_vn = (now_vn_iso()).date()
         with col_f:
             d_from = st.date_input("Từ:", value=today_vn, key="log_from",
                                    format="DD/MM/YYYY", label_visibility="collapsed")

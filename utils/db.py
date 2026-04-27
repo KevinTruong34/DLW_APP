@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 import numpy as np
 import logging
 
+from utils.helpers import _normalize, now_vn, now_vn_iso, today_vn, fmt_vn
 from utils.config import ALL_BRANCHES, IN_APP_MARKER, ARCHIVED_MARKER
 
 # ── Logging ──
@@ -385,7 +386,7 @@ def _gen_ma_akh() -> str:
         num = int(data[0] if isinstance(data, list) else data) if data else 1
         return f"AKH{num:06d}"
     except Exception:
-        return f"AKH{(datetime.now() + timedelta(hours=7)).strftime('%y%m%d%H%M')}"
+        return f"AKH{(now_vn()).strftime('%y%m%d%H%M')}"
 
 
 def _upsert_khach_hang(ten: str, sdt: str, chi_nhanh: str = "") -> str:
@@ -399,8 +400,8 @@ def _upsert_khach_hang(ten: str, sdt: str, chi_nhanh: str = "") -> str:
         supabase.table("khach_hang").insert({
             "ma_kh": ma, "ten_kh": ten.strip(), "sdt": sdt_clean,
             "chi_nhanh_tao": chi_nhanh,
-            "created_at": (datetime.now() + timedelta(hours=7)).isoformat(),
-            "updated_at": (datetime.now() + timedelta(hours=7)).isoformat(),
+            "created_at": (now_vn()).isoformat(),
+            "updated_at": (now_vn()).isoformat(),
         }).execute()
         return ma
     except Exception: return ""

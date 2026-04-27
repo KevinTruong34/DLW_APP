@@ -1,15 +1,59 @@
 import streamlit as st
 import pandas as pd
 import base64
-from datetime import datetime, timedelta
+from datetime import datetime, date, timedelta
+import pytz
+
+_TZ_VN = pytz.timezone("Asia/Ho_Chi_Minh")
+
+
+def now_vn() -> datetime:
+    """
+    Trả về datetime hiện tại theo giờ Việt Nam (Asia/Ho_Chi_Minh).
+    Dùng để ghi DB (isoformat()) hoặc hiển thị cho user (strftime()).
+
+    Thay thế cho: datetime.now() + timedelta(hours=7)
+    """
+    return datetime.now(_TZ_VN)
+
+
+def today_vn() -> date:
+    """
+    Trả về ngày hôm nay theo giờ Việt Nam.
+    Thay thế cho: pd.Timestamp.now(tz="Asia/Ho_Chi_Minh").date()
+    """
+    return datetime.now(_TZ_VN).date()
+
+
+def now_vn_iso() -> str:
+    """
+    Trả về ISO string của datetime VN — dùng để ghi vào các cột timestamptz.
+    Supabase nhận timezone-aware ISO string và lưu đúng.
+
+    Thay thế cho: (datetime.now() + timedelta(hours=7)).isoformat()
+                  datetime.now().isoformat()
+    """
+    return datetime.now(_TZ_VN).isoformat()
+
+
+def fmt_vn(dt: datetime, fmt: str = "%d/%m/%Y %H:%M") -> str:
+    """
+    Format datetime sang chuỗi hiển thị theo giờ VN.
+    Nếu dt là UTC-aware, tự động convert sang VN trước khi format.
+
+    Thay thế cho: dt.strftime(fmt) khi dt đang là UTC
+    """
+    if dt is None:
+        return "—"
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(_TZ_VN)
+    return dt.strftime(fmt)
 
 
 def _normalize(text: str) -> str:
     """Fuzzy search: bỏ space/dash/dot → 'F 94' khớp 'F94'."""
     import re
     return re.sub(r"[\s\-_./]", "", str(text)).upper()
-
-
 
 
 def _build_phieu_html(phieu: dict, ct: pd.DataFrame) -> str:
@@ -81,7 +125,6 @@ def _build_phieu_html(phieu: dict, ct: pd.DataFrame) -> str:
 
 def _in_phieu_sc(phieu_html: str, key: str):
     """Mở tab mới và in phiếu — dùng Blob URL để giữ đúng UTF-8 tiếng Việt."""
-    import base64
     b64 = base64.b64encode(phieu_html.encode("utf-8")).decode("ascii")
     st.components.v1.html(
         f"""<script>
@@ -95,4 +138,3 @@ def _in_phieu_sc(phieu_html: str, key: str):
         </script>""",
         height=0
     )
-

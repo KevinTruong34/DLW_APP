@@ -10,7 +10,7 @@ from utils.db import supabase, _logger, log_action, load_hoa_don, load_the_kho, 
     load_khach_hang_list, lookup_khach_hang, _upsert_khach_hang, get_archive_reminder
 from utils.auth import get_user, is_admin, is_ke_toan_or_admin, \
     get_active_branch, get_accessible_branches
-from utils.helpers import _normalize
+from utils.helpers import _normalize, now_vn, now_vn_iso, today_vn
 
 PHIEU_PER_PAGE = 20
 SUGGEST_LIMIT  = 5
@@ -721,7 +721,7 @@ def _submit_phieu(tu_cn: str, toi_cn: str, nguoi_tao: str, ghi_chu: str,
     """Insert phiếu tạm — validation tồn kho thật sự do RPC xac_nhan_chuyen_hang đảm nhiệm."""
     try:
         with st.spinner("Đang xử lý..."):
-            now_iso   = datetime.now().isoformat()
+            now_iso   = now_vn_iso()
             tong_sl   = sum(it["so_luong"] for it in items)
             tong_mat  = len(items)
             tong_gtri = sum(it["so_luong"] * it["gia_ban"] for it in items)

@@ -801,7 +801,12 @@ def module_chuyen_hang():
         editing = st.session_state.get("ck_editing")
         create_tab_label = "➕ Tạo / Sửa phiếu" + (" 🔄" if editing else "")
 
-        tab_view, tab_create = st.tabs(["📋 Danh sách phiếu", create_tab_label])
+        # Khi đang edit mode: đặt tab Tạo/Sửa lên đầu để rerun không bị văng về tab Danh sách
+        if editing:
+            tab_create, tab_view = st.tabs([create_tab_label, "📋 Danh sách phiếu"])
+        else:
+            tab_view, tab_create = st.tabs(["📋 Danh sách phiếu", create_tab_label])
+
         with tab_view:
             _view_phieu_chuyen(df_all)
         with tab_create:

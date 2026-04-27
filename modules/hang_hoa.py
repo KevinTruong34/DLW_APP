@@ -12,6 +12,7 @@ from utils.auth import get_user, is_admin, is_ke_toan_or_admin, \
 
 from utils.helpers import _normalize
 
+
 def module_hang_hoa():
     try:
         active     = get_active_branch()
@@ -32,7 +33,13 @@ def module_hang_hoa():
         has_master = not master.empty
 
         if not has_master and the_kho.empty:
-            st.info("Chưa có dữ liệu. Vào ⚙️ Quản trị → Upload để tải lên."); return
+            # Nếu chưa có dữ liệu, vẫn cho admin thêm mới
+            if is_admin():
+                st.info("Chưa có dữ liệu hàng hóa.")
+                _render_them_moi()
+            else:
+                st.info("Chưa có dữ liệu. Vào ⚙️ Quản trị → Upload để tải lên.")
+            return
 
         # ── Build df ──
         if has_master and not the_kho.empty:
@@ -49,7 +56,6 @@ def module_hang_hoa():
             df["nhom_hang"]=""; df["thuong_hieu"]=""; df["loai_hang"]=""; df["gia_ban"]=0; df["bao_hanh"]=""
             df["ma_hang"] = df["Mã hàng"]; df["ma_vach"] = df["Mã hàng"]
 
-        # Dùng loai_hang + thuong_hieu nếu có, fallback nhom_hang
         if "loai_hang" in df.columns and df["loai_hang"].fillna("").str.strip().any():
             df["_cha"] = df["loai_hang"].fillna("").str.strip()
             df["_con"] = df.get("thuong_hieu", pd.Series([""] * len(df))).fillna("").str.strip()
@@ -103,7 +109,11 @@ def module_hang_hoa():
         filtered = filtered.sort_values("Ton_cuoi", ascending=False).reset_index(drop=True)
 
         if filtered.empty:
-            st.warning("Không tìm thấy hàng hóa phù hợp."); return
+            st.warning("Không tìm thấy hàng hóa phù hợp.")
+            if is_admin():
+                st.markdown("---")
+                _render_them_moi()
+            return
 
         if len(filtered) == 1:
             st.session_state["hh_ma_chon"] = filtered.iloc[0]["ma_hang"]
@@ -161,27 +171,28 @@ def module_hang_hoa():
                     st.rerun()
                 st.markdown("</div>", unsafe_allow_html=True)
 
-            # Tồn kho 3 chi nhánh, highlight CN hiện tại (active, không phải active_cn)
+            # Tồn kho 3 chi nhánh
             st.markdown(
                 "<div style='font-size:0.82rem;font-weight:600;"
                 "color:#555;margin:10px 0 6px;'>Tồn kho chi nhánh</div>",
                 unsafe_allow_html=True)
             try:
-                # Load tất cả 3 chi nhánh trong 1 call thay vì loop 3 lần
                 all_kho = load_the_kho(branches_key=tuple(ALL_BRANCHES))
                 branch_tons = {cn: 0 for cn in ALL_BRANCHES}
+                branch_kho_ids = {cn: None for cn in ALL_BRANCHES}
                 if not all_kho.empty:
                     rows_kho = all_kho[all_kho["Mã hàng"].astype(str).str.strip() == str(ma_chon).strip()]
                     for _, kr in rows_kho.iterrows():
                         cn = kr.get("Chi nhánh", "")
                         if cn in branch_tons:
                             branch_tons[cn] += int(kr.get("Tồn cuối kì", 0) or 0)
+                            branch_kho_ids[cn] = kr.get("id")
 
                 cn_cols = st.columns(3)
                 for idx, cn_name in enumerate(ALL_BRANCHES):
                     with cn_cols[idx]:
                         ton    = branch_tons[cn_name]
-                        is_cur = (cn_name == active)  # FIX: active thay vì active_cn
+                        is_cur = (cn_name == active)
                         clr    = "#1a7f37" if ton > 5 else ("#cf4c2c" if ton > 0 else "#aaa")
                         border = "2px solid #e63946" if is_cur else "1px solid #e8e8e8"
                         bg     = "#fff8f8" if is_cur else "#fff"
@@ -195,8 +206,72 @@ def module_hang_hoa():
                             f"<div style='font-size:1.4rem;font-weight:700;color:{clr};'>"
                             f"{ton:,}</div></div>",
                             unsafe_allow_html=True)
+
+                # ── Chỉnh tồn kho (admin only) ──
+                if is_admin():
+                    with st.expander("✏️ Chỉnh tồn kho", expanded=False):
+                        st.caption("Điều chỉnh trực tiếp tồn kho tại từng chi nhánh. "
+                                   "Thay đổi sẽ ghi thẳng vào the_kho.")
+                        adj_cols = st.columns(3)
+                        adj_vals = {}
+                        for idx, cn_name in enumerate(ALL_BRANCHES):
+                            with adj_cols[idx]:
+                                adj_vals[cn_name] = st.number_input(
+                                    CN_SHORT.get(cn_name, cn_name),
+                                    min_value=0,
+                                    value=branch_tons[cn_name],
+                                    step=1,
+                                    key=f"adj_ton_{ma_chon}_{cn_name}"
+                                )
+                        if st.button("💾 Lưu tồn kho", type="primary",
+                                     use_container_width=True, key=f"save_ton_{ma_chon}"):
+                            try:
+                                changed = []
+                                for cn_name in ALL_BRANCHES:
+                                    new_ton = int(adj_vals[cn_name])
+                                    old_ton = branch_tons[cn_name]
+                                    if new_ton == old_ton:
+                                        continue
+                                    kho_id = branch_kho_ids[cn_name]
+                                    if kho_id:
+                                        # Dòng đã tồn tại → update
+                                        supabase.table("the_kho").update(
+                                            {"Tồn cuối kì": new_ton}
+                                        ).eq("id", kho_id).execute()
+                                    else:
+                                        # Chưa có dòng → insert mới
+                                        supabase.table("the_kho").insert({
+                                            "Mã hàng":    str(ma_chon),
+                                            "Tên hàng":   str(row_m.get("ten_hang", "")),
+                                            "Chi nhánh":  cn_name,
+                                            "Tồn cuối kì": new_ton,
+                                            "Tồn đầu kì":  0,
+                                        }).execute()
+                                    changed.append(
+                                        f"{CN_SHORT.get(cn_name, cn_name)}: "
+                                        f"{old_ton} → {new_ton}"
+                                    )
+                                if changed:
+                                    st.cache_data.clear()
+                                    log_action("KHO_ADJ",
+                                               f"ma={ma_chon} " + ", ".join(changed))
+                                    st.success("✓ Đã cập nhật: " + " · ".join(changed))
+                                    st.rerun()
+                                else:
+                                    st.info("Không có thay đổi.")
+                            except Exception as e:
+                                st.error(f"Lỗi: {e}")
+
             except Exception:
                 pass
+
+            # ── Admin actions: Sửa thông tin & Ẩn hàng hóa ──
+            if is_admin():
+                with st.expander("✏️ Sửa thông tin hàng hóa", expanded=False):
+                    _render_sua_hang_hoa(row_m)
+
+                st.markdown("---")
+                _render_an_hang_hoa(ma_chon, str(row_m.get("ten_hang", "")))
 
             st.markdown("<hr style='margin:12px 0 6px;'>", unsafe_allow_html=True)
 
@@ -249,15 +324,186 @@ def module_hang_hoa():
         if not ma_chon:
             st.caption("↑ Chọn một dòng để xem chi tiết sản phẩm")
 
+        # ── Nút thêm hàng hóa mới (admin) ──
+        if is_admin():
+            st.markdown("---")
+            with st.expander("➕ Thêm hàng hóa mới", expanded=False):
+                _render_them_moi()
+
     except Exception as e:
         st.error(f"Lỗi tải Hàng hóa: {e}")
 
 
-# ==========================================
-# MODULE: CHUYỂN HÀNG — v16.0
-# Workflow: Phiếu tạm → Đang chuyển → Đã nhận
-#           (Admin: → Đã hủy bất cứ lúc nào)
-# ==========================================
+# ══════════════════════════════════════════════════════════
+# ADMIN HELPERS
+# ══════════════════════════════════════════════════════════
 
-PHIEU_PER_PAGE   = 20    # Giới hạn 20 phiếu/trang
-SUGGEST_LIMIT    = 5     # Giới hạn 5 sản phẩm gợi ý
+def _render_them_moi():
+    """Form thêm hàng hóa mới vào master."""
+    master = load_hang_hoa()
+
+    # Gợi ý loai_hang và thuong_hieu từ master hiện có
+    loai_opts = sorted(master["loai_hang"].dropna().unique().tolist()) \
+        if not master.empty and "loai_hang" in master.columns else []
+
+    cnt = st.session_state.get("hh_them_cnt", 0)
+
+    c1, c2 = st.columns(2)
+    with c1:
+        new_ma   = st.text_input("Mã hàng: *", key=f"hh_new_ma_{cnt}",
+                                  placeholder="VD: PDH130")
+        new_ten  = st.text_input("Tên hàng: *", key=f"hh_new_ten_{cnt}")
+        new_vach = st.text_input("Mã vạch:", key=f"hh_new_vach_{cnt}")
+        new_gb   = st.number_input("Giá bán:", min_value=0, step=10000,
+                                    key=f"hh_new_gb_{cnt}", value=0)
+    with c2:
+        loai_sel = st.selectbox("Loại hàng:",
+            ["-- Chọn --"] + loai_opts + ["(Nhập mới)"],
+            key=f"hh_new_loai_{cnt}")
+        if loai_sel == "(Nhập mới)":
+            new_loai = st.text_input("Tên loại mới:", key=f"hh_new_loai_txt_{cnt}")
+        elif loai_sel == "-- Chọn --":
+            new_loai = ""
+        else:
+            new_loai = loai_sel
+
+        th_opts = []
+        if new_loai and not master.empty and "thuong_hieu" in master.columns:
+            th_opts = sorted(master[master["loai_hang"] == new_loai][
+                "thuong_hieu"].dropna().unique().tolist())
+        th_sel = st.selectbox("Thương hiệu:",
+            ["-- Chọn --"] + th_opts + ["(Nhập mới)"],
+            key=f"hh_new_th_{cnt}")
+        if th_sel == "(Nhập mới)":
+            new_th = st.text_input("Tên thương hiệu mới:", key=f"hh_new_th_txt_{cnt}")
+        elif th_sel == "-- Chọn --":
+            new_th = ""
+        else:
+            new_th = th_sel
+
+        new_bh = st.text_input("Bảo hành:", key=f"hh_new_bh_{cnt}",
+                                placeholder="VD: 12 tháng")
+
+    can_add = bool(new_ma.strip()) and bool(new_ten.strip())
+    if st.button("➕ Thêm hàng hóa", type="primary",
+                 use_container_width=True, key=f"hh_add_btn_{cnt}",
+                 disabled=not can_add):
+        ma_clean = new_ma.strip().upper()
+        # Kiểm tra trùng mã
+        if not master.empty and ma_clean in master["ma_hang"].astype(str).str.upper().values:
+            st.error(f"Mã hàng **{ma_clean}** đã tồn tại trong hệ thống.")
+        else:
+            try:
+                supabase.table("hang_hoa").insert({
+                    "ma_hang":    ma_clean,
+                    "ten_hang":   new_ten.strip(),
+                    "ma_vach":    new_vach.strip() or None,
+                    "gia_ban":    int(new_gb),
+                    "loai_hang":  new_loai or None,
+                    "thuong_hieu": new_th or None,
+                    "bao_hanh":   new_bh.strip() or None,
+                    "active":     True,
+                }).execute()
+                st.cache_data.clear()
+                log_action("HH_ADD", f"ma={ma_clean} ten={new_ten.strip()}")
+                st.success(f"✓ Đã thêm **{ma_clean}** — {new_ten.strip()}")
+                st.session_state["hh_them_cnt"] = cnt + 1
+                st.rerun()
+            except Exception as e:
+                st.error(f"Lỗi: {e}")
+
+
+def _render_sua_hang_hoa(row_m):
+    """Form sửa thông tin hàng hóa đã có."""
+    ma = str(row_m["ma_hang"])
+    cnt = st.session_state.get(f"hh_sua_cnt_{ma}", 0)
+
+    master = load_hang_hoa()
+    loai_opts = sorted(master["loai_hang"].dropna().unique().tolist()) \
+        if not master.empty and "loai_hang" in master.columns else []
+    cur_loai = str(row_m.get("loai_hang") or "")
+    cur_th   = str(row_m.get("thuong_hieu") or "")
+
+    c1, c2 = st.columns(2)
+    with c1:
+        new_ten  = st.text_input("Tên hàng:", value=str(row_m.get("ten_hang","")),
+                                  key=f"hh_sua_ten_{ma}_{cnt}")
+        new_vach = st.text_input("Mã vạch:", value=str(row_m.get("ma_vach","") or ""),
+                                  key=f"hh_sua_vach_{ma}_{cnt}")
+        new_gb   = st.number_input("Giá bán:", min_value=0, step=10000,
+                                    value=int(row_m.get("gia_ban",0) or 0),
+                                    key=f"hh_sua_gb_{ma}_{cnt}")
+    with c2:
+        loai_idx = (loai_opts.index(cur_loai) + 1) if cur_loai in loai_opts else 0
+        loai_sel = st.selectbox("Loại hàng:",
+            ["-- Giữ nguyên --"] + loai_opts,
+            index=loai_idx, key=f"hh_sua_loai_{ma}_{cnt}")
+        new_loai = "" if loai_sel == "-- Giữ nguyên --" else loai_sel
+
+        th_opts = []
+        check_loai = new_loai or cur_loai
+        if check_loai and not master.empty and "thuong_hieu" in master.columns:
+            th_opts = sorted(master[master["loai_hang"] == check_loai][
+                "thuong_hieu"].dropna().unique().tolist())
+        th_idx = (th_opts.index(cur_th) + 1) if cur_th in th_opts else 0
+        th_sel = st.selectbox("Thương hiệu:",
+            ["-- Giữ nguyên --"] + th_opts,
+            index=th_idx, key=f"hh_sua_th_{ma}_{cnt}")
+        new_th = "" if th_sel == "-- Giữ nguyên --" else th_sel
+
+        new_bh = st.text_input("Bảo hành:", value=str(row_m.get("bao_hanh","") or ""),
+                                key=f"hh_sua_bh_{ma}_{cnt}")
+
+    if st.button("💾 Lưu thay đổi", type="primary",
+                 use_container_width=True, key=f"hh_sua_btn_{ma}_{cnt}"):
+        try:
+            payload = {
+                "ten_hang": new_ten.strip(),
+                "ma_vach":  new_vach.strip() or None,
+                "gia_ban":  int(new_gb),
+                "bao_hanh": new_bh.strip() or None,
+            }
+            if new_loai: payload["loai_hang"]   = new_loai
+            if new_th:   payload["thuong_hieu"] = new_th
+            supabase.table("hang_hoa").update(payload).eq("ma_hang", ma).execute()
+            st.cache_data.clear()
+            log_action("HH_EDIT", f"ma={ma}")
+            st.success("✓ Đã cập nhật thông tin hàng hóa.")
+            st.session_state[f"hh_sua_cnt_{ma}"] = cnt + 1
+            st.rerun()
+        except Exception as e:
+            st.error(f"Lỗi: {e}")
+
+
+def _render_an_hang_hoa(ma: str, ten: str):
+    """Nút soft-delete hàng hóa."""
+    st.caption(
+        "Ẩn hàng hóa sẽ xóa khỏi danh sách tìm kiếm nhưng giữ lại lịch sử giao dịch."
+    )
+    confirm_key = f"hh_an_confirm_{ma}"
+    if not st.session_state.get(confirm_key):
+        if st.button(f"🚫 Ẩn hàng hóa này ({ma})", type="secondary",
+                     use_container_width=True, key=f"hh_an_btn_{ma}"):
+            st.session_state[confirm_key] = True
+            st.rerun()
+    else:
+        st.warning(f"Xác nhận ẩn **{ma} — {ten}**? Hành động này có thể hoàn tác bằng cách upload lại master.")
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("✓ Xác nhận ẩn", type="primary",
+                         use_container_width=True, key=f"hh_an_ok_{ma}"):
+                try:
+                    supabase.table("hang_hoa").update({"active": False}) \
+                        .eq("ma_hang", ma).execute()
+                    st.cache_data.clear()
+                    log_action("HH_HIDE", f"ma={ma} ten={ten}")
+                    st.session_state.pop(confirm_key, None)
+                    st.session_state.pop("hh_ma_chon", None)
+                    st.success(f"✓ Đã ẩn {ma}.")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Lỗi: {e}")
+        with c2:
+            if st.button("Hủy", use_container_width=True, key=f"hh_an_cancel_{ma}"):
+                st.session_state.pop(confirm_key, None)
+                st.rerun()

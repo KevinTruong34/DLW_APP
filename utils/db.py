@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from supabase import create_client, Client
-from datetime import datetime, timedelta
+from datetime import datetime
 import numpy as np
 import logging
 

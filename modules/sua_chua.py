@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 import numpy as np
 
+from utils.helpers import _normalize, now_vn, now_vn_iso, today_vn, fmt_vn
 from utils.config import ALL_BRANCHES, CN_SHORT, IN_APP_MARKER, ARCHIVED_MARKER
 from utils.db import supabase, log_action, load_hoa_don, load_the_kho, load_hang_hoa, \
     load_phieu_chuyen_kho, load_phieu_kiem_ke, get_gia_ban_map, load_stock_deltas, \
@@ -182,12 +183,12 @@ def module_sua_chua():
                 num = 1
             return f"APSC{num:06d}"
         except Exception:
-            return f"APSC{(datetime.now() + timedelta(hours=7)).strftime('%y%m%d%H%M')}"
+            return f"APSC{(now_vn()).strftime('%y%m%d%H%M')}"
 
     def _tao_hoa_don_apsc(phieu: dict, ct: pd.DataFrame,
                            giam_gia: int, pttt: dict) -> str:
         ma_hd = _gen_ma_apsc()
-        now_vn = datetime.now() + timedelta(hours=7)
+        now_vn = now_vn()
         now_str = now_vn.strftime("%d/%m/%Y %H:%M:%S")
         tong = int((ct["so_luong"] * ct["don_gia"]).sum()) if not ct.empty else 0
         can_tra = max(0, tong - giam_gia - int(phieu.get("khach_tra_truoc", 0)))
@@ -523,8 +524,8 @@ def module_sua_chua():
                     "trang_thai": "Đang sửa", "nguoi_tiep_nhan": ho_ten,
                     "ngay_hen_tra": ngay_hen.isoformat() if ngay_hen else None,
                     "created_by": user.get("username",""),
-                    "created_at": datetime.now().isoformat(),
-                    "updated_at": datetime.now().isoformat(),
+                    "created_at": now_vn_iso(),
+                    "updated_at": now_vn_iso(),
                 }).execute()
                 if items:
                     supabase.table("phieu_sua_chua_chi_tiet").insert(
@@ -544,7 +545,7 @@ def module_sua_chua():
                     "mo_ta_loi": mo_ta.strip(), "khach_tra_truoc": int(tra_truoc),
                     "ngay_hen_tra": str(ngay_hen) if ngay_hen else None,
                     "nguoi_tiep_nhan": ho_ten,
-                    "Ngày TN": (datetime.now() + timedelta(hours=7)).strftime("%d/%m/%Y %H:%M"),
+                    "Ngày TN": now_vn().strftime("%d/%m/%Y %H:%M"),
                 }
                 st.session_state["sc_pending_print_html"] = _build_phieu_html(phieu_data, ct_new)
 
@@ -798,7 +799,7 @@ def module_sua_chua():
                                 "trang_thai":     new_tt,
                                 "ghi_chu_noi_bo": new_gc.strip() or None,
                                 "ngay_hen_tra":   new_hen.isoformat() if new_hen else None,
-                                "updated_at":     datetime.now().isoformat(),
+                                "updated_at":     now_vn_iso(),
                             }).eq("ma_phieu", ma_pick).execute()
 
                             new_items = st.session_state.get("sc_upd_items", [])
@@ -1001,7 +1002,7 @@ def module_sua_chua():
                     apsc_ma = _tao_hoa_don_apsc(dict(phieu_hd), ct_hd, giam_gia, pttt)
                     supabase.table("phieu_sua_chua").update({
                         "trang_thai": "Hoàn thành",
-                        "updated_at": (datetime.now() + timedelta(hours=7)).isoformat(),
+                        "updated_at": (now_vn()).isoformat(),
                     }).eq("ma_phieu", ma_hd_pick).execute()
                     st.cache_data.clear()
                     log_action("SC_HOA_DON", f"ma={ma_hd_pick} apsc={apsc_ma}")

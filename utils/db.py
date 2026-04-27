@@ -283,7 +283,8 @@ def load_hang_hoa() -> pd.DataFrame:
     rows, batch, offset = [], 1000, 0
     while True:
         res = supabase.table("hang_hoa").select("*") \
-            .range(offset, offset + batch - 1).execute()
+        .neq("active", False) \
+        .range(offset, offset + batch - 1).execute()
         if not res.data: break
         rows.extend(res.data)
         if len(res.data) < batch: break

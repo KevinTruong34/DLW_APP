@@ -2,9 +2,9 @@ import streamlit as st
 import pandas as pd
 import base64
 from datetime import datetime, date, timedelta
-import pytz
+from zoneinfo import ZoneInfo
 
-_TZ_VN = pytz.timezone("Asia/Ho_Chi_Minh")
+_TZ_VN = ZoneInfo("Asia/Ho_Chi_Minh")
 
 
 def now_vn() -> datetime:

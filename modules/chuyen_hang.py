@@ -65,30 +65,22 @@ def _delete_phieu_rows(ma_phieu: str):
         .eq("ma_phieu", ma_phieu).execute()
 
 
-def _nhan_hang(ma_phieu: str, nguoi_nhan: str = ""):
-    """Nhận hàng: trạng thái = Đã nhận, ngày nhận = now, SL nhận = SL chuyển.
-    nguoi_nhan: tên người nhận (để ghi vào DB)."""
-    # Update chung
-    extra = {"ngay_nhan": datetime.now().isoformat()}
-    if nguoi_nhan:
-        extra["nguoi_nhan"] = nguoi_nhan
-    _update_trang_thai_phieu(ma_phieu, "Đã nhận", extra=extra)
-    # Copy so_luong_chuyen → so_luong_nhan cho từng dòng
+def _nhan_hang(ma_phieu: str, nguoi_nhan: str = "") -> tuple[bool, str]:
+    """Gọi RPC nhan_hang — atomic, an toàn race condition."""
     try:
-        rows = supabase.table("phieu_chuyen_kho").select("id,so_luong_chuyen,thanh_tien_chuyen") \
-            .eq("ma_phieu", ma_phieu).execute().data or []
-        for r in rows:
-            supabase.table("phieu_chuyen_kho").update({
-                "so_luong_nhan":   int(r.get("so_luong_chuyen") or 0),
-                "thanh_tien_nhan": int(r.get("thanh_tien_chuyen") or 0),
-            }).eq("id", r["id"]).execute()
-        # Tổng SL nhận = tổng SL chuyển
-        tong = sum(int(r.get("so_luong_chuyen") or 0) for r in rows)
-        supabase.table("phieu_chuyen_kho").update({
-            "tong_sl_nhan": tong
-        }).eq("ma_phieu", ma_phieu).execute()
+        res = supabase.rpc("nhan_hang", {
+            "p_ma_phieu":   ma_phieu,
+            "p_nguoi_nhan": nguoi_nhan,
+        }).execute()
+        result = res.data
+        if isinstance(result, list):
+            result = result[0]
+        if result.get("ok"):
+            return True, ""
+        else:
+            return False, result.get("error", "Lỗi không xác định")
     except Exception as e:
-        st.warning(f"Đã nhận phiếu nhưng cập nhật SL nhận gặp lỗi: {e}")
+        return False, str(e)
 
 
 def _view_phieu_chuyen(df_all: pd.DataFrame):
@@ -396,28 +388,23 @@ def _render_phieu_card(df_phieu: pd.DataFrame, ma_phieu: str, gia_ban_map: dict)
 
                 c_ok, c_cancel = st.columns([2, 1])
                 with c_ok:
-                    if st.button("✓ Xác nhận nhận hàng",
-                                key=f"confirm_nhan_{ma_phieu}",
-                                type="primary", use_container_width=True,
-                                disabled=not confirmed,
-                                help=("Tick ô xác nhận ở trên trước"
-                                      if not confirmed else None)):
-                        nn = st.session_state.get(nn_key, "").strip()
-                        if not nn:
-                            st.error("Vui lòng nhập người nhận.")
-                        else:
-                            try:
-                                _nhan_hang(ma_phieu, nguoi_nhan=nn)
-                                st.cache_data.clear()
-                                log_action("PHIEU_RECEIVE",
-                                          f"ma={ma_phieu} tu={tu_cn} toi={toi_cn} nguoi_nhan={nn}")
-                                st.session_state.pop(f"pending_nhan_{ma_phieu}", None)
-                                st.session_state.pop(nn_key, None)
-                                st.session_state.pop(chk_key, None)
-                                st.success(f"✓ Đã nhận hàng cho phiếu {ma_phieu}")
-                                st.rerun()
-                            except Exception as e:
-                                st.error(f"Lỗi: {e}")
+                    if st.button("✓ Xác nhận nhận hàng", ...):
+                            nn = st.session_state.get(nn_key, "").strip()
+                            if not nn:
+                                st.error("Vui lòng nhập người nhận.")
+                            else:
+                                ok, err = _nhan_hang(ma_phieu, nguoi_nhan=nn)
+                                if ok:
+                                    st.cache_data.clear()
+                                    log_action("PHIEU_RECEIVE",
+                                              f"ma={ma_phieu} tu={tu_cn} toi={toi_cn} nguoi_nhan={nn}")
+                                    st.session_state.pop(f"pending_nhan_{ma_phieu}", None)
+                                    st.session_state.pop(nn_key, None)
+                                    st.session_state.pop(chk_key, None)
+                                    st.success(f"✓ Đã nhận hàng cho phiếu {ma_phieu}")
+                                    st.rerun()
+                                else:
+                                    st.error(f"Lỗi nhận hàng: {err}")
                 with c_cancel:
                     if st.button("Hủy", key=f"cancel_nhan_{ma_phieu}",
                                 use_container_width=True):
@@ -442,11 +429,22 @@ def _handle_action(action: str, ma_phieu: str, df_phieu: pd.DataFrame,
     """Xử lý các action trên phiếu."""
     try:
         if action == "xac_nhan":
-            _update_trang_thai_phieu(ma_phieu, "Đang chuyển")
-            st.cache_data.clear()
-            log_action("PHIEU_CONFIRM", f"ma={ma_phieu} tu={tu_cn} toi={toi_cn}")
-            st.success(f"✓ Đã xác nhận chuyển hàng cho phiếu {ma_phieu}")
-            st.rerun()
+            try:
+                res = supabase.rpc("xac_nhan_chuyen_hang", {
+                    "p_ma_phieu": ma_phieu,
+                }).execute()
+                result = res.data
+                if isinstance(result, list):
+                    result = result[0]
+                if result.get("ok"):
+                    st.cache_data.clear()
+                    log_action("PHIEU_CONFIRM", f"ma={ma_phieu} tu={tu_cn} toi={toi_cn}")
+                    st.success(f"✓ Đã xác nhận chuyển hàng cho phiếu {ma_phieu}")
+                    st.rerun()
+                else:
+                    st.error(f"Không thể xác nhận: {result.get('error', 'Lỗi không xác định')}")
+            except Exception as e:
+                st.error(f"Lỗi: {e}")
 
         elif action == "nhan":
             # Không nhận ngay — set flag để form "Người nhận" hiện ra
@@ -824,19 +822,7 @@ def _submit_phieu(tu_cn: str, toi_cn: str, nguoi_tao: str, ghi_chu: str,
                   items: list, editing_ma: str = None):
     """Insert phiếu mới hoặc update phiếu đang sửa."""
     # ── Validate tồn kho trước khi submit ──
-    ok, errors = _validate_stock(tu_cn, items, editing_ma=editing_ma)
-    if not ok:
-        st.error(
-            "**Không thể tạo phiếu** — một số sản phẩm vượt quá tồn hiệu dụng "
-            f"tại **{tu_cn}**:\n\n" + "\n".join(errors) +
-            "\n\nVui lòng giảm SL hoặc xóa sản phẩm khỏi giỏ rồi thử lại."
-        )
-        log_action(
-            "STOCK_VALIDATION_FAIL",
-            f"tu={tu_cn} items={len(items)} errors={len(errors)}",
-            level="warning"
-        )
-        return
+    
 
     try:
         with st.spinner("Đang xử lý..."):

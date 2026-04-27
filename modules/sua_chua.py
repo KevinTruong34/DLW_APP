@@ -575,9 +575,11 @@ def module_sua_chua():
         if df_chua_xong.empty:
             st.info("Không có phiếu nào đang xử lý.")
         else:
-            # ── Search bar ──
-            search_dt = st.text_input("Tìm kiếm / Mã phiếu / Tên khách:", key="sc_search_dt",
-                                       placeholder="VD: '900' hoặc 'SC000900'...")
+            # ── Search + Select cùng 1 hàng ──
+            col_s, col_p = st.columns([1, 1])
+            with col_s:
+                search_dt = st.text_input("Tìm kiếm / Mã phiếu / Tên khách:", key="sc_search_dt",
+                                           placeholder="VD: '900' hoặc 'SC000900'...")
             df_filtered = df_chua_xong.copy()
             if search_dt.strip():
                 s = search_dt.strip().lower()
@@ -600,7 +602,8 @@ def module_sua_chua():
                     for i, o in enumerate(opts):
                         if o.startswith(saved): idx = i; break
 
-                picked = st.selectbox("Chọn phiếu:", opts, index=idx, key="sc_detail_pick")
+                with col_p:
+                    picked = st.selectbox("Chọn phiếu:", opts, index=idx, key="sc_detail_pick")
                 ma_pick = picked.split(" · ")[0]
                 st.session_state["sc_active_ma"] = ma_pick
 
@@ -853,8 +856,10 @@ def module_sua_chua():
             opts_hd = [f"{r['ma_phieu']} · {r.get('ten_khach','')} · {r.get('sdt_khach','')}"
                        for _, r in cho_giao.iterrows()]
 
-            search_hd = st.text_input("Tìm SĐT / Mã phiếu / Tên khách:", key="sc_hd_search",
-                                       placeholder="VD: '900' tìm SC000900...")
+            col_sh, col_ph = st.columns([1, 1])
+            with col_sh:
+                search_hd = st.text_input("Tìm SĐT / Mã phiếu / Tên khách:", key="sc_hd_search",
+                                           placeholder="VD: '900' tìm SC000900...")
             if search_hd.strip():
                 s_hd = search_hd.strip().lower()
                 opts_hd = [o for o in opts_hd if s_hd in o.lower()]
@@ -862,7 +867,8 @@ def module_sua_chua():
                     st.warning("Không tìm thấy phiếu phù hợp.")
                     st.stop()
 
-            picked_hd = st.selectbox("Chọn phiếu:", opts_hd, key="sc_hd_pick")
+            with col_ph:
+                picked_hd = st.selectbox("Chọn phiếu:", opts_hd, key="sc_hd_pick")
             ma_hd_pick = picked_hd.split(" · ")[0]
 
             phieu_hd = cho_giao[cho_giao["ma_phieu"] == ma_hd_pick].iloc[0]
@@ -911,15 +917,10 @@ def module_sua_chua():
                 unsafe_allow_html=True
             )
 
-            col_g, col_pttt = st.columns([1, 1])
-            with col_g:
-                giam_gia = st.number_input("Giảm giá (đ):", min_value=0, step=10000,
-                                            value=0, key="sc_hd_giam")
-                if giam_gia > 0:
-                    st.caption(f"= {int(giam_gia):,}đ".replace(",","."))
-            with col_pttt:
-                chia_pttt = st.checkbox("Chia nhiều phương thức", key="sc_hd_chia",
-                                         help="Bật để chia tiền giữa các phương thức")
+            giam_gia = st.number_input("Giảm giá (đ):", min_value=0, step=10000,
+                                        value=0, key="sc_hd_giam")
+            if giam_gia > 0:
+                st.caption(f"= {int(giam_gia):,}đ".replace(",","."))
 
             can_tra = max(0, tong_dv - giam_gia - tra_truoc)
 
@@ -955,6 +956,9 @@ def module_sua_chua():
                 '<div class="sc-section-title">💳 Phương thức thanh toán</div>',
                 unsafe_allow_html=True
             )
+
+            chia_pttt = st.checkbox("Chia nhiều phương thức", key="sc_hd_chia",
+                                     help="Bật để chia tiền giữa các phương thức")
 
             if not chia_pttt:
                 pttt_chon = st.radio("PTTT:", ["Tiền mặt", "Chuyển khoản", "Thẻ"],

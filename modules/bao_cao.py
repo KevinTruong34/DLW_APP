@@ -69,10 +69,10 @@ def _date_filter(key: str, default_days: int = 30) -> tuple[date, date]:
 
 
 # ══════════════════════════════════════════════════════════
-# LOAD FUNCTIONS — cache + pagination + order
+# LOAD FUNCTIONS — TTL tăng lên 1800s (30 phút)
 # ══════════════════════════════════════════════════════════
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=1800)
 def _load_hd(branches_key: tuple, d_from: date, d_to: date) -> pd.DataFrame:
     """Load hoa_don Hoàn thành trong khoảng ngày."""
     rows, batch, offset = [], 1000, 0
@@ -100,7 +100,7 @@ def _load_hd(branches_key: tuple, d_from: date, d_to: date) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=1800)
 def _load_sc_phieu(branches_key: tuple, d_from: date, d_to: date) -> pd.DataFrame:
     """Load phieu_sua_chua trong khoảng ngày — dùng cho tab Cuối ngày."""
     rows, batch, offset = [], 1000, 0
@@ -124,7 +124,7 @@ def _load_sc_phieu(branches_key: tuple, d_from: date, d_to: date) -> pd.DataFram
     return df.reset_index(drop=True)
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=1800)
 def _load_sc_can_luu_y(branches_key: tuple) -> pd.DataFrame:
     """
     Load TẤT CẢ phiếu sửa chữa chưa Hoàn thành (cho section Phiếu cần lưu ý).
@@ -153,7 +153,7 @@ def _load_sc_can_luu_y(branches_key: tuple) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=1800)
 def _load_nhap_hang(branches_key: tuple, d_from: date, d_to: date) -> pd.DataFrame:
     """Load phieu_nhap_hang + ct đã nhập kho."""
     rows, batch, offset = [], 1000, 0
@@ -199,7 +199,7 @@ def _load_nhap_hang(branches_key: tuple, d_from: date, d_to: date) -> pd.DataFra
                        on="ma_phieu", how="left")
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=1800)
 def _load_tra_hang(branches_key: tuple, d_from: date, d_to: date) -> pd.DataFrame:
     """Load phieu_tra_hang + ct đã trả."""
     rows, batch, offset = [], 1000, 0
@@ -223,7 +223,7 @@ def _load_tra_hang(branches_key: tuple, d_from: date, d_to: date) -> pd.DataFram
     df_h = df_h[df_h["_date"].between(d_from, d_to)]
     if df_h.empty:
         return pd.DataFrame()
- 
+
     ma_list = df_h["ma_phieu"].tolist()
     ct, batch2, offset2 = [], 1000, 0
     while True:
@@ -245,7 +245,7 @@ def _load_tra_hang(branches_key: tuple, d_from: date, d_to: date) -> pd.DataFram
                        on="ma_phieu", how="left")
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=1800)
 def _load_chuyen_hang(branches_key: tuple, d_from: date, d_to: date) -> pd.DataFrame:
     """Load phieu_chuyen_kho App đã nhận trong khoảng ngày."""
     rows, batch, offset = [], 1000, 0
@@ -274,7 +274,7 @@ def _load_chuyen_hang(branches_key: tuple, d_from: date, d_to: date) -> pd.DataF
     return df.reset_index(drop=True)
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=1800)
 def _load_kiem_ke(branches_key: tuple, d_from: date, d_to: date) -> pd.DataFrame:
     """Load phieu_kiem_ke đã duyệt + chi tiết trong khoảng ngày."""
     rows, batch, offset = [], 1000, 0
@@ -384,7 +384,6 @@ def _tab_cuoi_ngay():
     s_yest  = _summarize(raw_yest)
 
     def _delta_str(cur: int, prev: int) -> str | None:
-        """Trả về delta string '+18% so hôm qua' hoặc None nếu không tính được."""
         if prev == 0:
             return None if cur == 0 else "Mới phát sinh"
         pct = (cur - prev) / prev * 100
@@ -429,13 +428,11 @@ def _tab_cuoi_ngay():
     df_check = _load_sc_can_luu_y(load_cns)
 
     if not df_check.empty:
-        # Điều kiện 1: phiếu nhận > 5 ngày, vẫn còn ở giai đoạn sửa
         cond_1 = df_check[
             (df_check["trang_thai"].isin(["Đang sửa", "Chờ linh kiện"]))
             & (df_check["_so_ngay"] > 5)
         ].copy()
 
-        # Điều kiện 2: phiếu Chờ giao khách > 14 ngày
         cond_2 = df_check[
             (df_check["trang_thai"] == "Chờ giao khách")
             & (df_check["_so_ngay"] > 14)
@@ -636,7 +633,6 @@ def _tab_ban_hang():
         df["loai_hang"] = "Chưa phân loại"
         df["thuong_hieu"] = "Chưa phân loại"
 
-    # Chọn nhóm xem
     nhom_options = ["Loại SP (HH/DV)", "Loại hàng", "Thương hiệu"]
     nhom_col_map = {
         "Loại SP (HH/DV)": "loai_sp",
@@ -647,8 +643,6 @@ def _tab_ban_hang():
                               label_visibility="collapsed")
     nhom_col = nhom_col_map[nhom_chon]
 
-    # Tính doanh thu theo nhóm — dùng Thành tiền (dòng item) thay vì Khách đã trả
-    # để tránh sai khi group theo nhóm (Khách đã trả là tổng HĐ, không phải từng item)
     if "Thành tiền" in df.columns and "Số lượng" in df.columns:
         grp = df.groupby(nhom_col).agg(
             doanh_thu=("Thành tiền", "sum"),
@@ -735,9 +729,7 @@ def _tab_xuat_nhap_ton():
     xuat_rows = []
 
     if not df_hd.empty:
-        # Bán hàng: dùng Số lượng * Đơn giá từng dòng item
         hd_ban = df_hd[~df_hd["Mã hóa đơn"].apply(_is_app_hd)]
-        # Loại trừ Dịch vụ — chỉ tính Hàng hóa thật
         hd_ban_hh = _filter_chi_hang_hoa(hd_ban, ma_col="Mã hàng")
         if not hd_ban_hh.empty and "Số lượng" in hd_ban_hh.columns:
             xuat_rows.append({
@@ -747,7 +739,6 @@ def _tab_xuat_nhap_ton():
                 "Giá trị (đ)": _fmt(int(hd_ban_hh["Thành tiền"].sum())) + "đ"
                     if "Thành tiền" in hd_ban_hh.columns else "—",
             })
-        # Sửa chữa APSC — loại trừ dịch vụ (lau dầu, đánh bóng...) chỉ tính linh kiện
         hd_apsc = df_hd[df_hd["Mã hóa đơn"].apply(_is_app_hd)]
         hd_apsc_hh = _filter_chi_hang_hoa(hd_apsc, ma_col="Mã hàng")
         if not hd_apsc_hh.empty and "Số lượng" in hd_apsc_hh.columns:
@@ -822,8 +813,6 @@ def _tab_xuat_nhap_ton():
             st.info("Không có xuất kho trong kỳ này.")
 
     # ══════ TỒN ĐẦU/CUỐI KỲ ══════
-    # Logic: Tồn cuối kỳ = the_kho hiện tại
-    #        Tồn đầu kỳ = Cuối kỳ - Nhập + Xuất (suy ngược)
     st.markdown(
         "<div style='font-size:0.88rem;font-weight:600;color:#555;"
         "margin:18px 0 6px;'>📊 Tồn đầu / cuối kỳ (theo SL)</div>",
@@ -836,7 +825,6 @@ def _tab_xuat_nhap_ton():
     )
 
     try:
-        # Tổng nhập (chỉ hàng hóa) trong kỳ
         nhap_sl = 0
         if not df_nhap.empty:
             nhap_hh = _filter_chi_hang_hoa(df_nhap, ma_col="ma_hang")
@@ -850,7 +838,6 @@ def _tab_xuat_nhap_ton():
             kk_t_hh = _filter_chi_hang_hoa(kk_t, ma_col="ma_hang")
             nhap_sl += int(kk_t_hh["chenh_lech"].sum()) if not kk_t_hh.empty else 0
 
-        # Tổng xuất (chỉ hàng hóa) trong kỳ
         xuat_sl = 0
         if not df_hd.empty:
             hd_hh = _filter_chi_hang_hoa(df_hd, ma_col="Mã hàng")
@@ -864,12 +851,10 @@ def _tab_xuat_nhap_ton():
             kk_g = df_kk[df_kk["chenh_lech"] < 0]
             kk_g_hh = _filter_chi_hang_hoa(kk_g, ma_col="ma_hang")
             xuat_sl += int(kk_g_hh["chenh_lech"].abs().sum()) if not kk_g_hh.empty else 0
-
         if not df_tra.empty:
             tra_hh = _filter_chi_hang_hoa(df_tra, ma_col="ma_hang")
             xuat_sl += int(tra_hh["so_luong"].sum()) if not tra_hh.empty else 0
 
-        # Tồn cuối kỳ từ the_kho hiện tại (chỉ hàng hóa)
         the_kho = load_the_kho(branches_key=tuple(load_cns))
         if the_kho.empty:
             ton_cuoi = 0
@@ -877,7 +862,6 @@ def _tab_xuat_nhap_ton():
             tk_hh = _filter_chi_hang_hoa(the_kho, ma_col="Mã hàng")
             ton_cuoi = int(tk_hh["Tồn cuối kì"].sum()) if not tk_hh.empty else 0
 
-        # Tồn đầu kỳ = cuối − nhập + xuất
         ton_dau = ton_cuoi - nhap_sl + xuat_sl
 
         t1, t2, t3, t4 = st.columns(4)
@@ -896,16 +880,9 @@ def _tab_xuat_nhap_ton():
 # TRA CỨU MÃ HÀNG — lịch sử giao dịch chi tiết của 1 mã
 # ══════════════════════════════════════════════════════════
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=1800)
 def _load_lich_su_ma_hang(ma_hang: str, chi_nhanh: str,
                             d_from: date, d_to: date) -> pd.DataFrame:
-    """
-    Tổng hợp tất cả giao dịch ảnh hưởng đến tồn kho của 1 mã hàng,
-    tại 1 chi nhánh, trong khoảng thời gian.
-
-    Returns DataFrame với columns:
-        _ngay (date), Loại, Mã chứng từ, Ghi chú, Nhập, Xuất
-    """
     rows = []
     ma = str(ma_hang).strip()
     cn = chi_nhanh
@@ -935,7 +912,6 @@ def _load_lich_su_ma_hang(ma_hang: str, chi_nhanh: str,
         pass
 
     # ── 2. Bán hàng + APSC linh kiện (hoa_don) ──
-    # Lưu ý: hoa_don denormalized — mỗi item là 1 dòng
     try:
         res = supabase.table("hoa_don").select(
             '"Mã hóa đơn","Chi nhánh","Thời gian","Trạng thái",'
@@ -943,7 +919,6 @@ def _load_lich_su_ma_hang(ma_hang: str, chi_nhanh: str,
         ).eq("Mã hàng", ma) \
          .eq("Chi nhánh", cn) \
          .eq("Trạng thái", "Hoàn thành").execute()
-        # Lookup loai_sp để loại trừ dịch vụ trong APSC
         loai_map = _get_loai_sp_map()
         for r in res.data or []:
             ngay_str = r.get("Thời gian", "")
@@ -954,7 +929,6 @@ def _load_lich_su_ma_hang(ma_hang: str, chi_nhanh: str,
             ma_hd = str(r.get("Mã hóa đơn", "") or "")
             sl = int(r.get("Số lượng", 0) or 0)
             if sl <= 0: continue
-            # APSC: chỉ tính nếu là Hàng hóa
             if _is_app_hd(ma_hd):
                 if loai_map and loai_map.get(ma) != "Hàng hóa":
                     continue
@@ -972,8 +946,7 @@ def _load_lich_su_ma_hang(ma_hang: str, chi_nhanh: str,
     except Exception:
         pass
 
-    # ── 3. Chuyển hàng (gửi đi + nhận về) ──
-    # Bao gồm cả KiotViet và App, miễn là trạng thái "Đã nhận"
+    # ── 3. Chuyển hàng ──
     try:
         res = supabase.table("phieu_chuyen_kho").select(
             "ma_phieu,tu_chi_nhanh,toi_chi_nhanh,ngay_nhan,trang_thai,"
@@ -1051,15 +1024,11 @@ def _phan_tra_cuu_ma_hang(load_cns: tuple, d_from: date, d_to: date):
         unsafe_allow_html=True
     )
 
-    # Bắt buộc 1 chi nhánh để tính tồn sau chính xác
     if len(load_cns) != 1:
         st.caption("⚠️ Chọn **1 chi nhánh cụ thể** (không 'Tất cả') để tra cứu.")
         return
     chi_nhanh = load_cns[0]
 
-    # ── Input mã hàng với autocomplete ──
-    # Dùng key trung gian để tránh lỗi Streamlit khi click suggestion
-    # (không thể set session_state[widget_key] sau khi widget đã render)
     if "bc_tc_ma_pending" in st.session_state:
         st.session_state["bc_tc_ma"] = st.session_state.pop("bc_tc_ma_pending")
 
@@ -1075,7 +1044,6 @@ def _phan_tra_cuu_ma_hang(load_cns: tuple, d_from: date, d_to: date):
         st.caption(f"Nhập mã hàng để xem lịch sử giao dịch tại **{chi_nhanh}**.")
         return
 
-    # ── Autocomplete: tìm các mã match ──
     hh = load_hang_hoa()
     ma_chon = ma_input.strip()
     if not hh.empty and "ma_hang" in hh.columns:
@@ -1083,10 +1051,8 @@ def _phan_tra_cuu_ma_hang(load_cns: tuple, d_from: date, d_to: date):
         mask = hh["ma_hang"].astype(str).apply(
             lambda x: ma_norm in str(x).lower().replace(" ", "")
         )
-        # Tìm match chính xác trước
         exact = hh[hh["ma_hang"].astype(str).str.strip().str.lower() == ma_input.strip().lower()]
         if exact.empty:
-            # Show suggestions
             hits = hh[mask].head(5)
             if hits.empty:
                 st.warning(f"Không tìm thấy mã hàng khớp với '{ma_input}'.")
@@ -1101,12 +1067,10 @@ def _phan_tra_cuu_ma_hang(load_cns: tuple, d_from: date, d_to: date):
                     st.rerun()
             return
         else:
-            # Match chính xác → dùng để query
             ma_chon = str(exact.iloc[0]["ma_hang"])
             ten_hang = str(exact.iloc[0].get("ten_hang", ""))
             st.caption(f"📦 **{ma_chon}** — {ten_hang}")
 
-    # ── Load lịch sử ──
     df = _load_lich_su_ma_hang(ma_chon, chi_nhanh, d_from, d_to)
 
     if df.empty:
@@ -1115,8 +1079,6 @@ def _phan_tra_cuu_ma_hang(load_cns: tuple, d_from: date, d_to: date):
                 f"{d_to.strftime('%d/%m/%Y')}.")
         return
 
-    # ── Tính "Tồn sau" chạy ngược từ tồn hiện tại ──
-    # Lấy tồn hiện tại của mã hàng tại chi nhánh này
     try:
         the_kho = load_the_kho(branches_key=(chi_nhanh,))
         ton_hien_tai = 0
@@ -1130,8 +1092,6 @@ def _phan_tra_cuu_ma_hang(load_cns: tuple, d_from: date, d_to: date):
     except Exception:
         ton_hien_tai = 0
 
-    # Chạy ngược: tồn sau giao dịch cuối = tồn hiện tại
-    # Tồn sau giao dịch trước = tồn sau hiện tại + xuất giao dịch sau − nhập giao dịch sau
     ton_sau = [0] * len(df)
     cur = ton_hien_tai
     for i in range(len(df) - 1, -1, -1):
@@ -1140,7 +1100,6 @@ def _phan_tra_cuu_ma_hang(load_cns: tuple, d_from: date, d_to: date):
 
     df["Tồn sau"] = ton_sau
 
-    # ── Hiển thị bảng ──
     view = df.copy()
     view["Ngày"] = view["_ngay"].apply(lambda d: d.strftime("%d/%m"))
     view["Nhập"] = view["Nhập"].apply(lambda x: f"+{x}" if x > 0 else "—")
@@ -1149,7 +1108,6 @@ def _phan_tra_cuu_ma_hang(load_cns: tuple, d_from: date, d_to: date):
     st.dataframe(view[cols_show], use_container_width=True, hide_index=True,
                  height=min(500, 42 + len(view) * 35))
 
-    # Tổng kết
     tong_nhap = int(df["Nhập"].sum())
     tong_xuat = int(df["Xuất"].sum())
     st.caption(
@@ -1184,7 +1142,6 @@ def _tab_nhan_vien():
         st.info("Không có dữ liệu.")
         return
 
-    # Chỉ HĐ App (APSC) — filter theo APP_INVOICE_PREFIXES
     df = raw[raw["Mã hóa đơn"].apply(_is_app_hd)].copy()
     if df.empty:
         st.info("Không có hóa đơn App (APSC) trong khoảng này.")
@@ -1192,7 +1149,6 @@ def _tab_nhan_vien():
 
     hd_u = df.drop_duplicates(subset=["Mã hóa đơn"], keep="first")
 
-    # ── Theo Người tạo (thu tiền) ──
     st.markdown(
         "<div style='font-size:0.88rem;font-weight:600;color:#555;"
         "margin-bottom:6px;'>👤 Theo người thu tiền (Người tạo HĐ)</div>",
@@ -1210,7 +1166,6 @@ def _tab_nhan_vien():
     else:
         st.caption("Không có cột 'Người tạo' trong dữ liệu.")
 
-    # ── Theo Người bán (tư vấn/tạo phiếu SC) ──
     st.markdown(
         "<div style='font-size:0.88rem;font-weight:600;color:#555;"
         "margin:14px 0 6px;'>👤 Theo người tư vấn/tạo phiếu SC (Người bán)</div>",
@@ -1241,7 +1196,6 @@ def _tab_ton_kho():
     accessible = get_accessible_branches()
     active     = get_active_branch()
 
-    # ── Filter bar ──
     col_cn, col_opt = st.columns([2, 2])
     with col_cn:
         cn_sel = st.selectbox(
@@ -1253,53 +1207,42 @@ def _tab_ton_kho():
     with col_opt:
         hien_het = st.checkbox("Hiện cả hàng hết tồn (= 0)", key="bc_tk_het", value=False)
 
-    # ── Load data ──
     master  = load_hang_hoa()
-    the_kho = load_the_kho(branches_key=tuple(accessible))  # load tất cả CN để pivot
+    the_kho = load_the_kho(branches_key=tuple(accessible))
 
     if master.empty or the_kho.empty:
         st.info("Chưa có dữ liệu tồn kho.")
         return
 
-    # ── Build pivot tồn kho theo CN ──
-    # Gộp the_kho theo (Mã hàng, Chi nhánh)
     kho_agg = the_kho.groupby(
         ["Mã hàng", "Chi nhánh"], as_index=False
     ).agg(ton=("Tồn cuối kì", "sum"))
 
-    # Pivot: mỗi CN là 1 cột
     kho_pivot = kho_agg.pivot_table(
         index="Mã hàng", columns="Chi nhánh",
         values="ton", fill_value=0
     ).reset_index()
     kho_pivot.columns.name = None
 
-    # Join với master để lấy tên, loại, thương hiệu, giá bán
     df = master[["ma_hang", "ten_hang", "loai_hang", "thuong_hieu", "gia_ban"]].copy()
     df = df.merge(kho_pivot, left_on="ma_hang", right_on="Mã hàng", how="left")
     df = df.drop(columns=["Mã hàng"], errors="ignore")
 
-    # Cột tồn cho từng CN trong load_cns
     cn_cols = [cn for cn in accessible if cn in df.columns]
 
-    # Nếu chọn 1 CN cụ thể → chỉ giữ cột đó
     if cn_sel != "Tất cả":
         cn_cols_show = [cn for cn in [cn_sel] if cn in df.columns]
     else:
         cn_cols_show = cn_cols
 
-    # Fill NaN tồn kho = 0
     for c in cn_cols_show:
         df[c] = df[c].fillna(0).astype(int)
 
-    # Cột tổng tồn (theo các CN đang xem)
     df["Tổng tồn"] = df[cn_cols_show].sum(axis=1).astype(int)
 
-    # Giá trị = Tổng tồn × giá bán
     df["gia_ban"] = pd.to_numeric(df["gia_ban"], errors="coerce").fillna(0).astype(int)
     df["Giá trị"] = df["Tổng tồn"] * df["gia_ban"]
 
-    # ── Filter hết tồn ──
     if not hien_het:
         df = df[df["Tổng tồn"] > 0]
 
@@ -1307,7 +1250,6 @@ def _tab_ton_kho():
         st.info("Không có hàng hóa nào còn tồn kho trong kỳ lọc này.")
         return
 
-    # ── Filter nhóm / thương hiệu ──
     col_loai, col_th, col_search = st.columns([2, 2, 3])
     with col_loai:
         loai_list = sorted([x for x in df["loai_hang"].dropna().unique() if x])
@@ -1329,7 +1271,6 @@ def _tab_ton_kho():
             label_visibility="collapsed"
         )
 
-    # Áp filter
     if loai_chon != "Tất cả":
         df = df[df["loai_hang"] == loai_chon]
     if th_chon != "Tất cả":
@@ -1345,7 +1286,6 @@ def _tab_ton_kho():
         st.info("Không có sản phẩm phù hợp.")
         return
 
-    # ── Metrics tóm tắt ──
     tong_sl   = int(df["Tổng tồn"].sum())
     tong_gtri = int(df["Giá trị"].sum())
     so_ma     = len(df)
@@ -1359,14 +1299,11 @@ def _tab_ton_kho():
 
     st.caption("Giá trị = Tổng tồn × giá bán hiện tại.")
 
-    # ── Bảng chi tiết ──
-    # Sắp xếp: theo loại → thương hiệu → tên
     df = df.sort_values(
         ["loai_hang", "thuong_hieu", "ten_hang"],
         na_position="last"
     ).reset_index(drop=True)
 
-    # Build display dataframe
     disp = df[["ma_hang", "ten_hang", "loai_hang", "thuong_hieu"]].copy()
     disp = disp.rename(columns={
         "ma_hang":    "Mã hàng",
@@ -1375,7 +1312,6 @@ def _tab_ton_kho():
         "thuong_hieu":"Thương hiệu",
     })
 
-    # Thêm cột tồn từng CN
     for cn in cn_cols_show:
         short = CN_SHORT.get(cn, cn)
         disp[short] = df[cn].astype(int)
@@ -1384,7 +1320,6 @@ def _tab_ton_kho():
     disp["Giá bán"]   = df["gia_ban"].apply(lambda x: f"{_fmt(x)}đ" if x > 0 else "—")
     disp["Giá trị"]   = df["Giá trị"].apply(lambda x: f"{_fmt(x)}đ" if x > 0 else "—")
 
-    # Column config
     col_cfg = {
         "Mã hàng":     st.column_config.TextColumn(width="small"),
         "Tên hàng":    st.column_config.TextColumn(width="large"),
@@ -1405,7 +1340,6 @@ def _tab_ton_kho():
         height=min(600, 42 + n_rows * 35),
     )
 
-    # ── Tóm tắt theo nhóm (chỉ khi xem tất cả / không filter quá sâu) ──
     if loai_chon == "Tất cả" and th_chon == "Tất cả" and not kw.strip():
         st.markdown(
             "<div style='font-size:0.88rem;font-weight:600;color:#555;"
@@ -1424,33 +1358,50 @@ def _tab_ton_kho():
 
 
 # ══════════════════════════════════════════════════════════
-# ENTRY POINT — PATCHED
+# ENTRY POINT — Lazy load bằng st.pills (chỉ render tab đang chọn)
 # ══════════════════════════════════════════════════════════
 
 def module_bao_cao():
     st.markdown("### 📊 Báo cáo")
 
+    # ── Main navigation ──
     main_tab_labels = ["💰 Doanh thu", "📦 Xuất nhập tồn", "📊 Tồn kho"]
     if is_admin():
         main_tab_labels.append("👥 Nhân viên")
-    main_tabs = st.tabs(main_tab_labels)
 
-    with main_tabs[0]:
+    main_tab = st.pills("bc_main_nav", main_tab_labels,
+                        default=main_tab_labels[0],
+                        label_visibility="collapsed",
+                        key="bc_main_tab")
+    main_tab = main_tab or main_tab_labels[0]
+
+    st.markdown("<hr style='margin:4px 0 10px 0;'>", unsafe_allow_html=True)
+
+    # ── Render CHỈ tab đang chọn ──
+    if main_tab == "💰 Doanh thu":
         if is_ke_toan_or_admin():
             sub_labels = ["Cuối ngày", "Tổng quan", "Bán hàng theo nhóm"]
-            sub_tabs = st.tabs(sub_labels)
-            with sub_tabs[0]: _tab_cuoi_ngay()
-            with sub_tabs[1]: _tab_tong_quan_dt()
-            with sub_tabs[2]: _tab_ban_hang()
+            sub_tab = st.pills("bc_sub_nav", sub_labels,
+                               default=sub_labels[0],
+                               label_visibility="collapsed",
+                               key="bc_sub_tab")
+            sub_tab = sub_tab or sub_labels[0]
+            st.markdown("<hr style='margin:4px 0 10px 0;'>", unsafe_allow_html=True)
+
+            if sub_tab == "Cuối ngày":
+                _tab_cuoi_ngay()
+            elif sub_tab == "Tổng quan":
+                _tab_tong_quan_dt()
+            elif sub_tab == "Bán hàng theo nhóm":
+                _tab_ban_hang()
         else:
             _tab_cuoi_ngay()
 
-    with main_tabs[1]:
+    elif main_tab == "📦 Xuất nhập tồn":
         _tab_xuat_nhap_ton()
 
-    with main_tabs[2]:
+    elif main_tab == "📊 Tồn kho":
         _tab_ton_kho()
 
-    if is_admin():
-        with main_tabs[3]:
-            _tab_nhan_vien()
+    elif main_tab == "👥 Nhân viên":
+        _tab_nhan_vien()

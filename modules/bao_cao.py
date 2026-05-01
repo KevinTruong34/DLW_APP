@@ -2,16 +2,36 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta, date
 
-from utils.db import supabase, load_hoa_don, load_hang_hoa, load_the_kho
+from utils.db import supabase, load_hoa_don, load_hoa_don_unified, \
+    load_hang_hoa, load_the_kho
 from utils.auth import get_user, is_admin, is_ke_toan_or_admin, \
     get_active_branch, get_accessible_branches
 from utils.config import ALL_BRANCHES, CN_SHORT, IN_APP_MARKER
 
-# Prefix HĐ do App tạo — thêm vào đây khi có module POS
-APP_INVOICE_PREFIXES = ["APSC"]
-
+# ── Prefix HĐ — phân loại nguồn ──
+APSC_PREFIXES = ["APSC"]                     # Hóa đơn sửa chữa (từ phiếu SC)
+POS_PREFIXES  = ["AHD"]                      # Hóa đơn POS (bán hàng POS)
+APP_INVOICE_PREFIXES = APSC_PREFIXES + POS_PREFIXES  # Tổng "App" — backward compat
+ 
+ 
+def _is_apsc_hd(ma: str) -> bool:
+    """HĐ sửa chữa — bắt đầu APSC."""
+    return any(str(ma).startswith(p) for p in APSC_PREFIXES)
+ 
+ 
+def _is_pos_hd(ma: str) -> bool:
+    """HĐ POS — bắt đầu AHD."""
+    return any(str(ma).startswith(p) for p in POS_PREFIXES)
+ 
+ 
 def _is_app_hd(ma: str) -> bool:
+    """HĐ App (cả APSC và POS) — backward compat."""
     return any(str(ma).startswith(p) for p in APP_INVOICE_PREFIXES)
+ 
+ 
+def _is_kiotviet_hd(ma: str) -> bool:
+    """HĐ KiotViet legacy — không có prefix App."""
+    return not _is_app_hd(ma)
 
 def _fmt(v) -> str:
     return f"{int(v):,}".replace(",", ".")
@@ -74,31 +94,34 @@ def _date_filter(key: str, default_days: int = 30) -> tuple[date, date]:
 
 @st.cache_data(ttl=1800)
 def _load_hd(branches_key: tuple, d_from: date, d_to: date) -> pd.DataFrame:
-    """Load hoa_don Hoàn thành trong khoảng ngày."""
-    rows, batch, offset = [], 1000, 0
-    while True:
-        res = supabase.table("hoa_don").select("*") \
-            .in_("Chi nhánh", list(branches_key)) \
-            .eq("Trạng thái", "Hoàn thành") \
-            .order("Thời gian", desc=True) \
-            .range(offset, offset + batch - 1).execute()
-        if not res.data: break
-        rows.extend(res.data)
-        if len(res.data) < batch: break
-        offset += batch
-    if not rows:
+    """
+    Load HĐ Hoàn thành trong khoảng ngày — gộp KiotViet + POS qua adapter.
+    """
+    raw = load_hoa_don_unified(branches_key)
+    if raw.empty:
         return pd.DataFrame()
-    df = pd.DataFrame(rows)
+ 
+    # Filter Hoàn thành
+    if "Trạng thái" in raw.columns:
+        df = raw[raw["Trạng thái"] == "Hoàn thành"].copy()
+    else:
+        df = raw.copy()
+ 
+    # Đảm bảo numeric
     for col in ["Tổng tiền hàng", "Khách đã trả", "Đơn giá",
                 "Thành tiền", "Số lượng"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-    if "Thời gian" in df.columns:
+ 
+    # Filter theo ngày
+    if "_date" in df.columns:
+        df = df[df["_date"].between(d_from, d_to)]
+    elif "Thời gian" in df.columns:
         df["_ngay"] = pd.to_datetime(df["Thời gian"], dayfirst=True, errors="coerce")
         df["_date"] = df["_ngay"].dt.date
         df = df[df["_date"].between(d_from, d_to)]
+ 
     return df.reset_index(drop=True)
-
 
 @st.cache_data(ttl=1800)
 def _load_sc_phieu(branches_key: tuple, d_from: date, d_to: date) -> pd.DataFrame:
@@ -368,17 +391,25 @@ def _tab_cuoi_ngay():
     raw_yest   = _load_hd(load_cns, yesterday, yesterday)
 
     def _summarize(raw: pd.DataFrame) -> dict:
-        if raw.empty:
-            return {"tong": 0, "so_hd": 0, "dt_ban": 0, "dt_apsc": 0}
-        hd_u = raw.drop_duplicates(subset=["Mã hóa đơn"], keep="first")
-        hd_ban  = hd_u[~hd_u["Mã hóa đơn"].apply(_is_app_hd)]
-        hd_apsc = hd_u[hd_u["Mã hóa đơn"].apply(_is_app_hd)]
-        return {
-            "tong":    int(hd_u["Khách đã trả"].sum()),
-            "so_hd":   len(hd_u),
-            "dt_ban":  int(hd_ban["Khách đã trả"].sum()),
-            "dt_apsc": int(hd_apsc["Khách đã trả"].sum()),
-        }
+    if raw.empty:
+        return {"tong": 0, "so_hd": 0, "dt_ban": 0, "dt_apsc": 0,
+                "dt_kiotviet": 0, "dt_pos": 0}
+    hd_u = raw.drop_duplicates(subset=["Mã hóa đơn"], keep="first")
+    # APSC = sửa chữa
+    hd_apsc = hd_u[hd_u["Mã hóa đơn"].apply(_is_apsc_hd)]
+    # POS = bán POS
+    hd_pos = hd_u[hd_u["Mã hóa đơn"].apply(_is_pos_hd)]
+    # KiotViet = bán KiotViet (loại ra cả APSC và POS)
+    hd_kiotviet = hd_u[hd_u["Mã hóa đơn"].apply(_is_kiotviet_hd)]
+    return {
+        "tong":         int(hd_u["Khách đã trả"].sum()),
+        "so_hd":        len(hd_u),
+        "dt_ban":       int(hd_kiotviet["Khách đã trả"].sum())
+                        + int(hd_pos["Khách đã trả"].sum()),
+        "dt_apsc":      int(hd_apsc["Khách đã trả"].sum()),
+        "dt_kiotviet":  int(hd_kiotviet["Khách đã trả"].sum()),
+        "dt_pos":       int(hd_pos["Khách đã trả"].sum()),
+    }
 
     s_today = _summarize(raw_today)
     s_yest  = _summarize(raw_yest)
@@ -408,7 +439,13 @@ def _tab_cuoi_ngay():
     with m4:
         st.metric("Sửa chữa (APSC)", f"{_fmt(s_today['dt_apsc'])}đ",
                   delta=_delta_str(s_today["dt_apsc"], s_yest["dt_apsc"]))
-
+    # ── Chú thích "Bán hàng" tách KiotViet vs POS (chỉ hiện khi có cả 2) ──
+    if s_today["dt_kiotviet"] > 0 and s_today["dt_pos"] > 0:
+    st.caption(
+        f"💡 Bán hàng — KiotViet: **{_fmt(s_today['dt_kiotviet'])}đ** · "
+        f"POS: **{_fmt(s_today['dt_pos'])}đ**"
+    )
+    
     # ── Phiếu sửa chữa hôm nay — data chung CN ──
     df_sc = _load_sc_phieu(load_cns, today, today)
 
@@ -519,19 +556,29 @@ def _tab_tong_quan_dt():
 
     hd_u = raw.drop_duplicates(subset=["Mã hóa đơn"], keep="first")
 
-    hd_ban  = hd_u[~hd_u["Mã hóa đơn"].apply(_is_app_hd)]
-    hd_apsc = hd_u[hd_u["Mã hóa đơn"].apply(_is_app_hd)]
+    hd_apsc = hd_u[hd_u["Mã hóa đơn"].apply(_is_apsc_hd)]
+    hd_pos = hd_u[hd_u["Mã hóa đơn"].apply(_is_pos_hd)]
+    hd_kiotviet = hd_u[hd_u["Mã hóa đơn"].apply(_is_kiotviet_hd)]
 
-    tong    = int(hd_u["Khách đã trả"].sum())
-    dt_ban  = int(hd_ban["Khách đã trả"].sum())
-    dt_apsc = int(hd_apsc["Khách đã trả"].sum())
-    so_hd   = len(hd_u)
+    tong         = int(hd_u["Khách đã trả"].sum())
+    dt_kiotviet  = int(hd_kiotviet["Khách đã trả"].sum())
+    dt_pos       = int(hd_pos["Khách đã trả"].sum())
+    dt_ban       = dt_kiotviet + dt_pos
+    dt_apsc      = int(hd_apsc["Khách đã trả"].sum())
+    so_hd        = len(hd_u)
 
     m1, m2, m3, m4 = st.columns(4)
     with m1: st.metric("Tổng doanh thu", f"{_fmt(tong)}đ")
     with m2: st.metric("Số hóa đơn", str(so_hd))
     with m3: st.metric("Bán hàng", f"{_fmt(dt_ban)}đ")
     with m4: st.metric("Sửa chữa (APSC)", f"{_fmt(dt_apsc)}đ")
+
+    # ── Chú thích Bán hàng tách KiotViet vs POS ──
+    if dt_kiotviet > 0 and dt_pos > 0:
+        st.caption(
+            f"💡 Bán hàng — KiotViet: **{_fmt(dt_kiotviet)}đ** · "
+            f"POS: **{_fmt(dt_pos)}đ**"
+        )
 
     # ── Chart doanh thu theo ngày ──
     if "_date" in hd_u.columns and not hd_u.empty:
@@ -729,26 +776,41 @@ def _tab_xuat_nhap_ton():
     xuat_rows = []
 
     if not df_hd.empty:
-        hd_ban = df_hd[~df_hd["Mã hóa đơn"].apply(_is_app_hd)]
-        hd_ban_hh = _filter_chi_hang_hoa(hd_ban, ma_col="Mã hàng")
-        if not hd_ban_hh.empty and "Số lượng" in hd_ban_hh.columns:
-            xuat_rows.append({
-                "Nguồn xuất": "Bán hàng",
-                "Số phiếu/dòng": hd_ban_hh["Mã hóa đơn"].nunique(),
-                "Tổng SL": int(hd_ban_hh["Số lượng"].sum()),
-                "Giá trị (đ)": _fmt(int(hd_ban_hh["Thành tiền"].sum())) + "đ"
-                    if "Thành tiền" in hd_ban_hh.columns else "—",
-            })
-        hd_apsc = df_hd[df_hd["Mã hóa đơn"].apply(_is_app_hd)]
-        hd_apsc_hh = _filter_chi_hang_hoa(hd_apsc, ma_col="Mã hàng")
-        if not hd_apsc_hh.empty and "Số lượng" in hd_apsc_hh.columns:
-            xuat_rows.append({
-                "Nguồn xuất": "Sửa chữa (APSC) — chỉ linh kiện",
-                "Số phiếu/dòng": hd_apsc_hh["Mã hóa đơn"].nunique(),
-                "Tổng SL": int(hd_apsc_hh["Số lượng"].sum()),
-                "Giá trị (đ)": _fmt(int(hd_apsc_hh["Thành tiền"].sum())) + "đ"
-                    if "Thành tiền" in hd_apsc_hh.columns else "—",
-            })
+    # Bán hàng KiotViet
+    hd_kiotviet = df_hd[df_hd["Mã hóa đơn"].apply(_is_kiotviet_hd)]
+    hd_kv_hh = _filter_chi_hang_hoa(hd_kiotviet, ma_col="Mã hàng")
+    if not hd_kv_hh.empty and "Số lượng" in hd_kv_hh.columns:
+        xuat_rows.append({
+            "Nguồn xuất": "Bán hàng (KiotViet)",
+            "Số phiếu/dòng": hd_kv_hh["Mã hóa đơn"].nunique(),
+            "Tổng SL": int(hd_kv_hh["Số lượng"].sum()),
+            "Giá trị (đ)": _fmt(int(hd_kv_hh["Thành tiền"].sum())) + "đ"
+                if "Thành tiền" in hd_kv_hh.columns else "—",
+        })
+ 
+    # Bán hàng POS — chỉ Hàng hóa (Dịch vụ POS không trừ kho)
+    hd_pos = df_hd[df_hd["Mã hóa đơn"].apply(_is_pos_hd)]
+    hd_pos_hh = _filter_chi_hang_hoa(hd_pos, ma_col="Mã hàng")
+    if not hd_pos_hh.empty and "Số lượng" in hd_pos_hh.columns:
+        xuat_rows.append({
+            "Nguồn xuất": "Bán hàng (POS)",
+            "Số phiếu/dòng": hd_pos_hh["Mã hóa đơn"].nunique(),
+            "Tổng SL": int(hd_pos_hh["Số lượng"].sum()),
+            "Giá trị (đ)": _fmt(int(hd_pos_hh["Thành tiền"].sum())) + "đ"
+                if "Thành tiền" in hd_pos_hh.columns else "—",
+        })
+ 
+    # Sửa chữa APSC — linh kiện
+    hd_apsc = df_hd[df_hd["Mã hóa đơn"].apply(_is_apsc_hd)]
+    hd_apsc_hh = _filter_chi_hang_hoa(hd_apsc, ma_col="Mã hàng")
+    if not hd_apsc_hh.empty and "Số lượng" in hd_apsc_hh.columns:
+        xuat_rows.append({
+            "Nguồn xuất": "Sửa chữa (APSC) — chỉ linh kiện",
+            "Số phiếu/dòng": hd_apsc_hh["Mã hóa đơn"].nunique(),
+            "Tổng SL": int(hd_apsc_hh["Số lượng"].sum()),
+            "Giá trị (đ)": _fmt(int(hd_apsc_hh["Thành tiền"].sum())) + "đ"
+                if "Thành tiền" in hd_apsc_hh.columns else "—",
+        })
 
     if not df_tra.empty:
         xuat_rows.append({
@@ -911,40 +973,86 @@ def _load_lich_su_ma_hang(ma_hang: str, chi_nhanh: str,
     except Exception:
         pass
 
-    # ── 2. Bán hàng + APSC linh kiện (hoa_don) ──
+    # ── 2. Bán hàng KiotViet + APSC linh kiện (bảng hoa_don) ──                                    
     try:
-        res = supabase.table("hoa_don").select(
-            '"Mã hóa đơn","Chi nhánh","Thời gian","Trạng thái",'
-            '"Số lượng","Tên khách hàng","Mã hàng"'
-        ).eq("Mã hàng", ma) \
-         .eq("Chi nhánh", cn) \
-         .eq("Trạng thái", "Hoàn thành").execute()
+    res = supabase.table("hoa_don").select(
+        '"Mã hóa đơn","Chi nhánh","Thời gian","Trạng thái",'
+        '"Số lượng","Tên khách hàng","Mã hàng"'
+    ).eq("Mã hàng", ma) \
+     .eq("Chi nhánh", cn) \
+     .eq("Trạng thái", "Hoàn thành").execute()
+    loai_map = _get_loai_sp_map()
+    for r in res.data or []:
+        ngay_str = r.get("Thời gian", "")
+        ngay = pd.to_datetime(ngay_str, dayfirst=True, errors="coerce")
+        if pd.isna(ngay): continue
+        ngay_vn = ngay.date()
+        if not (d_from <= ngay_vn <= d_to): continue
+        ma_hd = str(r.get("Mã hóa đơn", "") or "")
+        sl = int(r.get("Số lượng", 0) or 0)
+        if sl <= 0: continue
+        if _is_apsc_hd(ma_hd):
+            if loai_map and loai_map.get(ma) != "Hàng hóa":
+                continue
+            loai = "Sửa chữa (linh kiện)"
+        else:
+            loai = "Bán hàng (KiotViet)"
+        rows.append({
+            "_ngay": ngay_vn,
+            "Loại":  loai,
+            "Mã chứng từ": ma_hd,
+            "Ghi chú": r.get("Tên khách hàng", "") or "Khách lẻ",
+            "Nhập": 0,
+            "Xuất": sl,
+        })
+except Exception:
+    pass
+    # ── 2b. Bán hàng POS (bảng hoa_don_pos_ct + hoa_don_pos) ──
+    try:
+    # Lấy chi tiết POS theo mã hàng
+    res_ct = supabase.table("hoa_don_pos_ct").select(
+        "ma_hd,ma_hang,so_luong"
+    ).eq("ma_hang", ma).execute()
+    if res_ct.data:
+        # Lấy header cho các ma_hd này
+        ma_hd_pos = list({r["ma_hd"] for r in res_ct.data})
+        res_h = supabase.table("hoa_don_pos").select(
+            "ma_hd,chi_nhanh,created_at,trang_thai,ten_khach"
+        ).in_("ma_hd", ma_hd_pos) \
+         .eq("chi_nhanh", cn) \
+         .eq("trang_thai", "Hoàn thành").execute()
+        # Map ma_hd → header
+        h_map = {h["ma_hd"]: h for h in (res_h.data or [])}
+ 
+        # Chỉ tính nếu mã hàng là Hàng hóa (không Dịch vụ)
         loai_map = _get_loai_sp_map()
-        for r in res.data or []:
-            ngay_str = r.get("Thời gian", "")
-            ngay = pd.to_datetime(ngay_str, dayfirst=True, errors="coerce")
-            if pd.isna(ngay): continue
-            ngay_vn = ngay.date()
-            if not (d_from <= ngay_vn <= d_to): continue
-            ma_hd = str(r.get("Mã hóa đơn", "") or "")
-            sl = int(r.get("Số lượng", 0) or 0)
-            if sl <= 0: continue
-            if _is_app_hd(ma_hd):
-                if loai_map and loai_map.get(ma) != "Hàng hóa":
-                    continue
-                loai = "Sửa chữa (linh kiện)"
-            else:
-                loai = "Bán hàng"
-            rows.append({
-                "_ngay": ngay_vn,
-                "Loại":  loai,
-                "Mã chứng từ": ma_hd,
-                "Ghi chú": r.get("Tên khách hàng", "") or "Khách lẻ",
-                "Nhập": 0,
-                "Xuất": sl,
-            })
-    except Exception:
-        pass
+        if loai_map and loai_map.get(ma) != "Hàng hóa":
+            pass  # Dịch vụ không trừ kho, bỏ qua
+        else:
+            for r in res_ct.data:
+                ma_hd = r["ma_hd"]
+                if ma_hd not in h_map:
+                    continue  # HĐ không match CN/trạng thái
+                h = h_map[ma_hd]
+ 
+                ngay = pd.to_datetime(h.get("created_at"), errors="coerce", utc=True)
+                if pd.isna(ngay): continue
+                ngay_vn = ngay.tz_convert("Asia/Ho_Chi_Minh").date()
+                if not (d_from <= ngay_vn <= d_to): continue
+ 
+                sl = int(r.get("so_luong", 0) or 0)
+                if sl <= 0: continue
+ 
+                rows.append({
+                    "_ngay": ngay_vn,
+                    "Loại":  "Bán hàng (POS)",
+                    "Mã chứng từ": ma_hd,
+                    "Ghi chú": h.get("ten_khach", "") or "Khách lẻ",
+                    "Nhập": 0,
+                    "Xuất": sl,
+                })
+except Exception:
+    pass
 
     # ── 3. Chuyển hàng ──
     try:

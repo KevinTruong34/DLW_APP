@@ -776,41 +776,41 @@ def _tab_xuat_nhap_ton():
     xuat_rows = []
 
     if not df_hd.empty:
-    # Bán hàng KiotViet
-    hd_kiotviet = df_hd[df_hd["Mã hóa đơn"].apply(_is_kiotviet_hd)]
-    hd_kv_hh = _filter_chi_hang_hoa(hd_kiotviet, ma_col="Mã hàng")
-    if not hd_kv_hh.empty and "Số lượng" in hd_kv_hh.columns:
-        xuat_rows.append({
-            "Nguồn xuất": "Bán hàng (KiotViet)",
-            "Số phiếu/dòng": hd_kv_hh["Mã hóa đơn"].nunique(),
-            "Tổng SL": int(hd_kv_hh["Số lượng"].sum()),
-            "Giá trị (đ)": _fmt(int(hd_kv_hh["Thành tiền"].sum())) + "đ"
-                if "Thành tiền" in hd_kv_hh.columns else "—",
-        })
+        # Bán hàng KiotViet
+        hd_kiotviet = df_hd[df_hd["Mã hóa đơn"].apply(_is_kiotviet_hd)]
+        hd_kv_hh = _filter_chi_hang_hoa(hd_kiotviet, ma_col="Mã hàng")
+        if not hd_kv_hh.empty and "Số lượng" in hd_kv_hh.columns:
+            xuat_rows.append({
+                "Nguồn xuất": "Bán hàng (KiotViet)",
+                "Số phiếu/dòng": hd_kv_hh["Mã hóa đơn"].nunique(),
+                "Tổng SL": int(hd_kv_hh["Số lượng"].sum()),
+                "Giá trị (đ)": _fmt(int(hd_kv_hh["Thành tiền"].sum())) + "đ"
+                    if "Thành tiền" in hd_kv_hh.columns else "—",
+            })
  
-    # Bán hàng POS — chỉ Hàng hóa (Dịch vụ POS không trừ kho)
-    hd_pos = df_hd[df_hd["Mã hóa đơn"].apply(_is_pos_hd)]
-    hd_pos_hh = _filter_chi_hang_hoa(hd_pos, ma_col="Mã hàng")
-    if not hd_pos_hh.empty and "Số lượng" in hd_pos_hh.columns:
-        xuat_rows.append({
-            "Nguồn xuất": "Bán hàng (POS)",
-            "Số phiếu/dòng": hd_pos_hh["Mã hóa đơn"].nunique(),
-            "Tổng SL": int(hd_pos_hh["Số lượng"].sum()),
-            "Giá trị (đ)": _fmt(int(hd_pos_hh["Thành tiền"].sum())) + "đ"
-                if "Thành tiền" in hd_pos_hh.columns else "—",
-        })
+        # Bán hàng POS — chỉ Hàng hóa (Dịch vụ POS không trừ kho)
+        hd_pos = df_hd[df_hd["Mã hóa đơn"].apply(_is_pos_hd)]
+        hd_pos_hh = _filter_chi_hang_hoa(hd_pos, ma_col="Mã hàng")
+        if not hd_pos_hh.empty and "Số lượng" in hd_pos_hh.columns:
+            xuat_rows.append({
+                "Nguồn xuất": "Bán hàng (POS)",
+                "Số phiếu/dòng": hd_pos_hh["Mã hóa đơn"].nunique(),
+                "Tổng SL": int(hd_pos_hh["Số lượng"].sum()),
+                "Giá trị (đ)": _fmt(int(hd_pos_hh["Thành tiền"].sum())) + "đ"
+                    if "Thành tiền" in hd_pos_hh.columns else "—",
+            })
  
-    # Sửa chữa APSC — linh kiện
-    hd_apsc = df_hd[df_hd["Mã hóa đơn"].apply(_is_apsc_hd)]
-    hd_apsc_hh = _filter_chi_hang_hoa(hd_apsc, ma_col="Mã hàng")
-    if not hd_apsc_hh.empty and "Số lượng" in hd_apsc_hh.columns:
-        xuat_rows.append({
-            "Nguồn xuất": "Sửa chữa (APSC) — chỉ linh kiện",
-            "Số phiếu/dòng": hd_apsc_hh["Mã hóa đơn"].nunique(),
-            "Tổng SL": int(hd_apsc_hh["Số lượng"].sum()),
-            "Giá trị (đ)": _fmt(int(hd_apsc_hh["Thành tiền"].sum())) + "đ"
-                if "Thành tiền" in hd_apsc_hh.columns else "—",
-        })
+        # Sửa chữa APSC — linh kiện
+        hd_apsc = df_hd[df_hd["Mã hóa đơn"].apply(_is_apsc_hd)]
+        hd_apsc_hh = _filter_chi_hang_hoa(hd_apsc, ma_col="Mã hàng")
+        if not hd_apsc_hh.empty and "Số lượng" in hd_apsc_hh.columns:
+            xuat_rows.append({
+                "Nguồn xuất": "Sửa chữa (APSC) — chỉ linh kiện",
+                "Số phiếu/dòng": hd_apsc_hh["Mã hóa đơn"].nunique(),
+                "Tổng SL": int(hd_apsc_hh["Số lượng"].sum()),
+                "Giá trị (đ)": _fmt(int(hd_apsc_hh["Thành tiền"].sum())) + "đ"
+                    if "Thành tiền" in hd_apsc_hh.columns else "—",
+            })
 
     if not df_tra.empty:
         xuat_rows.append({
@@ -1005,7 +1005,7 @@ def _load_lich_su_ma_hang(ma_hang: str, chi_nhanh: str,
                 "Nhập": 0,
                 "Xuất": sl,
             })
-except Exception:
+    except Exception:
     pass
     # ── 2b. Bán hàng POS (bảng hoa_don_pos_ct + hoa_don_pos) ──
     try:
@@ -1051,7 +1051,7 @@ except Exception:
                         "Nhập": 0,
                         "Xuất": sl,
                     })
-except Exception:
+    except Exception:
     pass
 
     # ── 3. Chuyển hàng ──

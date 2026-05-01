@@ -5,7 +5,8 @@ import numpy as np
 
 from utils.helpers import today_vn
 from utils.config import ALL_BRANCHES, CN_SHORT, IN_APP_MARKER, ARCHIVED_MARKER
-from utils.db import supabase, log_action, load_hoa_don, load_the_kho, load_hang_hoa, \
+from utils.db import supabase, log_action, load_hoa_don, load_hoa_don_unified, \
+    load_the_kho, load_hang_hoa, \
     load_phieu_chuyen_kho, load_phieu_kiem_ke, get_gia_ban_map, load_stock_deltas, \
     load_khach_hang_list, lookup_khach_hang, _upsert_khach_hang, get_archive_reminder
 from utils.auth import get_user, is_admin, is_ke_toan_or_admin, \
@@ -45,7 +46,7 @@ def module_tong_quan():
 
     # Quick stats hôm nay (gọn — không phải dashboard đầy đủ)
     try:
-        raw = load_hoa_don(branches_key=(active,))
+        raw = load_hoa_don_unified(branches_key=(active,))
         if not raw.empty and "_date" in raw.columns:
             today = today_vn()
             yest  = today - timedelta(days=1)
@@ -110,7 +111,7 @@ def hien_thi_dashboard(show_filter: bool = True):
         report_branches = accessible if is_admin() else [get_active_branch()]
 
     try:
-        raw = load_hoa_don(branches_key=tuple(report_branches))
+        raw = load_hoa_don_unified(branches_key=tuple(report_branches))
         if raw.empty or "_date" not in raw.columns:
             st.info("Chưa có dữ liệu hóa đơn."); return
 

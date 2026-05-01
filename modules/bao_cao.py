@@ -1005,8 +1005,8 @@ def _load_lich_su_ma_hang(ma_hang: str, chi_nhanh: str,
                 "Nhập": 0,
                 "Xuất": sl,
             })
-    except Exception:
-    pass
+        except Exception:
+            pass
     # ── 2b. Bán hàng POS (bảng hoa_don_pos_ct + hoa_don_pos) ──
     try:
         # Lấy chi tiết POS theo mã hàng
@@ -1051,8 +1051,8 @@ def _load_lich_su_ma_hang(ma_hang: str, chi_nhanh: str,
                         "Nhập": 0,
                         "Xuất": sl,
                     })
-    except Exception:
-    pass
+        except Exception:
+            pass
 
     # ── 3. Chuyển hàng ──
     try:

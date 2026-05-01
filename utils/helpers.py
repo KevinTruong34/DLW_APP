@@ -138,16 +138,3 @@ def _in_phieu_sc(phieu_html: str, key: str):
         </script>""",
         height=0
     )
-
-def invalidate_hoa_don_cache():
-    """
-    Xóa cache của các function liên quan HĐ.
-    Gọi sau khi tạo/hủy HĐ POS hoặc upload KiotViet.
-    """
-    try:
-        load_hoa_don.clear()
-        _load_hoa_don_pos_flat.clear()
-        load_hoa_don_unified.clear()
-        load_khach_hang_list.clear()
-    except Exception:
-        pass

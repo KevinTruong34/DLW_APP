@@ -5,7 +5,8 @@ import numpy as np
 
 from utils.helpers import _normalize, now_vn, now_vn_iso, today_vn, fmt_vn
 from utils.config import ALL_BRANCHES, CN_SHORT, IN_APP_MARKER, ARCHIVED_MARKER
-from utils.db import supabase, log_action, load_hoa_don, load_the_kho, load_hang_hoa, \
+from utils.db import supabase, log_action, load_hoa_don, load_hoa_don_unified, \
+    load_the_kho, load_hang_hoa, \
     load_phieu_chuyen_kho, load_phieu_kiem_ke, get_gia_ban_map, load_stock_deltas, \
     load_khach_hang_list, lookup_khach_hang, _upsert_khach_hang, get_archive_reminder
 from utils.auth import get_user, is_admin, is_ke_toan_or_admin, \
@@ -96,7 +97,7 @@ def module_khach_hang():
                 sdt_kh = str(kh.get("sdt",""))
                 ten_kh = str(kh.get("ten_kh",""))
                 try:
-                    hd_data = load_hoa_don(tuple(get_accessible_branches()))
+                    hd_data = load_hoa_don_unified(tuple(get_accessible_branches()))
                     if not hd_data.empty:
                         # Match theo SĐT hoặc tên
                         mask_hd = (hd_data["Điện thoại"].astype(str).str.replace(" ","").str.contains(sdt_kh.replace(" ",""), na=False))

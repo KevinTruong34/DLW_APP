@@ -423,3 +423,158 @@ def load_khach_hang_list() -> pd.DataFrame:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
     return df
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _load_hoa_don_pos_flat(branches_key: tuple) -> pd.DataFrame:
+    """
+    Load hoa_don_pos + hoa_don_pos_ct, flatten thành format giống bảng hoa_don
+    (KiotViet) để dùng chung với load_hoa_don_unified.
+ 
+    Mỗi item trong HĐ → 1 dòng. Header info lặp lại trên mỗi dòng.
+    HĐ không có chi tiết (edge case): vẫn tạo 1 dòng với items rỗng.
+    """
+    try:
+        # 1. Load headers
+        rows_h, batch, offset = [], 1000, 0
+        while True:
+            res = supabase.table("hoa_don_pos").select("*") \
+                .in_("chi_nhanh", list(branches_key)) \
+                .range(offset, offset + batch - 1).execute()
+            if not res.data: break
+            rows_h.extend(res.data)
+            if len(res.data) < batch: break
+            offset += batch
+ 
+        if not rows_h:
+            return pd.DataFrame()
+ 
+        # 2. Load chi tiết theo các ma_hd
+        ma_hd_list = [h["ma_hd"] for h in rows_h]
+        rows_ct, batch, offset = [], 1000, 0
+        while True:
+            res = supabase.table("hoa_don_pos_ct").select("*") \
+                .in_("ma_hd", ma_hd_list) \
+                .range(offset, offset + batch - 1).execute()
+            if not res.data: break
+            rows_ct.extend(res.data)
+            if len(res.data) < batch: break
+            offset += batch
+ 
+        # Map: ma_hd → list items
+        ct_map: dict[str, list] = {}
+        for ct in rows_ct:
+            ct_map.setdefault(ct["ma_hd"], []).append(ct)
+ 
+        # 3. Flatten: mỗi item của HĐ → 1 row có đầy đủ header info
+        flat_rows = []
+        for h in rows_h:
+            ma_hd = h["ma_hd"]
+ 
+            # Format Thời gian: ISO → "dd/MM/yyyy HH:mm:ss" giống KiotViet
+            try:
+                dt = pd.to_datetime(h.get("created_at"), errors="coerce", utc=True)
+                if pd.notna(dt):
+                    dt_vn = dt.tz_convert("Asia/Ho_Chi_Minh")
+                    thoi_gian_str = dt_vn.strftime("%d/%m/%Y %H:%M:%S")
+                else:
+                    thoi_gian_str = ""
+            except Exception:
+                thoi_gian_str = ""
+ 
+            # Trạng thái: HĐ POS dùng "Hoàn thành" hoặc "Đã hủy" (giống KiotViet)
+            trang_thai = h.get("trang_thai", "Hoàn thành") or "Hoàn thành"
+ 
+            nguoi_ban = h.get("nguoi_ban", "") or ""
+ 
+            # Header chung lặp trên mỗi dòng
+            base = {
+                "Mã hóa đơn":        ma_hd,
+                "Chi nhánh":         h.get("chi_nhanh", ""),
+                "Mã khách hàng":     h.get("ma_kh") or "",
+                "Tên khách hàng":    h.get("ten_khach", "") or "Khách lẻ",
+                "Điện thoại":        h.get("sdt_khach", "") or "",
+                "Thời gian":         thoi_gian_str,
+                "Tổng tiền hàng":    int(h.get("tong_tien_hang", 0) or 0),
+                "Giảm giá hóa đơn":  int(h.get("giam_gia_don", 0) or 0),
+                "Khách cần trả":     int(h.get("khach_can_tra", 0) or 0),
+                "Khách đã trả":      int(h.get("khach_can_tra", 0) or 0),
+                "Tiền mặt":          int(h.get("tien_mat", 0) or 0),
+                "Chuyển khoản":      int(h.get("chuyen_khoan", 0) or 0),
+                "Thẻ":               int(h.get("the", 0) or 0),
+                "Ví":                0,
+                "Trạng thái":        trang_thai,
+                "Người tạo":         nguoi_ban,
+                "Người bán":         nguoi_ban,
+                "Nhân viên":         nguoi_ban,
+                "Ghi chú":           h.get("ghi_chu", "") or "",
+                "Kênh bán":          "POS",
+            }
+ 
+            items = ct_map.get(ma_hd, [])
+            if not items:
+                # HĐ rỗng (edge case) — vẫn tạo 1 dòng để giữ trong list
+                flat_rows.append({**base,
+                    "Mã hàng": "", "Tên hàng": "", "Số lượng": 0,
+                    "Đơn giá": 0, "Thành tiền": 0,
+                })
+            else:
+                for ct in items:
+                    flat_rows.append({**base,
+                        "Mã hàng":       ct.get("ma_hang", "") or "",
+                        "Mã vạch":       ct.get("ma_hang", "") or "",
+                        "Tên hàng":      ct.get("ten_hang", "") or "",
+                        "Số lượng":      int(ct.get("so_luong", 0) or 0),
+                        "Đơn giá":       int(ct.get("don_gia", 0) or 0),
+                        "Thành tiền":    int(ct.get("thanh_tien", 0) or 0),
+                        "Giảm giá":      int(ct.get("giam_gia_dong", 0) or 0),
+                        "Giảm giá %":    0,
+                        "Giá bán":       int(ct.get("don_gia", 0) or 0),
+                    })
+ 
+        if not flat_rows:
+            return pd.DataFrame()
+ 
+        df = pd.DataFrame(flat_rows)
+ 
+        # Add các cột derived giống load_hoa_don
+        df["_ngay"] = pd.to_datetime(df["Thời gian"], dayfirst=True, errors="coerce")
+        df["_date"] = df["_ngay"].dt.date
+ 
+        # Chuẩn hoá SĐT giống load_hoa_don
+        def _fix_sdt(v):
+            s = str(v).strip() if v is not None else ""
+            if s in ("", "nan", "None"): return ""
+            if s.endswith(".0"): s = s[:-2]
+            digits = s.replace(" ", "")
+            if digits.isdigit() and len(digits) == 9:
+                digits = "0" + digits
+            return digits
+        df["Điện thoại"] = df["Điện thoại"].apply(_fix_sdt)
+ 
+        return df
+    except Exception as e:
+        st.warning(f"Không tải được hoá đơn POS: {e}")
+        return pd.DataFrame()
+ 
+ 
+@st.cache_data(ttl=300, show_spinner=False)
+def load_hoa_don_unified(branches_key: tuple) -> pd.DataFrame:
+    """
+    Adapter: gộp hoa_don (KiotViet) + hoa_don_pos (POS) thành 1 DataFrame
+    có format giống load_hoa_don (denormalized, mỗi item = 1 dòng).
+ 
+    Module app cũ chỉ cần đổi load_hoa_don(...) → load_hoa_don_unified(...)
+    là tự động thấy thêm HĐ POS.
+    """
+    df_old = load_hoa_don(branches_key)
+    df_pos = _load_hoa_don_pos_flat(branches_key)
+ 
+    if df_old.empty and df_pos.empty:
+        return pd.DataFrame()
+    if df_old.empty:
+        return df_pos.reset_index(drop=True)
+    if df_pos.empty:
+        return df_old.reset_index(drop=True)
+ 
+    # Concat — pandas tự align column theo tên, NaN cho cột thiếu
+    return pd.concat([df_old, df_pos], ignore_index=True, sort=False)

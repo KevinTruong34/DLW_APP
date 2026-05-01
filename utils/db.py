@@ -409,6 +409,11 @@ def _upsert_khach_hang(ten: str, sdt: str, chi_nhanh: str = "") -> str:
 
 @st.cache_data(ttl=120)
 def load_khach_hang_list() -> pd.DataFrame:
+    """
+    Load danh sách khách hàng + tính tổng mua từ cả 2 nguồn:
+      - tong_ban (cột sẵn có từ KiotViet upload)
+      - SUM hoa_don_pos.khach_can_tra theo sdt_khach (HĐ Hoàn thành)
+    """
     rows, batch, offset = [], 1000, 0
     while True:
         res = supabase.table("khach_hang").select("*") \
@@ -422,6 +427,43 @@ def load_khach_hang_list() -> pd.DataFrame:
     for col in ["tong_ban", "diem_hien_tai"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
+ 
+    # ── Cộng dồn doanh thu POS theo SĐT ──
+    try:
+        pos_rows, batch, offset = [], 1000, 0
+        while True:
+            res = supabase.table("hoa_don_pos") \
+                .select("sdt_khach,khach_can_tra,trang_thai") \
+                .range(offset, offset + batch - 1).execute()
+            if not res.data: break
+            pos_rows.extend(res.data)
+            if len(res.data) < batch: break
+            offset += batch
+ 
+        if pos_rows:
+            pos_df = pd.DataFrame(pos_rows)
+            # Chỉ tính HĐ Hoàn thành, có SĐT
+            pos_df = pos_df[
+                (pos_df["trang_thai"] == "Hoàn thành")
+                & pos_df["sdt_khach"].notna()
+                & (pos_df["sdt_khach"] != "")
+            ]
+            if not pos_df.empty:
+                pos_df["khach_can_tra"] = pd.to_numeric(
+                    pos_df["khach_can_tra"], errors="coerce"
+                ).fillna(0).astype(int)
+                pos_total = pos_df.groupby("sdt_khach")["khach_can_tra"].sum().to_dict()
+ 
+                if "sdt" in df.columns and "tong_ban" in df.columns:
+                    df["tong_ban"] = df.apply(
+                        lambda r: int(r.get("tong_ban", 0) or 0)
+                                  + int(pos_total.get(str(r.get("sdt", "")), 0)),
+                        axis=1
+                    )
+    except Exception:
+        # Không phá function nếu POS chưa có dữ liệu/lỗi
+        pass
+ 
     return df
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -578,3 +620,16 @@ def load_hoa_don_unified(branches_key: tuple) -> pd.DataFrame:
  
     # Concat — pandas tự align column theo tên, NaN cho cột thiếu
     return pd.concat([df_old, df_pos], ignore_index=True, sort=False)
+
+def invalidate_hoa_don_cache():
+    """
+    Xóa cache của các function liên quan HĐ.
+    Gọi sau khi tạo/hủy HĐ POS hoặc upload KiotViet.
+    """
+    try:
+        load_hoa_don.clear()
+        _load_hoa_don_pos_flat.clear()
+        load_hoa_don_unified.clear()
+        load_khach_hang_list.clear()
+    except Exception:
+        pass

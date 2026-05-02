@@ -11,7 +11,8 @@ from utils.config import ALL_BRANCHES, CN_SHORT, IN_APP_MARKER
 # ── Prefix HĐ — phân loại nguồn ──
 APSC_PREFIXES = ["APSC"]                     # Hóa đơn sửa chữa (từ phiếu SC)
 POS_PREFIXES  = ["AHD"]                      # Hóa đơn POS (bán hàng POS)
-APP_INVOICE_PREFIXES = APSC_PREFIXES + POS_PREFIXES  # Tổng "App" — backward compat
+PDT_PREFIXES  = ["AHDD"]                     # Phiếu đổi/trả POS
+APP_INVOICE_PREFIXES = APSC_PREFIXES + POS_PREFIXES + PDT_PREFIXES  # Tổng "App"
  
  
 def _is_apsc_hd(ma: str) -> bool:
@@ -19,13 +20,21 @@ def _is_apsc_hd(ma: str) -> bool:
     return any(str(ma).startswith(p) for p in APSC_PREFIXES)
  
  
+def _is_pdt_hd(ma: str) -> bool:
+    """Phiếu đổi/trả — bắt đầu AHDD. Phải check TRƯỚC _is_pos_hd vì AHDD cũng startswith AHD."""
+    return any(str(ma).startswith(p) for p in PDT_PREFIXES)
+
+
 def _is_pos_hd(ma: str) -> bool:
-    """HĐ POS — bắt đầu AHD."""
-    return any(str(ma).startswith(p) for p in POS_PREFIXES)
+    """HĐ POS thuần — bắt đầu AHD nhưng KHÔNG phải AHDD."""
+    s = str(ma)
+    if any(s.startswith(p) for p in PDT_PREFIXES):
+        return False
+    return any(s.startswith(p) for p in POS_PREFIXES)
  
  
 def _is_app_hd(ma: str) -> bool:
-    """HĐ App (cả APSC và POS) — backward compat."""
+    """HĐ App (APSC + POS + PDT) — backward compat."""
     return any(str(ma).startswith(p) for p in APP_INVOICE_PREFIXES)
  
  
@@ -95,7 +104,7 @@ def _date_filter(key: str, default_days: int = 30) -> tuple[date, date]:
 @st.cache_data(ttl=1800)
 def _load_hd(branches_key: tuple, d_from: date, d_to: date) -> pd.DataFrame:
     """
-    Load HĐ Hoàn thành trong khoảng ngày — gộp KiotViet + POS qua adapter.
+    Load HĐ Hoàn thành trong khoảng ngày — gộp KiotViet + POS + AHDD qua adapter.
     """
     raw = load_hoa_don_unified(branches_key)
     if raw.empty:
@@ -269,6 +278,59 @@ def _load_tra_hang(branches_key: tuple, d_from: date, d_to: date) -> pd.DataFram
 
 
 @st.cache_data(ttl=1800)
+def _load_doi_tra_pos(branches_key: tuple, d_from: date, d_to: date) -> pd.DataFrame:
+    """
+    Load phieu_doi_tra_pos + chi tiết đã Hoàn thành trong khoảng ngày.
+    Trả về df có cột: ma_pdt, chi_nhanh, _date, kieu, ma_hang, ten_hang,
+                       so_luong, don_gia, thanh_tien, ten_khach, sdt_khach
+    Dùng cho XNT (cần phân biệt 'tra' vs 'moi').
+    """
+    rows, batch, offset = [], 1000, 0
+    while True:
+        res = supabase.table("phieu_doi_tra_pos").select(
+            "ma_pdt,chi_nhanh,created_at,nguoi_tao,ten_khach,sdt_khach,trang_thai"
+        ).in_("chi_nhanh", list(branches_key)) \
+         .eq("trang_thai", "Hoàn thành") \
+         .order("created_at", desc=True) \
+         .range(offset, offset + batch - 1).execute()
+        if not res.data: break
+        rows.extend(res.data)
+        if len(res.data) < batch: break
+        offset += batch
+    if not rows:
+        return pd.DataFrame()
+    df_h = pd.DataFrame(rows)
+    df_h["_date"] = pd.to_datetime(
+        df_h["created_at"], errors="coerce", utc=True
+    ).dt.tz_convert("Asia/Ho_Chi_Minh").dt.date
+    df_h = df_h[df_h["_date"].between(d_from, d_to)]
+    if df_h.empty:
+        return pd.DataFrame()
+
+    ma_list = df_h["ma_pdt"].tolist()
+    ct, batch2, offset2 = [], 1000, 0
+    while True:
+        res2 = supabase.table("phieu_doi_tra_pos_ct").select(
+            "ma_pdt,kieu,ma_hang,ten_hang,so_luong,don_gia,thanh_tien"
+        ).in_("ma_pdt", ma_list) \
+         .order("ma_pdt") \
+         .range(offset2, offset2 + batch2 - 1).execute()
+        if not res2.data: break
+        ct.extend(res2.data)
+        if len(res2.data) < batch2: break
+        offset2 += batch2
+    if not ct:
+        return pd.DataFrame()
+    df_ct = pd.DataFrame(ct)
+    for c in ["so_luong", "don_gia", "thanh_tien"]:
+        df_ct[c] = pd.to_numeric(df_ct[c], errors="coerce").fillna(0).astype(int)
+    return df_ct.merge(
+        df_h[["ma_pdt", "chi_nhanh", "_date", "ten_khach", "sdt_khach"]],
+        on="ma_pdt", how="left"
+    )
+
+
+@st.cache_data(ttl=1800)
 def _load_chuyen_hang(branches_key: tuple, d_from: date, d_to: date) -> pd.DataFrame:
     """Load phieu_chuyen_kho App đã nhận trong khoảng ngày."""
     rows, batch, offset = [], 1000, 0
@@ -391,24 +453,42 @@ def _tab_cuoi_ngay():
     raw_yest   = _load_hd(load_cns, yesterday, yesterday)
 
     def _summarize(raw: pd.DataFrame) -> dict:
+        """
+        Phân loại 4 nguồn:
+          - APSC: sửa chữa
+          - POS thuần: AHD (không AHDD)
+          - PDT: AHDD — gộp vào "Bán hàng" (chenh_lech)
+          - KiotViet: phần còn lại
+        Lưu ý: chỉ AHD/POS HĐ thường vào "Số HĐ", AHDD không tính vào số HĐ.
+        """
         if raw.empty:
             return {"tong": 0, "so_hd": 0, "dt_ban": 0, "dt_apsc": 0,
-                    "dt_kiotviet": 0, "dt_pos": 0}
+                    "dt_kiotviet": 0, "dt_pos": 0, "dt_pdt": 0, "so_pdt": 0}
         hd_u = raw.drop_duplicates(subset=["Mã hóa đơn"], keep="first")
-        # APSC = sửa chữa
-        hd_apsc = hd_u[hd_u["Mã hóa đơn"].apply(_is_apsc_hd)]
-        # POS = bán POS
-        hd_pos = hd_u[hd_u["Mã hóa đơn"].apply(_is_pos_hd)]
-        # KiotViet = bán KiotViet (loại ra cả APSC và POS)
+        hd_apsc     = hd_u[hd_u["Mã hóa đơn"].apply(_is_apsc_hd)]
+        hd_pdt      = hd_u[hd_u["Mã hóa đơn"].apply(_is_pdt_hd)]
+        hd_pos      = hd_u[hd_u["Mã hóa đơn"].apply(_is_pos_hd)]
         hd_kiotviet = hd_u[hd_u["Mã hóa đơn"].apply(_is_kiotviet_hd)]
+
+        dt_kiotviet = int(hd_kiotviet["Khách đã trả"].sum())
+        dt_pos      = int(hd_pos["Khách đã trả"].sum())
+        dt_apsc     = int(hd_apsc["Khách đã trả"].sum())
+        dt_pdt      = int(hd_pdt["Khách đã trả"].sum())  # = sum(chenh_lech)
+
+        # Số HĐ: chỉ đếm HĐ bán + HĐ sửa, KHÔNG đếm phiếu đổi/trả
+        so_hd  = len(hd_kiotviet) + len(hd_pos) + len(hd_apsc)
+        so_pdt = len(hd_pdt)
+
         return {
-            "tong":         int(hd_u["Khách đã trả"].sum()),
-            "so_hd":        len(hd_u),
-            "dt_ban":       int(hd_kiotviet["Khách đã trả"].sum())
-                            + int(hd_pos["Khách đã trả"].sum()),
-            "dt_apsc":      int(hd_apsc["Khách đã trả"].sum()),
-            "dt_kiotviet":  int(hd_kiotviet["Khách đã trả"].sum()),
-            "dt_pos":       int(hd_pos["Khách đã trả"].sum()),
+            "tong":         dt_kiotviet + dt_pos + dt_apsc + dt_pdt,
+            "so_hd":        so_hd,
+            # Bán hàng = KiotViet + POS + AHDD chenh_lech (gộp vào theo D-B-1)
+            "dt_ban":       dt_kiotviet + dt_pos + dt_pdt,
+            "dt_apsc":      dt_apsc,
+            "dt_kiotviet":  dt_kiotviet,
+            "dt_pos":       dt_pos,
+            "dt_pdt":       dt_pdt,
+            "so_pdt":       so_pdt,
         }
 
     s_today = _summarize(raw_today)
@@ -439,12 +519,17 @@ def _tab_cuoi_ngay():
     with m4:
         st.metric("Sửa chữa (APSC)", f"{_fmt(s_today['dt_apsc'])}đ",
                   delta=_delta_str(s_today["dt_apsc"], s_yest["dt_apsc"]))
-    # ── Chú thích "Bán hàng" tách KiotViet vs POS (chỉ hiện khi có cả 2) ──
-    if s_today["dt_kiotviet"] > 0 and s_today["dt_pos"] > 0:
-        st.caption(
-            f"💡 Bán hàng — KiotViet: **{_fmt(s_today['dt_kiotviet'])}đ** · "
-            f"POS: **{_fmt(s_today['dt_pos'])}đ**"
-        )
+
+    # ── Chú thích "Bán hàng" tách KiotViet vs POS vs Đổi/Trả ──
+    parts = []
+    if s_today["dt_kiotviet"] != 0:
+        parts.append(f"KiotViet: **{_fmt(s_today['dt_kiotviet'])}đ**")
+    if s_today["dt_pos"] != 0:
+        parts.append(f"POS: **{_fmt(s_today['dt_pos'])}đ**")
+    if s_today["dt_pdt"] != 0:
+        parts.append(f"Đổi/Trả ({s_today['so_pdt']} phiếu): **{_fmt(s_today['dt_pdt'])}đ**")
+    if len(parts) >= 2:
+        st.caption("💡 Bán hàng — " + " · ".join(parts))
     
     # ── Phiếu sửa chữa hôm nay — data chung CN ──
     df_sc = _load_sc_phieu(load_cns, today, today)
@@ -508,15 +593,23 @@ def _tab_cuoi_ngay():
                 st.dataframe(view2, use_container_width=True, hide_index=True,
                              height=min(300, 42 + len(view2) * 35))
 
-    # ── Bảng HĐ chi tiết hôm nay ──
+    # ── Bảng chứng từ chi tiết hôm nay (HĐ + AHDD) ──
     if not raw_today.empty:
-        hd_unique = raw_today.drop_duplicates(subset=["Mã hóa đơn"], keep="first")
+        hd_unique = raw_today.drop_duplicates(subset=["Mã hóa đơn"], keep="first").copy()
+        # Thêm cột Loại để phân biệt
+        def _loai(ma):
+            if _is_pdt_hd(ma):  return "↔ Đổi/Trả"
+            if _is_apsc_hd(ma): return "🔧 Sửa chữa"
+            if _is_pos_hd(ma):  return "🛒 POS"
+            return "📋 KiotViet"
+        hd_unique["Loại"] = hd_unique["Mã hóa đơn"].apply(_loai)
+
         st.markdown(
             "<div style='font-size:0.82rem;font-weight:600;color:#555;"
-            "margin:14px 0 6px;'>📋 Danh sách hóa đơn</div>",
+            "margin:14px 0 6px;'>📋 Danh sách chứng từ</div>",
             unsafe_allow_html=True
         )
-        cols_show = ["Mã hóa đơn", "Thời gian", "Tên khách hàng",
+        cols_show = ["Mã hóa đơn", "Loại", "Thời gian", "Tên khách hàng",
                      "Khách đã trả", "Người tạo", "Chi nhánh"]
         cols_avail = [c for c in cols_show if c in hd_unique.columns]
         view = hd_unique[cols_avail].copy()
@@ -556,16 +649,19 @@ def _tab_tong_quan_dt():
 
     hd_u = raw.drop_duplicates(subset=["Mã hóa đơn"], keep="first")
 
-    hd_apsc = hd_u[hd_u["Mã hóa đơn"].apply(_is_apsc_hd)]
-    hd_pos = hd_u[hd_u["Mã hóa đơn"].apply(_is_pos_hd)]
+    hd_apsc     = hd_u[hd_u["Mã hóa đơn"].apply(_is_apsc_hd)]
+    hd_pdt      = hd_u[hd_u["Mã hóa đơn"].apply(_is_pdt_hd)]
+    hd_pos      = hd_u[hd_u["Mã hóa đơn"].apply(_is_pos_hd)]
     hd_kiotviet = hd_u[hd_u["Mã hóa đơn"].apply(_is_kiotviet_hd)]
 
-    tong         = int(hd_u["Khách đã trả"].sum())
     dt_kiotviet  = int(hd_kiotviet["Khách đã trả"].sum())
     dt_pos       = int(hd_pos["Khách đã trả"].sum())
-    dt_ban       = dt_kiotviet + dt_pos
+    dt_pdt       = int(hd_pdt["Khách đã trả"].sum())
     dt_apsc      = int(hd_apsc["Khách đã trả"].sum())
-    so_hd        = len(hd_u)
+    dt_ban       = dt_kiotviet + dt_pos + dt_pdt
+    tong         = dt_ban + dt_apsc
+    so_hd        = len(hd_kiotviet) + len(hd_pos) + len(hd_apsc)
+    so_pdt       = len(hd_pdt)
 
     m1, m2, m3, m4 = st.columns(4)
     with m1: st.metric("Tổng doanh thu", f"{_fmt(tong)}đ")
@@ -573,12 +669,16 @@ def _tab_tong_quan_dt():
     with m3: st.metric("Bán hàng", f"{_fmt(dt_ban)}đ")
     with m4: st.metric("Sửa chữa (APSC)", f"{_fmt(dt_apsc)}đ")
 
-    # ── Chú thích Bán hàng tách KiotViet vs POS ──
-    if dt_kiotviet > 0 and dt_pos > 0:
-        st.caption(
-            f"💡 Bán hàng — KiotViet: **{_fmt(dt_kiotviet)}đ** · "
-            f"POS: **{_fmt(dt_pos)}đ**"
-        )
+    # ── Chú thích Bán hàng tách 3 nguồn ──
+    parts = []
+    if dt_kiotviet != 0:
+        parts.append(f"KiotViet: **{_fmt(dt_kiotviet)}đ**")
+    if dt_pos != 0:
+        parts.append(f"POS: **{_fmt(dt_pos)}đ**")
+    if dt_pdt != 0:
+        parts.append(f"Đổi/Trả ({so_pdt} phiếu): **{_fmt(dt_pdt)}đ**")
+    if len(parts) >= 2:
+        st.caption("💡 Bán hàng — " + " · ".join(parts))
 
     # ── Chart doanh thu theo ngày ──
     if "_date" in hd_u.columns and not hd_u.empty:
@@ -626,7 +726,11 @@ def _tab_tong_quan_dt():
         cn_sum = hd_u.groupby("Chi nhánh")["Khách đã trả"].sum().reset_index()
         cn_sum.columns = ["Chi nhánh", "Doanh thu"]
         cn_sum["Doanh thu (đ)"] = cn_sum["Doanh thu"].apply(lambda x: _fmt(x) + "đ")
-        cn_sum["Tỷ lệ"] = (cn_sum["Doanh thu"] / cn_sum["Doanh thu"].sum() * 100).round(1).astype(str) + "%"
+        total = cn_sum["Doanh thu"].sum()
+        if total != 0:
+            cn_sum["Tỷ lệ"] = (cn_sum["Doanh thu"] / total * 100).round(1).astype(str) + "%"
+        else:
+            cn_sum["Tỷ lệ"] = "—"
         st.dataframe(cn_sum[["Chi nhánh", "Doanh thu (đ)", "Tỷ lệ"]],
                      use_container_width=True, hide_index=True)
 
@@ -656,8 +760,9 @@ def _tab_ban_hang():
         st.info("Không có dữ liệu.")
         return
 
-    # Chỉ lấy HĐ bán thường (không phải APSC)
-    df = raw[~raw["Mã hóa đơn"].apply(_is_app_hd)].copy()
+    # Loại bỏ APSC (sửa chữa) khỏi tab này; giữ KiotViet + POS + AHDD
+    # AHDD đã có "Thành tiền" âm cho 'tra' và dương cho 'moi' → sum() ra net đúng
+    df = raw[~raw["Mã hóa đơn"].apply(_is_apsc_hd)].copy()
     if df.empty:
         st.info("Không có hóa đơn bán hàng trong khoảng này.")
         return
@@ -691,6 +796,8 @@ def _tab_ban_hang():
     nhom_col = nhom_col_map[nhom_chon]
 
     if "Thành tiền" in df.columns and "Số lượng" in df.columns:
+        # Cho AHDD: items 'tra' có Thành tiền âm, 'moi' dương → sum() ra net
+        # Số lượng giữ dương để biết tổng sl giao dịch
         grp = df.groupby(nhom_col).agg(
             doanh_thu=("Thành tiền", "sum"),
             so_luong=("Số lượng", "sum"),
@@ -698,12 +805,19 @@ def _tab_ban_hang():
         ).reset_index().sort_values("doanh_thu", ascending=False)
         grp.columns = [nhom_chon, "Doanh thu", "Số lượng", "Số dòng HĐ"]
         grp["Doanh thu (đ)"] = grp["Doanh thu"].apply(lambda x: _fmt(x) + "đ")
-        grp["Tỷ lệ"] = (grp["Doanh thu"] / grp["Doanh thu"].sum() * 100).round(1).astype(str) + "%"
+        total = grp["Doanh thu"].sum()
+        if total != 0:
+            grp["Tỷ lệ"] = (grp["Doanh thu"] / total * 100).round(1).astype(str) + "%"
+        else:
+            grp["Tỷ lệ"] = "—"
         st.dataframe(
             grp[[nhom_chon, "Doanh thu (đ)", "Số lượng", "Tỷ lệ"]],
             use_container_width=True, hide_index=True
         )
-        st.caption("Doanh thu tính theo Thành tiền từng dòng hàng hóa.")
+        st.caption(
+            "Doanh thu = sum(Thành tiền) net. "
+            "Phiếu đổi/trả: items khách trả lại ghi âm, items mua mới ghi dương."
+        )
     else:
         st.warning("Cột 'Thành tiền' hoặc 'Số lượng' không có trong dữ liệu hóa đơn.")
 
@@ -737,7 +851,18 @@ def _tab_xuat_nhap_ton():
     df_ck   = _load_chuyen_hang(load_cns, d_from, d_to)
     df_kk   = _load_kiem_ke(load_cns, d_from, d_to)
     df_hd   = _load_hd(load_cns, d_from, d_to)
-    df_tra = _load_tra_hang(load_cns, d_from, d_to)
+    df_tra  = _load_tra_hang(load_cns, d_from, d_to)
+    df_pdt  = _load_doi_tra_pos(load_cns, d_from, d_to)
+
+    # ── Chia df_pdt thành 2 phần: items "tra" (cộng kho) vs "moi" (trừ kho)
+    # Chỉ tính Hàng hóa, không tính Dịch vụ
+    if not df_pdt.empty:
+        df_pdt_hh  = _filter_chi_hang_hoa(df_pdt, ma_col="ma_hang")
+        df_pdt_tra = df_pdt_hh[df_pdt_hh["kieu"] == "tra"] if not df_pdt_hh.empty else pd.DataFrame()
+        df_pdt_moi = df_pdt_hh[df_pdt_hh["kieu"] == "moi"] if not df_pdt_hh.empty else pd.DataFrame()
+    else:
+        df_pdt_tra = pd.DataFrame()
+        df_pdt_moi = pd.DataFrame()
 
     # ── Build bảng NHẬP ──
     nhap_rows = []
@@ -772,6 +897,14 @@ def _tab_xuat_nhap_ton():
                 "Giá trị (đ)": "—",
             })
 
+    if not df_pdt_tra.empty:
+        nhap_rows.append({
+            "Nguồn nhập": "Đổi/Trả POS (khách trả lại)",
+            "Số phiếu/dòng": df_pdt_tra["ma_pdt"].nunique(),
+            "Tổng SL": int(df_pdt_tra["so_luong"].sum()),
+            "Giá trị (đ)": _fmt(int(df_pdt_tra["thanh_tien"].sum())) + "đ",
+        })
+
     # ── Build bảng XUẤT ──
     xuat_rows = []
 
@@ -788,7 +921,7 @@ def _tab_xuat_nhap_ton():
                     if "Thành tiền" in hd_kv_hh.columns else "—",
             })
  
-        # Bán hàng POS — chỉ Hàng hóa (Dịch vụ POS không trừ kho)
+        # Bán hàng POS thuần (không AHDD) — chỉ Hàng hóa
         hd_pos = df_hd[df_hd["Mã hóa đơn"].apply(_is_pos_hd)]
         hd_pos_hh = _filter_chi_hang_hoa(hd_pos, ma_col="Mã hàng")
         if not hd_pos_hh.empty and "Số lượng" in hd_pos_hh.columns:
@@ -811,6 +944,14 @@ def _tab_xuat_nhap_ton():
                 "Giá trị (đ)": _fmt(int(hd_apsc_hh["Thành tiền"].sum())) + "đ"
                     if "Thành tiền" in hd_apsc_hh.columns else "—",
             })
+
+    if not df_pdt_moi.empty:
+        xuat_rows.append({
+            "Nguồn xuất": "Đổi/Trả POS (khách mua mới)",
+            "Số phiếu/dòng": df_pdt_moi["ma_pdt"].nunique(),
+            "Tổng SL": int(df_pdt_moi["so_luong"].sum()),
+            "Giá trị (đ)": _fmt(int(df_pdt_moi["thanh_tien"].sum())) + "đ",
+        })
 
     if not df_tra.empty:
         xuat_rows.append({
@@ -899,10 +1040,15 @@ def _tab_xuat_nhap_ton():
             kk_t = df_kk[df_kk["chenh_lech"] > 0]
             kk_t_hh = _filter_chi_hang_hoa(kk_t, ma_col="ma_hang")
             nhap_sl += int(kk_t_hh["chenh_lech"].sum()) if not kk_t_hh.empty else 0
+        # AHDD: items "tra" → cộng kho (đã filter Hàng hóa ở df_pdt_tra)
+        if not df_pdt_tra.empty:
+            nhap_sl += int(df_pdt_tra["so_luong"].sum())
 
         xuat_sl = 0
         if not df_hd.empty:
-            hd_hh = _filter_chi_hang_hoa(df_hd, ma_col="Mã hàng")
+            # Loại bỏ AHDD khỏi df_hd vì nó được tính riêng qua df_pdt
+            df_hd_no_pdt = df_hd[~df_hd["Mã hóa đơn"].apply(_is_pdt_hd)]
+            hd_hh = _filter_chi_hang_hoa(df_hd_no_pdt, ma_col="Mã hàng")
             if not hd_hh.empty and "Số lượng" in hd_hh.columns:
                 xuat_sl += int(hd_hh["Số lượng"].sum())
         if not df_ck.empty:
@@ -916,6 +1062,9 @@ def _tab_xuat_nhap_ton():
         if not df_tra.empty:
             tra_hh = _filter_chi_hang_hoa(df_tra, ma_col="ma_hang")
             xuat_sl += int(tra_hh["so_luong"].sum()) if not tra_hh.empty else 0
+        # AHDD: items "moi" → trừ kho
+        if not df_pdt_moi.empty:
+            xuat_sl += int(df_pdt_moi["so_luong"].sum())
 
         the_kho = load_the_kho(branches_key=tuple(load_cns))
         if the_kho.empty:
@@ -1051,6 +1200,62 @@ def _load_lich_su_ma_hang(ma_hang: str, chi_nhanh: str,
                         "Nhập": 0,
                         "Xuất": sl,
                     })
+    except Exception:
+        pass
+
+    # ── 2c. Đổi/Trả POS (phieu_doi_tra_pos_ct + phieu_doi_tra_pos) ──
+    try:
+        res_ct = supabase.table("phieu_doi_tra_pos_ct").select(
+            "ma_pdt,kieu,ma_hang,so_luong"
+        ).eq("ma_hang", ma).execute()
+        if res_ct.data:
+            ma_pdt_list = list({r["ma_pdt"] for r in res_ct.data})
+            res_h = supabase.table("phieu_doi_tra_pos").select(
+                "ma_pdt,chi_nhanh,created_at,trang_thai,ten_khach,loai_phieu"
+            ).in_("ma_pdt", ma_pdt_list) \
+             .eq("chi_nhanh", cn) \
+             .eq("trang_thai", "Hoàn thành").execute()
+            h_map = {h["ma_pdt"]: h for h in (res_h.data or [])}
+
+            loai_map = _get_loai_sp_map()
+            # Dịch vụ không tham gia kho — skip
+            if not (loai_map and loai_map.get(ma) and loai_map.get(ma) != "Hàng hóa"):
+                for r in res_ct.data:
+                    ma_pdt = r["ma_pdt"]
+                    if ma_pdt not in h_map:
+                        continue
+                    h = h_map[ma_pdt]
+
+                    ngay = pd.to_datetime(h.get("created_at"), errors="coerce", utc=True)
+                    if pd.isna(ngay): continue
+                    ngay_vn = ngay.tz_convert("Asia/Ho_Chi_Minh").date()
+                    if not (d_from <= ngay_vn <= d_to): continue
+
+                    sl = int(r.get("so_luong", 0) or 0)
+                    if sl <= 0: continue
+
+                    kieu = r.get("kieu", "")
+                    ten_kh = h.get("ten_khach", "") or "Khách lẻ"
+                    loai_phieu = h.get("loai_phieu", "") or ""
+
+                    if kieu == "tra":
+                        rows.append({
+                            "_ngay": ngay_vn,
+                            "Loại":  "Đổi/Trả POS (trả lại)",
+                            "Mã chứng từ": ma_pdt,
+                            "Ghi chú": f"{ten_kh} — {loai_phieu}".strip(" —"),
+                            "Nhập": sl,
+                            "Xuất": 0,
+                        })
+                    elif kieu == "moi":
+                        rows.append({
+                            "_ngay": ngay_vn,
+                            "Loại":  "Đổi/Trả POS (mua mới)",
+                            "Mã chứng từ": ma_pdt,
+                            "Ghi chú": f"{ten_kh} — {loai_phieu}".strip(" —"),
+                            "Nhập": 0,
+                            "Xuất": sl,
+                        })
     except Exception:
         pass
 
@@ -1224,7 +1429,7 @@ def _phan_tra_cuu_ma_hang(load_cns: tuple, d_from: date, d_to: date):
         f"Tồn hiện tại: **{ton_hien_tai}**"
     )
     st.caption(
-        "⚠️ Tồn sau tính ngược từ tồn hiện tại. Nếu có giao dịch ngoài 4 loại trên "
+        "⚠️ Tồn sau tính ngược từ tồn hiện tại. Nếu có giao dịch ngoài 5 loại trên "
         "(VD: bán hàng KiotViet trước khi upload snapshot mới), tồn sau có thể không "
         "khớp thực tế tại thời điểm đó."
     )
@@ -1252,7 +1457,7 @@ def _tab_nhan_vien():
 
     df = raw[raw["Mã hóa đơn"].apply(_is_app_hd)].copy()
     if df.empty:
-        st.info("Không có hóa đơn App (APSC) trong khoảng này.")
+        st.info("Không có hóa đơn App (APSC/POS/AHDD) trong khoảng này.")
         return
 
     hd_u = df.drop_duplicates(subset=["Mã hóa đơn"], keep="first")

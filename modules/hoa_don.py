@@ -76,6 +76,18 @@ def module_hoa_don():
                 except (ValueError, TypeError):
                     pass
 
+        # Cọc PTTT chi tiết (chỉ hiện nếu HĐ từ phiếu đặt hàng)
+        coc_payments = []
+        COC_COLS = [("Cọc tiền mặt", "💵"), ("Cọc chuyển khoản", "🏦"), ("Cọc thẻ", "💳")]
+        for col, icon in COC_COLS:
+            if col in inv_df.columns:
+                try:
+                    val = float(row.get(col, 0) or 0)
+                    if val > 0:
+                        coc_payments.append(f"{icon} {col.replace('Cọc ', '')}: <b>{val:,.0f}đ</b>".replace(",","."))
+                except (ValueError, TypeError):
+                    pass
+
         sdt_hd = str(row.get("Điện thoại","") or "").strip()
         if sdt_hd.lower() in ("nan","none",""): sdt_hd = ""
 
@@ -182,6 +194,19 @@ def module_hoa_don():
                         unsafe_allow_html=True
                     )
 
+                # Cọc PTTT chi tiết (HĐ từ phiếu đặt hàng)
+                tien_coc = float(row.get("Tiền cọc", 0) or 0)
+                if tien_coc > 0:
+                    coc_detail = " · ".join(coc_payments) if coc_payments \
+                        else f"(tổng {int(tien_coc):,}đ)".replace(",", ".")
+                    st.markdown(
+                        "<div style='background:#fff8e0;border-radius:6px;"
+                        "padding:8px 12px;margin:6px 0;font-size:0.85rem;color:#856404;'>"
+                        f"🪙 <b>Tiền cọc đã thu ({int(tien_coc):,}đ)</b>: ".replace(",", ".")
+                        + coc_detail + "</div>",
+                        unsafe_allow_html=True
+                    )
+
                 cols = ["Mã hàng","Tên hàng","Số lượng","Đơn giá","Thành tiền","Ghi chú hàng hóa"]
                 dv = inv_df[[c for c in cols if c in inv_df.columns]].copy()
                 for c in ["Đơn giá","Thành tiền"]:
@@ -281,17 +306,39 @@ def module_hoa_don():
                 _render_recent(data, 6)
 
         with t3:
-            ds = st.text_input("Ngày:", key="in_date",
-                               placeholder="VD: 14/04/2026")
-            if ds:
-                res = data[data["Thời gian"].astype(str).str.contains(
-                    ds.strip(), na=False)]
+            # Date range picker — cùng 1 hàng
+            import datetime as _dt
+            _today = _dt.date.today()
+            _col_f, _col_t, _col_go = st.columns([2, 2, 1])
+            with _col_f:
+                d_from = st.date_input("Từ:", value=_today, key="in_date_from",
+                                       label_visibility="collapsed", format="DD/MM/YYYY")
+            with _col_t:
+                d_to = st.date_input("Đến:", value=_today, key="in_date_to",
+                                     label_visibility="collapsed", format="DD/MM/YYYY")
+            with _col_go:
+                do_filter = st.button("Lọc", key="in_date_go", use_container_width=True)
+
+            if do_filter or st.session_state.get("in_date_active"):
+                if do_filter:
+                    st.session_state["in_date_active"] = True
+                if "_date" in data.columns:
+                    res = data[data["_date"].between(d_from, d_to)]
+                else:
+                    _ngay = pd.to_datetime(
+                        data["Thời gian"], dayfirst=True, errors="coerce"
+                    ).dt.date
+                    res = data[_ngay.between(d_from, d_to)]
                 if not res.empty:
-                    st.caption(f"Tìm thấy {res['Mã hóa đơn'].nunique()} chứng từ")
+                    st.caption(
+                        f"{d_from.strftime('%d/%m')} → {d_to.strftime('%d/%m/%Y')} "
+                        f"· {res['Mã hóa đơn'].nunique()} chứng từ"
+                    )
                     render_list(res)
                 else:
-                    st.warning("Không có dữ liệu trong ngày này.")
+                    st.warning("Không có dữ liệu trong khoảng ngày này.")
             else:
+                st.caption("Chọn khoảng ngày rồi bấm **Lọc**")
                 _render_recent(data, 6)
     except Exception as e:
         st.error(f"Lỗi: {e}")

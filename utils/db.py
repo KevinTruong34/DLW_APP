@@ -544,7 +544,20 @@ def _load_hoa_don_pos_flat(branches_key: tuple) -> pd.DataFrame:
         for ct in rows_ct:
             ct_map.setdefault(ct["ma_hd"], []).append(ct)
 
-        # 3. Flatten: mỗi item của HĐ → 1 row có đầy đủ header info
+        # 3. Load phieu_dat_hang để lấy cọc PTTT breakdown (chỉ khi có HĐ từ đặt hàng)
+        pdat_map: dict[str, dict] = {}
+        try:
+            hd_co_coc = [h["ma_hd"] for h in rows_h
+                         if int(h.get("tien_coc_da_thu", 0) or 0) > 0]
+            if hd_co_coc:
+                res_pdat = supabase.table("phieu_dat_hang")                     .select("ma_hd_pos,coc_tien_mat,coc_chuyen_khoan,coc_the")                     .in_("ma_hd_pos", hd_co_coc).execute()
+                for pd in (res_pdat.data or []):
+                    if pd.get("ma_hd_pos"):
+                        pdat_map[pd["ma_hd_pos"]] = pd
+        except Exception:
+            pass  # Không có phieu_dat_hang hoặc lỗi → coc PTTT = 0
+
+        # 4. Flatten: mỗi item của HĐ → 1 row có đầy đủ header info
         flat_rows = []
         for h in rows_h:
             ma_hd = h["ma_hd"]
@@ -565,6 +578,9 @@ def _load_hoa_don_pos_flat(branches_key: tuple) -> pd.DataFrame:
 
             nguoi_ban = h.get("nguoi_ban", "") or ""
 
+            # Cọc PTTT từ phieu_dat_hang (nếu HĐ này từ phiếu đặt)
+            coc_info = pdat_map.get(ma_hd, {})
+
             # Header chung lặp trên mỗi dòng
             base = {
                 "Mã hóa đơn":        ma_hd,
@@ -581,6 +597,10 @@ def _load_hoa_don_pos_flat(branches_key: tuple) -> pd.DataFrame:
                 "Chuyển khoản":      int(h.get("chuyen_khoan", 0) or 0),
                 "Thẻ":               int(h.get("the", 0) or 0),
                 "Ví":                0,
+                "Tiền cọc":          int(h.get("tien_coc_da_thu", 0) or 0),
+                "Cọc tiền mặt":      int(coc_info.get("coc_tien_mat", 0) or 0),
+                "Cọc chuyển khoản":  int(coc_info.get("coc_chuyen_khoan", 0) or 0),
+                "Cọc thẻ":           int(coc_info.get("coc_the", 0) or 0),
                 "Trạng thái":        trang_thai,
                 "Người tạo":         nguoi_ban,
                 "Người bán":         nguoi_ban,

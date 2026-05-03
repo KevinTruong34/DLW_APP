@@ -158,7 +158,8 @@ def module_quan_tri():
             f"rồi sang tab **Xóa dữ liệu** để nhấn nút **Kết sổ tất cả phiếu App**."
         )
 
-    tab_up, tab_del, tab_nv, tab_kh, tab_logs = st.tabs(["Upload","Xóa dữ liệu","Nhân viên","Upload KH","Logs"])
+    tab_up, tab_del, tab_nv, tab_kh, tab_logs, tab_session = st.tabs(
+        ["Upload","Xóa dữ liệu","Nhân viên","Upload KH","Logs","Sessions"])
 
     with tab_up:
         s1, s2, s3, s4 = st.tabs(["Hàng hóa (master)","Thẻ kho","Hóa đơn","Chuyển kho"])
@@ -694,3 +695,87 @@ def module_quan_tri():
                                  height=min(600, 42 + len(view_log) * 35))
         except Exception as e:
             st.error(f"Lỗi tải logs: {e}")
+
+
+    with tab_session:
+            st.caption("Phiên đăng nhập POS đang active của tất cả nhân viên.")
+     
+            try:
+                # Load tất cả session chưa revoke + còn hạn
+                sess_res = supabase.table("sessions").select(
+                    "token,nhan_vien_id,created_at,expires_at,last_used_at,user_agent,revoked_at"
+                ).is_("revoked_at", "null") \
+                 .gte("expires_at", now_vn_iso()) \
+                 .order("last_used_at", desc=True) \
+                 .limit(200).execute()
+     
+                sessions = sess_res.data or []
+            except Exception as e:
+                st.error(f"Lỗi tải sessions: {e}")
+                sessions = []
+     
+            if not sessions:
+                st.info("Không có phiên đăng nhập nào đang active.")
+            else:
+                # Map nhan_vien_id → ho_ten/username
+                nv_ids = list({s["nhan_vien_id"] for s in sessions})
+                try:
+                    nv_res = supabase.table("nhan_vien") \
+                        .select("id,username,ho_ten").in_("id", nv_ids).execute()
+                    nv_map = {r["id"]: r for r in (nv_res.data or [])}
+                except Exception:
+                    nv_map = {}
+     
+                st.caption(f"📱 {len(sessions)} phiên active")
+     
+                for s in sessions:
+                    nv = nv_map.get(s["nhan_vien_id"], {})
+                    ho_ten   = nv.get("ho_ten", f"NV #{s['nhan_vien_id']}")
+                    username = nv.get("username", "")
+     
+                    # Format thời gian
+                    try:
+                        created  = pd.to_datetime(s["created_at"], utc=True).tz_convert("Asia/Ho_Chi_Minh")
+                        last_use = pd.to_datetime(s["last_used_at"], utc=True).tz_convert("Asia/Ho_Chi_Minh")
+                        expires  = pd.to_datetime(s["expires_at"], utc=True).tz_convert("Asia/Ho_Chi_Minh")
+                        created_str  = created.strftime("%d/%m %H:%M")
+                        last_use_str = last_use.strftime("%d/%m %H:%M")
+                        expires_str  = expires.strftime("%d/%m %H:%M")
+                    except Exception:
+                        created_str = last_use_str = expires_str = "?"
+     
+                    token_short = (s["token"] or "")[:8] + "..."
+                    ua = s.get("user_agent") or "—"
+     
+                    with st.expander(
+                        f"👤 **{ho_ten}** · {username} · "
+                        f"Last used: {last_use_str}"
+                    ):
+                        c1, c2 = st.columns([3, 1])
+                        with c1:
+                            st.markdown(
+                                f"<div style='font-size:0.85rem;color:#555;'>"
+                                f"Token: <code>{token_short}</code><br>"
+                                f"Tạo: {created_str} · Hết hạn: {expires_str}<br>"
+                                f"User Agent: <code>{ua}</code>"
+                                f"</div>",
+                                unsafe_allow_html=True,
+                            )
+                        with c2:
+                            if st.button("🚫 Revoke", key=f"rev_{s['token']}",
+                                         use_container_width=True):
+                                try:
+                                    supabase.rpc("revoke_session_by_token",
+                                                 {"p_token": s["token"]}).execute()
+                                    log_action("SESSION_REVOKE",
+                                               f"nv={ho_ten} token={token_short}")
+                                    st.success("✓ Đã revoke!")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"Lỗi: {e}")
+     
+                st.markdown("---")
+                st.caption(
+                    "💡 **Lưu ý:** Khi NV bấm 'Đăng xuất' trên app POS, "
+                    "tất cả session của NV đó trên mọi thiết bị sẽ bị revoke tự động."
+                )

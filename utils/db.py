@@ -551,9 +551,9 @@ def _load_hoa_don_pos_flat(branches_key: tuple) -> pd.DataFrame:
                          if int(h.get("tien_coc_da_thu", 0) or 0) > 0]
             if hd_co_coc:
                 res_pdat = supabase.table("phieu_dat_hang")                     .select("ma_hd_pos,coc_tien_mat,coc_chuyen_khoan,coc_the")                     .in_("ma_hd_pos", hd_co_coc).execute()
-                for pd in (res_pdat.data or []):
-                    if pd.get("ma_hd_pos"):
-                        pdat_map[pd["ma_hd_pos"]] = pd
+                for _pdat_row in (res_pdat.data or []):
+                    if _pdat_row.get("ma_hd_pos"):
+                        pdat_map[_pdat_row["ma_hd_pos"]] = _pdat_row
         except Exception:
             pass  # Không có phieu_dat_hang hoặc lỗi → coc PTTT = 0
 

@@ -539,7 +539,8 @@ def module_sua_chua():
                     for col in ["so_luong","don_gia"]:
                         ct_new[col] = pd.to_numeric(ct_new[col], errors="coerce").fillna(0).astype(int)
                 phieu_data = {
-                    "ma_phieu": ma, "ten_khach": ten_khach.strip(),
+                    "ma_phieu": ma, "chi_nhanh": cn_create,
+                    "ten_khach": ten_khach.strip(),
                     "sdt_khach": sdt_khach.strip(), "hieu_dong_ho": hieu_dh.strip(),
                     "loai_yeu_cau": loai_yc, "dac_diem": dac_diem.strip(),
                     "mo_ta_loi": mo_ta.strip(), "khach_tra_truoc": int(tra_truoc),

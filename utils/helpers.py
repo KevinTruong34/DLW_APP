@@ -135,22 +135,39 @@ def _build_phieu_html(phieu: dict, ct: pd.DataFrame) -> str:
   <div>Khách hàng ký<br><br><br><br>_______________</div>
   <div>Nhân viên tiếp nhận<br><br><br><br>_______________<br>{phieu.get('nguoi_tiep_nhan','')}</div>
 </div>
-<script>window.onload=function(){{window.print();}}</script>
 </body></html>""".replace(",", ".")
 
 
 def _in_phieu_sc(phieu_html: str, key: str):
-    """Mở tab mới và in phiếu — dùng Blob URL để giữ đúng UTF-8 tiếng Việt."""
+    """In phiếu qua iframe ẩn — không mở tab mới, chỉ hiện Print dialog."""
     b64 = base64.b64encode(phieu_html.encode("utf-8")).decode("ascii")
     st.components.v1.html(
         f"""<script>
-        var b = new Blob(
-            [new TextDecoder('utf-8').decode(
+        (function() {{
+            var html = new TextDecoder('utf-8').decode(
                 Uint8Array.from(atob('{b64}'), c => c.charCodeAt(0))
-            )],
-            {{type: 'text/html; charset=utf-8'}}
-        );
-        var w = window.open(URL.createObjectURL(b), '_blank');
+            );
+            var doc = window.parent.document;
+            // Xóa iframe in cũ nếu còn (tránh tích lũy)
+            var old = doc.getElementById('__sc_print_iframe__');
+            if (old) old.remove();
+            var iframe = doc.createElement('iframe');
+            iframe.id = '__sc_print_iframe__';
+            iframe.style.position = 'fixed';
+            iframe.style.right = '0';
+            iframe.style.bottom = '0';
+            iframe.style.width = '0';
+            iframe.style.height = '0';
+            iframe.style.border = '0';
+            iframe.srcdoc = html;
+            doc.body.appendChild(iframe);
+            iframe.onload = function() {{
+                try {{
+                    iframe.contentWindow.focus();
+                    iframe.contentWindow.print();
+                }} catch (e) {{ console.error(e); }}
+            }};
+        }})();
         </script>""",
         height=0
     )

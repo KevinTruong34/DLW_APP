@@ -4,6 +4,8 @@ import base64
 from datetime import datetime, date, timedelta
 from zoneinfo import ZoneInfo
 
+from utils.config import CN_INFO
+
 _TZ_VN = ZoneInfo("Asia/Ho_Chi_Minh")
 
 
@@ -70,17 +72,30 @@ def _build_phieu_html(phieu: dict, ct: pd.DataFrame) -> str:
                 f"<td class='r'>{int(r['don_gia']):,}</td>"
                 f"<td class='r'>{tt:,}</td></tr>"
             ).replace(",", ".")
+
+    # Header chi nhánh (1 dòng): tên shop · địa chỉ · SĐT
+    cn_name = phieu.get("chi_nhanh", "") or ""
+    cn = CN_INFO.get(cn_name, {})
+    dia_chi = cn.get("dia_chi", "")
+    sdt_cn  = cn.get("sdt", "")
+    shop_parts = ["<b>Đồng hồ Đại Lộc</b>"]
+    if dia_chi:
+        shop_parts.append(dia_chi)
+    if sdt_cn:
+        shop_parts.append(sdt_cn)
+    shop_header = " · ".join(shop_parts)
+
     return f"""<!DOCTYPE html><html><head><meta charset='utf-8'>
 <style>
   @page {{ size: A5 portrait; margin: 10mm 12mm; }}
   * {{ box-sizing: border-box; }}
   body {{ font-family: Arial, sans-serif; font-size: 13px; color: #000; margin:0; }}
+  .shop {{ text-align:center; font-size:12px; margin-bottom:6px; }}
   h2 {{ text-align:center; font-size:16px; font-weight:700; margin:0 0 2px; }}
   .sub {{ text-align:center; font-size:12px; color:#444; margin-bottom:10px; }}
   .info {{ width:100%; border-collapse:collapse; margin-bottom:8px; }}
   .info td {{ padding:3px 4px; font-size:13px; vertical-align:top; }}
-  .info .lbl {{ font-weight:700; white-space:nowrap; width:22%; }}
-  .info .val {{ width:28%; }}
+  .info .lbl {{ font-weight:700; white-space:nowrap; width:1%; padding-right:6px; }}
   .svc {{ width:100%; border-collapse:collapse; margin-top:6px; }}
   .svc th {{ background:#eee; border:1px solid #aaa; padding:4px 5px; font-size:12px; }}
   .svc td {{ border:1px solid #aaa; padding:4px 5px; font-size:12px; }}
@@ -91,17 +106,18 @@ def _build_phieu_html(phieu: dict, ct: pd.DataFrame) -> str:
   .sign div {{ text-align:center; width:45%; }}
   hr {{ border:none; border-top:1px solid #ccc; margin:8px 0; }}
 </style></head><body>
+<div class='shop'>{shop_header}</div>
 <h2>PHIẾU TIẾP NHẬN SỬA CHỮA</h2>
 <div class='sub'>Mã: <b>{phieu.get('ma_phieu','')}</b> &nbsp;·&nbsp; {phieu.get('Ngày TN','')}</div>
 <hr>
 <table class='info'>
-  <tr><td class='lbl'>Khách hàng:</td><td class='val'><b>{phieu.get('ten_khach','')}</b></td>
+  <tr><td class='lbl'>Khách hàng:</td><td><b>{phieu.get('ten_khach','')}</b></td>
       <td class='lbl'>SĐT:</td><td><b>{phieu.get('sdt_khach','')}</b></td></tr>
-  <tr><td class='lbl'>Hiệu đồng hồ:</td><td class='val'>{phieu.get('hieu_dong_ho') or '—'}</td>
+  <tr><td class='lbl'>Hiệu đồng hồ:</td><td>{phieu.get('hieu_dong_ho') or '—'}</td>
       <td class='lbl'>Loại YC:</td><td>{phieu.get('loai_yeu_cau','')}</td></tr>
   <tr><td class='lbl'>Đặc điểm:</td><td colspan='3'>{phieu.get('dac_diem') or '—'}</td></tr>
   <tr><td class='lbl'>Mô tả lỗi:</td><td colspan='3'>{phieu.get('mo_ta_loi','')}</td></tr>
-  <tr><td class='lbl'>Hẹn trả:</td><td class='val'>{phieu.get('ngay_hen_tra') or '—'}</td>
+  <tr><td class='lbl'>Hẹn trả:</td><td>{phieu.get('ngay_hen_tra') or '—'}</td>
       <td class='lbl'>Trả trước:</td><td>{int(phieu.get('khach_tra_truoc',0)):,}đ</td></tr>
 </table>
 <hr>

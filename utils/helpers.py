@@ -89,20 +89,20 @@ def _build_phieu_html(phieu: dict, ct: pd.DataFrame) -> str:
 <style>
   @page {{ size: A5 portrait; margin: 10mm 12mm; }}
   * {{ box-sizing: border-box; }}
-  body {{ font-family: Arial, sans-serif; font-size: 13px; color: #000; margin:0; }}
-  .shop {{ text-align:center; font-size:12px; margin-bottom:6px; }}
-  h2 {{ text-align:center; font-size:16px; font-weight:700; margin:0 0 2px; }}
-  .sub {{ text-align:center; font-size:12px; color:#444; margin-bottom:10px; }}
+  body {{ font-family: Arial, sans-serif; font-size: 15px; color: #000; margin:0; }}
+  .shop {{ text-align:center; font-size:14px; margin-bottom:6px; }}
+  h2 {{ text-align:center; font-size:18px; font-weight:700; margin:0 0 2px; }}
+  .sub {{ text-align:center; font-size:14px; color:#444; margin-bottom:10px; }}
   .info {{ width:100%; border-collapse:collapse; margin-bottom:8px; }}
-  .info td {{ padding:3px 4px; font-size:13px; vertical-align:top; }}
+  .info td {{ padding:3px 4px; font-size:15px; vertical-align:top; }}
   .info .lbl {{ font-weight:700; white-space:nowrap; width:1%; padding-right:6px; }}
   .svc {{ width:100%; border-collapse:collapse; margin-top:6px; }}
-  .svc th {{ background:#eee; border:1px solid #aaa; padding:4px 5px; font-size:12px; }}
-  .svc td {{ border:1px solid #aaa; padding:4px 5px; font-size:12px; }}
+  .svc th {{ background:#eee; border:1px solid #aaa; padding:4px 5px; font-size:14px; }}
+  .svc td {{ border:1px solid #aaa; padding:4px 5px; font-size:14px; }}
   .c {{ text-align:center; }}
   .r {{ text-align:right; }}
   .total-row td {{ font-weight:700; background:#f7f7f7; }}
-  .sign {{ display:flex; justify-content:space-between; margin-top:20px; font-size:12px; }}
+  .sign {{ display:flex; justify-content:space-between; margin-top:20px; font-size:14px; }}
   .sign div {{ text-align:center; width:45%; }}
   hr {{ border:none; border-top:1px solid #ccc; margin:8px 0; }}
 </style></head><body>

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime, time
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
@@ -22,6 +23,9 @@ from utils.attendance import (
     compute_payroll_period,
     save_payroll_items,
 )
+from utils.attendance_edit import update_attendance_session
+
+TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
 
 def _branch_options() -> list[str]:
@@ -195,6 +199,49 @@ def _render_timesheet_tab():
 
     _summary_cards(df)
     st.dataframe(df, use_container_width=True, hide_index=True)
+
+    # ===== EDIT ATTENDANCE (surgical add) =====
+    with st.expander("Sửa công"):
+        if "id" not in df.columns:
+            st.info("Không có dữ liệu để sửa")
+        else:
+            df_sorted = df.sort_values(["work_date", "nhan_vien_id", "shift_no"]) if all(c in df.columns for c in ["work_date","nhan_vien_id","shift_no"]) else df
+
+            def _label(idx):
+                r = df_sorted.loc[idx]
+                return f"#{r.get('id')} | {r.get('work_date')} | ca {r.get('shift_no')}"
+
+            selected_idx = st.selectbox("Chọn dòng công", options=df_sorted.index.tolist(), format_func=_label)
+            row = df_sorted.loc[selected_idx]
+
+            work_day = row.get("work_date")
+            if isinstance(work_day, pd.Timestamp):
+                work_day = work_day.date()
+
+            in_dt = row.get("check_in_at")
+            out_dt = row.get("check_out_at") or row.get("scheduled_end_at")
+
+            in_time = pd.to_datetime(in_dt).time() if pd.notna(in_dt) else time(7, 0)
+            out_time = pd.to_datetime(out_dt).time() if pd.notna(out_dt) else time(14, 0)
+
+            ed_day = st.date_input("Ngày", value=work_day)
+            ed_in = st.time_input("Giờ vào", value=in_time)
+            ed_out = st.time_input("Giờ ra", value=out_time)
+            ed_note = st.text_input("Ghi chú", value=str(row.get("note") or ""))
+
+            if st.button("Lưu sửa công"):
+                if ed_out <= ed_in:
+                    st.error("Giờ ra phải lớn hơn giờ vào")
+                else:
+                    new_in = datetime.combine(ed_day, ed_in, tzinfo=TZ)
+                    new_out = datetime.combine(ed_day, ed_out, tzinfo=TZ)
+                    res = update_attendance_session(int(row.get("id")), new_in, new_out, ed_note)
+                    if res.get("ok"):
+                        st.success("Đã cập nhật chấm công")
+                        st.cache_data.clear()
+                        st.rerun()
+                    else:
+                        st.error(res.get("error", "Lỗi không xác định"))
 
     with st.expander("Xem log chấm công thô"):
         events = load_attendance_events()

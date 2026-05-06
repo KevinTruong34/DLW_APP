@@ -1,25 +1,25 @@
 from __future__ import annotations
 
-from datetime import date, timedelta, datetime, time
+from datetime import date, datetime, timedelta, time
 from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
 
-from utils.auth import is_ke_toan_or_admin, get_user, get_active_branch
+from utils.auth import get_user, get_active_branch, is_ke_toan_or_admin
 from utils.config import ALL_BRANCHES, CN_SHORT
-from utils.db import supabase, log_action
-from utils.helpers import today_vn, now_vn
+from utils.db import log_action
+from utils.helpers import today_vn
 from utils.attendance import (
     load_nhan_vien_directory,
     load_work_schedules,
     upsert_work_schedule,
     load_attendance_sessions,
     load_attendance_events,
-    upsert_branch_network,
     load_branch_networks,
-    create_payroll_period,
+    upsert_branch_network,
     load_payroll_periods,
+    create_payroll_period,
     compute_payroll_period,
     save_payroll_items,
 )
@@ -28,9 +28,9 @@ from utils.attendance_edit import update_attendance_session
 TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
 
-def _fmt(dt):
+def _fmt_dt(value):
     try:
-        return dt.astimezone(TZ).strftime("%H:%M")
+        return pd.to_datetime(value).tz_convert(TZ).strftime("%H:%M")
     except Exception:
         return ""
 
@@ -39,9 +39,18 @@ def _branch_options() -> list[str]:
     return list(ALL_BRANCHES)
 
 
-@st.cache_data(ttl=120)
-def _load_active_employees() -> pd.DataFrame:
-    return load_nhan_vien_directory(active_only=True)
+def _employee_df(active_only: bool = True) -> pd.DataFrame:
+    return load_nhan_vien_directory(active_only=active_only)
+
+
+def _employee_name_map() -> dict[int, str]:
+    df = _employee_df(active_only=False)
+    if df.empty:
+        return {}
+    out: dict[int, str] = {}
+    for _, row in df.iterrows():
+        out[int(row["id"])] = str(row.get("ho_ten") or row.get("username") or "")
+    return out
 
 
 def _employee_label(row: pd.Series) -> str:
@@ -53,31 +62,13 @@ def _employee_label(row: pd.Series) -> str:
 def _resolve_employee_id(df: pd.DataFrame, label: str) -> int | None:
     if df.empty or not label:
         return None
-    matches = df[df.apply(lambda r: _employee_label(r) == label, axis=1)]
-    if matches.empty:
+    hit = df[df.apply(lambda r: _employee_label(r) == label, axis=1)]
+    if hit.empty:
         return None
-    return int(matches.iloc[0]["id"])
-
-
-def _employee_map_all() -> dict:
-    df = load_nhan_vien_directory(active_only=False)
-    if df.empty:
-        return {}
-    return {int(r.get("id")): (r.get("ho_ten") or r.get("username")) for _, r in df.iterrows()}
-
-
-def _load_employee_map() -> pd.DataFrame:
-    df = _load_active_employees()
-    if df.empty:
-        return df
-    cols = [c for c in ["id", "username", "ho_ten", "role", "active", "hourly_rate"] if c in df.columns]
-    return df[cols].copy()
+    return int(hit.iloc[0]["id"])
 
 
 def _summary_cards(df: pd.DataFrame):
-    if df.empty:
-        st.info("Chưa có dữ liệu.")
-        return
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         st.metric("Số ca", len(df))
@@ -87,15 +78,15 @@ def _summary_cards(df: pd.DataFrame):
         st.metric("Tổng OT", int(pd.to_numeric(df.get("ot_minutes"), errors="coerce").fillna(0).sum()))
     with c4:
         if "salary_amount" in df.columns:
-            st.metric("Tổng lương", f"{int(pd.to_numeric(df['salary_amount'], errors='coerce').fillna(0).sum()):,}".replace(",", "."))
+            total = pd.to_numeric(df["salary_amount"], errors="coerce").fillna(0).sum()
+            st.metric("Tổng lương", f"{int(total):,}".replace(",", "."))
         else:
             st.metric("Tổng lương", "—")
 
 
 def _render_schedule_tab():
     st.subheader("Phân lịch làm việc")
-
-    employees = _load_employee_map()
+    employees = _employee_df(active_only=True)
     if employees.empty:
         st.warning("Chưa có nhân viên active.")
         return
@@ -115,20 +106,12 @@ def _render_schedule_tab():
             note = st.text_input("Ghi chú", placeholder="Tùy chọn")
             created_by = (get_user() or {}).get("ho_ten", "")
 
-        submitted = st.form_submit_button("Lưu lịch", type="primary")
-        if submitted:
+        if st.form_submit_button("Lưu lịch", type="primary"):
             emp_id = _resolve_employee_id(employees, emp_label)
             if not emp_id:
                 st.error("Không xác định được nhân viên.")
             else:
-                res = upsert_work_schedule(
-                    employee_id=emp_id,
-                    work_date=work_day,
-                    branch_name=branch_name,
-                    shift_no=int(shift_no),
-                    created_by=created_by,
-                    note=note,
-                )
+                res = upsert_work_schedule(emp_id, work_day, branch_name, int(shift_no), created_by=created_by, note=note)
                 if res.get("ok"):
                     log_action("ATTENDANCE_SCHEDULE_UPSERT", f"emp_id={emp_id} date={work_day} branch={branch_name} shift={shift_no}")
                     st.success("Đã lưu lịch làm việc.")
@@ -146,12 +129,14 @@ def _render_schedule_tab():
 
     df = load_work_schedules(work_date=view_day)
     if not df.empty:
-        emp_map = _employee_map_all()
-        df_disp = df.copy()
-        df_disp["nhan_vien"] = df_disp["nhan_vien_id"].map(emp_map)
-        df_disp["start"] = df_disp["scheduled_start_at"].apply(_fmt)
-        df_disp["end"] = df_disp["scheduled_end_at"].apply(_fmt)
-        st.dataframe(df_disp[["nhan_vien","branch_name","shift_no","start","end","work_date"]], use_container_width=True, hide_index=True)
+        df2 = df.copy()
+        names = _employee_name_map()
+        df2["nhan_vien"] = df2["nhan_vien_id"].map(names)
+        df2["start"] = df2["scheduled_start_at"].apply(_fmt_dt)
+        df2["end"] = df2["scheduled_end_at"].apply(_fmt_dt)
+        if view_branch != "Tất cả":
+            df2 = df2[df2["branch_name"] == view_branch]
+        st.dataframe(df2[["nhan_vien", "branch_name", "shift_name", "start", "end", "work_date"]], use_container_width=True, hide_index=True)
     else:
         st.info("Chưa có lịch cho ngày này.")
 
@@ -182,7 +167,7 @@ def _render_schedule_tab():
 def _render_timesheet_tab():
     st.subheader("Bảng công")
     branch_list = _branch_options()
-    employees = _load_employee_map()
+    employees = _employee_df(active_only=True)
     emp_labels = ["Tất cả"] + ([_employee_label(r) for _, r in employees.iterrows()] if not employees.empty else [])
 
     c1, c2, c3 = st.columns(3)
@@ -215,21 +200,16 @@ def _render_timesheet_tab():
         return
 
     _summary_cards(df)
+    df2 = df.copy()
+    names = _employee_name_map()
+    df2["nhan_vien"] = df2["nhan_vien_id"].map(names)
+    df2["in"] = df2["check_in_at"].apply(_fmt_dt)
+    df2["out"] = df2["check_out_at"].apply(_fmt_dt)
+    st.dataframe(df2[["nhan_vien", "work_date", "branch_name", "shift_name", "in", "out", "worked_minutes", "ot_minutes"]], use_container_width=True, hide_index=True)
 
-    emp_map = _employee_map_all()
-    df_disp = df.copy()
-    df_disp["nhan_vien"] = df_disp["nhan_vien_id"].map(emp_map)
-    df_disp["in"] = df_disp["check_in_at"].apply(_fmt)
-    df_disp["out"] = df_disp["check_out_at"].apply(_fmt)
-
-    st.dataframe(df_disp[["nhan_vien","work_date","branch_name","shift_no","in","out","worked_minutes","ot_minutes"]], use_container_width=True, hide_index=True)
-
-    # ===== EDIT ATTENDANCE (unchanged) =====
     with st.expander("Sửa công"):
-        if "id" not in df.columns:
-            st.info("Không có dữ liệu để sửa")
-        else:
-            df_sorted = df.sort_values(["work_date", "nhan_vien_id", "shift_no"]) if all(c in df.columns for c in ["work_date","nhan_vien_id","shift_no"]) else df
+        if "id" in df.columns and not df.empty:
+            df_sorted = df.sort_values(["work_date", "nhan_vien_id", "shift_no"])
 
             def _label(idx):
                 r = df_sorted.loc[idx]
@@ -237,16 +217,10 @@ def _render_timesheet_tab():
 
             selected_idx = st.selectbox("Chọn dòng công", options=df_sorted.index.tolist(), format_func=_label)
             row = df_sorted.loc[selected_idx]
-
-            work_day = row.get("work_date")
-            if isinstance(work_day, pd.Timestamp):
-                work_day = work_day.date()
-
-            in_dt = row.get("check_in_at")
-            out_dt = row.get("check_out_at") or row.get("scheduled_end_at")
-
-            in_time = pd.to_datetime(in_dt).time() if pd.notna(in_dt) else time(7, 0)
-            out_time = pd.to_datetime(out_dt).time() if pd.notna(out_dt) else time(14, 0)
+            work_day = pd.to_datetime(row.get("work_date")).date()
+            in_time = pd.to_datetime(row.get("check_in_at")).time() if pd.notna(row.get("check_in_at")) else time(7, 0)
+            out_ref = row.get("check_out_at") or row.get("scheduled_end_at")
+            out_time = pd.to_datetime(out_ref).time() if pd.notna(out_ref) else time(14, 0)
 
             ed_day = st.date_input("Ngày", value=work_day)
             ed_in = st.time_input("Giờ vào", value=in_time)
@@ -266,6 +240,8 @@ def _render_timesheet_tab():
                         st.rerun()
                     else:
                         st.error(res.get("error", "Lỗi không xác định"))
+        else:
+            st.info("Không có dữ liệu để sửa")
 
     with st.expander("Xem log chấm công thô"):
         events = load_attendance_events()
@@ -280,4 +256,76 @@ def _render_timesheet_tab():
                 events = events[events["nhan_vien_id"] == emp_id]
         st.dataframe(events, use_container_width=True, hide_index=True)
 
-# rest unchanged
+
+def _render_payroll_tab():
+    st.subheader("Tính lương")
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        start_date = st.date_input("Kỳ từ", value=today_vn().replace(day=1), key="pay_start")
+    with c2:
+        end_date = st.date_input("Kỳ đến", value=today_vn(), key="pay_end")
+    with c3:
+        label = st.text_input("Tên kỳ", value=f"Lương {start_date.strftime('%m/%Y')}", key="pay_label")
+
+    if st.button("Tạo kỳ lương", type="primary"):
+        res = create_payroll_period(start_date=start_date, end_date=end_date, label=label)
+        if res.get("ok"):
+            log_action("ATTENDANCE_PAYROLL_PERIOD_CREATE", f"{start_date} -> {end_date}")
+            st.success("Đã tạo kỳ lương.")
+            st.cache_data.clear()
+        else:
+            st.error(res.get("error", "Lỗi không xác định"))
+
+    periods = load_payroll_periods()
+    if periods.empty:
+        st.info("Chưa có kỳ lương.")
+        return
+
+    st.dataframe(periods, use_container_width=True, hide_index=True)
+    period_choice = st.selectbox("Chọn kỳ để tính", periods["id"].tolist(), format_func=lambda x: f"Kỳ #{x}")
+
+    if st.button("Tính lương kỳ này", type="primary"):
+        calc = compute_payroll_period(int(period_choice))
+        if not calc.get("ok"):
+            st.error(calc.get("error", "Lỗi không xác định"))
+            return
+
+        items = calc.get("items", [])
+        summary = calc.get("summary", [])
+        items_df = pd.DataFrame(items)
+        summary_df = pd.DataFrame(summary)
+
+        st.success(f"Đã tính xong {len(items_df)} dòng lương.")
+        if not summary_df.empty:
+            st.dataframe(summary_df, use_container_width=True, hide_index=True)
+        if not items_df.empty:
+            st.dataframe(items_df, use_container_width=True, hide_index=True)
+
+        if st.button("Lưu bảng lương", key="save_payroll_items"):
+            res = save_payroll_items(items)
+            if res.get("ok"):
+                log_action("ATTENDANCE_PAYROLL_SAVE", f"period_id={period_choice} rows={len(items)}")
+                st.success("Đã lưu bảng lương.")
+                st.cache_data.clear()
+            else:
+                st.error(res.get("error", "Lỗi không xác định"))
+
+
+def module_nhan_vien():
+    if not is_ke_toan_or_admin():
+        st.error("Bạn không có quyền truy cập.")
+        return
+
+    st.markdown("## 👥 Nhân viên")
+    user = get_user() or {}
+    branch = get_active_branch()
+    st.caption(f"Đăng nhập: {user.get('ho_ten', '')} · Chi nhánh hiện tại: {CN_SHORT.get(branch, branch)}")
+
+    tab1, tab2, tab3 = st.tabs(["Chấm công", "Bảng công", "Tính lương"])
+    with tab1:
+        _render_schedule_tab()
+    with tab2:
+        _render_timesheet_tab()
+    with tab3:
+        _render_payroll_tab()

@@ -377,11 +377,14 @@ def record_check_in(employee_id: int, branch_name: str, schedule_id: int | None 
     if not ok:
         return {"ok": False, "error": msg}
     schedule_id = int(schedule.get("id") or 0)
-    existing_event = supabase.table("attendance_events").select("id").eq("nhan_vien_id", employee_id).eq("work_date", str(work_date)).eq("branch_name", branch_name).eq("shift_no", int(schedule.get("shift_no") or 0)).eq("event_type", "IN").limit(1).execute()
-    if existing_event.data:
-        return {"ok": False, "error": "Ca này đã có chấm vào"}
-    open_session = load_attendance_sessions(work_date=work_date, employee_id=employee_id, branch_name=branch_name, status=OPEN)
-    if not open_session.empty and int(open_session.iloc[0].get("shift_no") or 0) == int(schedule.get("shift_no") or 0) and pd.notna(open_session.iloc[0].get("check_in_at")) and pd.isna(open_session.iloc[0].get("check_out_at")):
+target_shift = int(schedule.get("shift_no") or 0)
+existing = load_attendance_sessions(
+    work_date=work_date, employee_id=employee_id,
+    branch_name=branch_name, status=OPEN,
+)
+if not existing.empty:
+    same_shift = existing[existing["shift_no"] == target_shift]
+    if not same_shift.empty:
         return {"ok": False, "error": "Ca này đã có chấm vào, chỉ còn chấm ra"}
     try:
         supabase.table("attendance_events").insert({

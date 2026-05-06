@@ -14,12 +14,12 @@ TZ = ZoneInfo("Asia/Ho_Chi_Minh")
 
 DEFAULT_BRANCH_SHIFTS: dict[str, list[dict[str, Any]]] = {
     "100 Lê Quý Đôn": [
-        {"shift_no": 1, "name": "Ca 1", "start": "07:00", "end": "14:00"},
-        {"shift_no": 2, "name": "Ca 2", "start": "14:00", "end": "21:00"},
+        {"shift_no": 1, "name": "Ca 1 (sáng)", "start": "07:00", "end": "14:00"},
+        {"shift_no": 2, "name": "Ca 2 (chiều)", "start": "14:00", "end": "21:00"},
     ],
     "GO BÀ RỊA": [
-        {"shift_no": 1, "name": "Ca 1", "start": "08:00", "end": "15:00"},
-        {"shift_no": 2, "name": "Ca 2", "start": "15:00", "end": "22:00"},
+        {"shift_no": 1, "name": "Ca 1 (sáng)", "start": "08:00", "end": "15:00"},
+        {"shift_no": 2, "name": "Ca 2 (chiều)", "start": "15:00", "end": "22:00"},
     ],
 }
 
@@ -57,8 +57,8 @@ def shift_defs(branch_name: str) -> list[dict[str, Any]]:
     if branch in DEFAULT_BRANCH_SHIFTS:
         return DEFAULT_BRANCH_SHIFTS[branch]
     return [
-        {"shift_no": 1, "name": "Ca 1", "start": "07:00", "end": "14:00"},
-        {"shift_no": 2, "name": "Ca 2", "start": "14:00", "end": "21:00"},
+        {"shift_no": 1, "name": "Ca 1 (sáng)", "start": "07:00", "end": "14:00"},
+        {"shift_no": 2, "name": "Ca 2 (chiều)", "start": "14:00", "end": "21:00"},
     ]
 
 
@@ -84,13 +84,7 @@ def calc_minutes(check_in: datetime, check_out: datetime, shift_start: datetime,
     raw_in = _to_dt(check_in)
     raw_out = _to_dt(check_out)
     if raw_in is None or raw_out is None:
-        return {
-            "worked_minutes": 0,
-            "regular_minutes": 0,
-            "ot_minutes": 0,
-            "actual_check_in": None,
-            "actual_check_out": None,
-        }
+        return {"worked_minutes": 0, "regular_minutes": 0, "ot_minutes": 0, "actual_check_in": None, "actual_check_out": None}
 
     actual_in = max(raw_in, shift_start)
     regular_out = min(raw_out, shift_end)
@@ -253,7 +247,7 @@ def overlap_exists(employee_id: int, work_date: date, branch_name: str, shift_no
         other_start = _to_dt(row.get("scheduled_start_at"))
         other_end = _to_dt(row.get("scheduled_end_at"))
         if other_start and other_end and new_start < other_end and other_start < new_end:
-            return True, f"Trùng lịch với ca {row.get('shift_no')} tại {row.get('branch_name')}"
+            return True, f"Trùng lịch với {row.get('name') or ('Ca ' + str(row.get('shift_no')))} tại {row.get('branch_name')}"
     return False, ""
 
 
@@ -270,6 +264,7 @@ def upsert_work_schedule(employee_id: int, work_date: date, branch_name: str, sh
         "work_date": str(work_date),
         "branch_name": branch_name,
         "shift_no": int(shift_no),
+        "shift_name": get_shift(branch_name, shift_no).get("name") if get_shift(branch_name, shift_no) else None,
         "scheduled_start_at": start_dt.isoformat(),
         "scheduled_end_at": end_dt.isoformat(),
         "status": "active",
@@ -342,6 +337,7 @@ def _session_payload(employee_id: int, work_date: date, branch_name: str, shift_
         "branch_name": branch_name,
         "shift_no": int(shift_no),
         "schedule_id": schedule_id,
+        "shift_name": get_shift(branch_name, shift_no).get("name") if get_shift(branch_name, shift_no) else None,
         "scheduled_start_at": shift_start.isoformat(),
         "scheduled_end_at": shift_end.isoformat(),
         "check_in_at": check_in_at.isoformat(),
@@ -390,6 +386,7 @@ def record_check_in(employee_id: int, branch_name: str, schedule_id: int | None 
             "work_date": str(work_date),
             "branch_name": branch_name,
             "shift_no": int(schedule.get("shift_no") or 0),
+            "shift_name": get_shift(branch_name, int(schedule.get("shift_no") or 0)).get("name") if get_shift(branch_name, int(schedule.get("shift_no") or 0)) else None,
             "event_type": "IN",
             "event_time": now.isoformat(),
             "source": source,
@@ -438,6 +435,7 @@ def record_check_out(employee_id: int, branch_name: str, schedule_id: int | None
             "work_date": str(work_date),
             "branch_name": branch_name,
             "shift_no": int(session.get("shift_no") or 0),
+            "shift_name": session.get("shift_name"),
             "event_type": "OUT",
             "event_time": now.isoformat(),
             "source": source,
@@ -569,6 +567,7 @@ def compute_payroll_period(period_id: int) -> dict[str, Any]:
                 "work_date": s.get("work_date"),
                 "branch_name": s.get("branch_name"),
                 "shift_no": s.get("shift_no"),
+                "shift_name": s.get("shift_name"),
                 "worked_minutes": minutes,
                 "ot_minutes": int(s.get("ot_minutes") or 0),
                 "hourly_rate": rate,

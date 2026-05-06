@@ -377,8 +377,8 @@ def record_check_in(employee_id: int, branch_name: str, schedule_id: int | None 
     if not ok:
         return {"ok": False, "error": msg}
     schedule_id = int(schedule.get("id") or 0)
-    target_shift = int(schedule.get("shift_no") or 0)
-    existing = load_attendance_sessions(
+target_shift = int(schedule.get("shift_no") or 0)
+existing = load_attendance_sessions(
     work_date=work_date, employee_id=employee_id,
     branch_name=branch_name, status=OPEN,
 )

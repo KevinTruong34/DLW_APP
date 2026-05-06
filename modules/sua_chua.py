@@ -188,8 +188,8 @@ def module_sua_chua():
     def _tao_hoa_don_apsc(phieu: dict, ct: pd.DataFrame,
                            giam_gia: int, pttt: dict) -> str:
         ma_hd = _gen_ma_apsc()
-        now_vn = now_vn()
-        now_str = now_vn.strftime("%d/%m/%Y %H:%M:%S")
+        _now = now_vn()                                     # đổi tên local
+        now_str = _now.strftime("%d/%m/%Y %H:%M:%S")        # dùng _now
         tong = int((ct["so_luong"] * ct["don_gia"]).sum()) if not ct.empty else 0
         can_tra = max(0, tong - giam_gia - int(phieu.get("khach_tra_truoc", 0)))
         rows = []

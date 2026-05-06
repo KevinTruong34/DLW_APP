@@ -92,7 +92,7 @@ def _render_schedule_tab():
             work_day = st.date_input("Ngày làm", value=today_vn())
         with c2:
             branch_name = st.selectbox("Chi nhánh", branch_list)
-            shift_no = st.selectbox("Ca", [1, 2], format_func=lambda x: f"Ca {x}")
+            shift_no = st.selectbox("Ca", [1, 2], format_func=lambda x: "Ca 1 (sáng)" if x == 1 else "Ca 2 (chiều)")
         with c3:
             note = st.text_input("Ghi chú", placeholder="Tùy chọn")
             created_by = (get_user() or {}).get("ho_ten", "")

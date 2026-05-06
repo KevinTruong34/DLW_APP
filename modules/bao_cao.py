@@ -1692,7 +1692,8 @@ def module_bao_cao():
 
     # ── Render CHỈ tab đang chọn ──
     if main_tab == "💰 Doanh thu":
-        if is_ke_toan_or_admin():
+        # CHỈNH SỬA TẠI ĐÂY: Đổi is_ke_toan_or_admin() thành is_admin()
+        if is_admin(): 
             sub_labels = ["Cuối ngày", "Tổng quan", "Bán hàng theo nhóm"]
             sub_tab = st.pills("bc_sub_nav", sub_labels,
                                default=sub_labels[0],
@@ -1708,6 +1709,7 @@ def module_bao_cao():
             elif sub_tab == "Bán hàng theo nhóm":
                 _tab_ban_hang()
         else:
+            # Kế toán và Nhân viên sẽ chạy thẳng vào đây, không thấy thanh chọn sub-tab
             _tab_cuoi_ngay()
 
     elif main_tab == "📦 Xuất nhập tồn":

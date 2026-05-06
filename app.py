@@ -1,6 +1,6 @@
 import streamlit as st
 
-from utils.config import ALL_BRANCHES, CN_SHORT, APP_NAME
+from utils.config import ALL_BRANCHES, CN_SHORT
 from utils.auth import (
     get_user,
     is_admin,
@@ -24,8 +24,10 @@ from modules.quan_tri import module_quan_tri
 from modules.nhan_vien import module_nhan_vien
 
 
+APP_TITLE = "DL Watch Store"
+
 st.set_page_config(
-    page_title=APP_NAME if "APP_NAME" in globals() else "DL Watch Store",
+    page_title=APP_TITLE,
     page_icon="📱",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -91,7 +93,7 @@ with col_reload:
         st.cache_data.clear()
         st.rerun()
 with col_title:
-    st.markdown(f"### {APP_NAME if 'APP_NAME' in globals() else 'DL Watch Store'}")
+    st.markdown(f"### {APP_TITLE}")
     st.caption(f"📍 {cn_short}")
 with col_avatar:
     with st.popover(initials, use_container_width=True):

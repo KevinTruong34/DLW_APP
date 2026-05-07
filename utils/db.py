@@ -88,52 +88,11 @@ def load_hoa_don(branches_key: tuple):
 @st.cache_data(ttl=60)
 def load_stock_deltas() -> dict:
     """
-    Tính delta tồn kho từ các phiếu tạo trong app (loai_phieu = IN_APP_MARKER).
-    Trả về dict {(ma_hang, chi_nhanh): delta_int}.
-
-    Quy tắc:
-      - Phiếu tạm, Đã hủy: không ảnh hưởng (delta = 0)
-      - Đang chuyển: -SL tại CN nguồn (đã rời kho, chưa tới đích)
-      - Đã nhận:    -SL tại CN nguồn, +SL tại CN đích
-
-    Phiếu upload từ KiotViet (loai_phieu khác IN_APP_MARKER) được bỏ qua
-    vì đã được phản ánh trong the_kho snapshot.
+    [DEPRECATED — giữ để backward compat] Sau khi migrate sang single-source
+    (the_kho là live data, mọi update qua RPC), không còn cần delta layer.
+    Trả về dict rỗng để các caller cũ không bị break, nhưng không tính toán gì.
     """
-    rows = []
-    try:
-        batch, offset = 1000, 0
-        while True:
-            res = supabase.table("phieu_chuyen_kho").select(
-                "ma_hang,tu_chi_nhanh,toi_chi_nhanh,so_luong_chuyen,trang_thai"
-            ).eq("loai_phieu", IN_APP_MARKER) \
-             .range(offset, offset + batch - 1).execute()
-            if not res.data: break
-            rows.extend(res.data)
-            if len(res.data) < batch: break
-            offset += batch
-    except Exception:
-        return {}
-
-    deltas = {}
-    for r in rows:
-        tt  = str(r.get("trang_thai", "") or "").strip()
-        mh  = str(r.get("ma_hang", "") or "").strip()
-        sl  = int(r.get("so_luong_chuyen", 0) or 0)
-        tu  = str(r.get("tu_chi_nhanh", "") or "").strip()
-        toi = str(r.get("toi_chi_nhanh", "") or "").strip()
-
-        if not mh or sl <= 0:
-            continue
-
-        # Rời kho nguồn khi phiếu đã được xác nhận chuyển
-        if tt in ("Đang chuyển", "Đã nhận") and tu:
-            deltas[(mh, tu)] = deltas.get((mh, tu), 0) - sl
-
-        # Vào kho đích chỉ khi đã nhận
-        if tt == "Đã nhận" and toi:
-            deltas[(mh, toi)] = deltas.get((mh, toi), 0) + sl
-
-    return deltas
+    return {}
 
 
 @st.cache_data(ttl=600)
@@ -197,6 +156,12 @@ def get_archive_reminder() -> dict:
 
 @st.cache_data(ttl=300)
 def load_the_kho(branches_key: tuple):
+    """
+    Load the_kho live data — sau migrate sang single-source.
+    Mọi thay đổi tồn từ app (bán POS, chuyển hàng, nhận, đổi/trả, kiểm kê,
+    sửa thủ công) đều update trực tiếp vào the_kho qua RPC.
+    UI tồn = giá trị "Tồn cuối kì" trong DB (không cộng/trừ delta layer).
+    """
     rows, batch, offset = [], 1000, 0
     while True:
         # FIX: thêm .order() để pagination ổn định, tránh trùng/sót rows
@@ -214,67 +179,6 @@ def load_the_kho(branches_key: tuple):
                 "Xuất bán","Giá trị xuất bán","Tồn cuối kì","Giá trị cuối kì"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
-
-    # ── Áp delta tồn kho từ phiếu App ──
-    try:
-        deltas = load_stock_deltas()
-        if deltas and "Mã hàng" in df.columns and "Chi nhánh" in df.columns:
-            # Strip whitespace trên keys để match chính xác
-            df["_ma_key"] = df["Mã hàng"].astype(str).str.strip()
-            df["_cn_key"] = df["Chi nhánh"].astype(str).str.strip()
-
-            def _apply_delta(row):
-                return deltas.get((row["_ma_key"], row["_cn_key"]), 0)
-            df["_delta"] = df.apply(_apply_delta, axis=1)
-            df["Tồn cuối kì"] = (df["Tồn cuối kì"] + df["_delta"]).astype(int)
-
-            # Tìm các (mã, CN) có delta nhưng KHÔNG có dòng trong the_kho
-            # → phải thêm dòng mới để tồn kho tăng lên
-            existing_keys = set(zip(df["_ma_key"], df["_cn_key"]))
-            # Chỉ xét các CN đang load (branches_key)
-            load_cns_set = set(branches_key)
-
-            # Lookup tên hàng từ master để fill khi tạo row mới
-            try:
-                master = load_hang_hoa()
-                name_map = (dict(zip(master["Mã hàng"].astype(str),
-                                     master["Tên hàng"].astype(str)))
-                           if not master.empty else {})
-            except Exception:
-                name_map = {}
-
-            new_rows = []
-            for (mh, cn), dlt in deltas.items():
-                if cn not in load_cns_set:
-                    continue  # CN không load → bỏ qua
-                if (mh, cn) in existing_keys:
-                    continue  # đã có, đã áp delta ở trên
-                if dlt == 0:
-                    continue
-                # Tạo dòng mới cho (mã, CN) chưa tồn tại
-                new_rows.append({
-                    "Mã hàng":       mh,
-                    "Chi nhánh":     cn,
-                    "Tên hàng":      name_map.get(mh, ""),
-                    "Tồn đầu kì":    0,
-                    "Tồn cuối kì":   int(dlt),   # delta thành tồn luôn
-                    "Nhập NCC":      0,
-                    "Xuất bán":      0,
-                    "Giá trị đầu kì":  0,
-                    "Giá trị nhập NCC": 0,
-                    "Giá trị xuất bán": 0,
-                    "Giá trị cuối kì": 0,
-                    "_ma_key":       mh,
-                    "_cn_key":       cn,
-                    "_delta":        int(dlt),
-                })
-            if new_rows:
-                df = pd.concat([df, pd.DataFrame(new_rows)], ignore_index=True)
-
-            df = df.drop(columns=["_delta", "_ma_key", "_cn_key"])
-    except Exception:
-        pass
-
     return df
 
 
@@ -364,7 +268,8 @@ def load_phieu_kiem_ke(branches_key: tuple = None) -> pd.DataFrame:
     if branches_key and "chi_nhanh" in df.columns:
         df = df[df["chi_nhanh"].isin(list(branches_key))].reset_index(drop=True)
     if "created_at" in df.columns:
-        df["_created"] = pd.to_datetime(df["created_at"], errors="coerce")
+        df["_created"] = pd.to_datetime(df["created_at"], errors="coerce", utc=True) \
+                          .dt.tz_convert("Asia/Ho_Chi_Minh")
     return df
 
 
@@ -551,7 +456,9 @@ def _load_hoa_don_pos_flat(branches_key: tuple) -> pd.DataFrame:
             hd_co_coc = [h["ma_hd"] for h in rows_h
                          if int(h.get("tien_coc_da_thu", 0) or 0) > 0]
             if hd_co_coc:
-                res_pdat = supabase.table("phieu_dat_hang")                     .select("ma_hd_pos,coc_tien_mat,coc_chuyen_khoan,coc_the")                     .in_("ma_hd_pos", hd_co_coc).execute()
+                res_pdat = supabase.table("phieu_dat_hang") \
+                    .select("ma_hd_pos,coc_tien_mat,coc_chuyen_khoan,coc_the") \
+                    .in_("ma_hd_pos", hd_co_coc).execute()
                 for _pdat_row in (res_pdat.data or []):
                     if _pdat_row.get("ma_hd_pos"):
                         pdat_map[_pdat_row["ma_hd_pos"]] = _pdat_row

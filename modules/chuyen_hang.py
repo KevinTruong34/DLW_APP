@@ -201,7 +201,10 @@ def _render_phieu_card(df_phieu: pd.DataFrame, ma_phieu: str, gia_ban_map: dict)
 
     ngay_str = ""
     try:
-        ngay_str = pd.Timestamp(row_h["ngay_chuyen"]).strftime("%d/%m %H:%M")
+        ts = pd.Timestamp(row_h["ngay_chuyen"])
+        if ts.tzinfo is None:
+            ts = ts.tz_localize("UTC")
+        ngay_str = ts.tz_convert("Asia/Ho_Chi_Minh").strftime("%d/%m %H:%M")
     except Exception:
         pass
 

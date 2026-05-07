@@ -15,6 +15,20 @@ from utils.helpers import _build_phieu_html, _in_phieu_sc
 
 
 # ══════════════════════════════════════════════════════════
+# Helper: phân loại SP cho phép sửa giá khi bán (SPK/DVPS)
+# ══════════════════════════════════════════════════════════
+def _is_open_price_row(row) -> bool:
+    """Returns True nếu row hang_hoa là SPK hoặc DVPS (open-price)."""
+    loai_hang   = str(row.get("loai_hang") or "").strip()
+    thuong_hieu = str(row.get("thuong_hieu") or "").strip()
+    if loai_hang == "Sản phẩm khác":
+        return True
+    if loai_hang == "Sửa chữa" and thuong_hieu == "Chi phí sửa chữa phát sinh":
+        return True
+    return False
+
+
+# ══════════════════════════════════════════════════════════
 # CSS scoped — chỉ apply cho module Sửa chữa
 # ══════════════════════════════════════════════════════════
 _SC_CSS = """
@@ -257,21 +271,44 @@ def module_sua_chua():
 
         if not hits.empty:
             for _, row in hits.iterrows():
-                gia = int(row.get("gia_ban", 0))
-                label = f"{row['ma_hang']} — {row['ten_hang']}  |  {gia:,}đ".replace(",",".")
-                col_lbl, col_sl, col_btn = st.columns([5, 1, 1])
-                with col_lbl: st.markdown(f"<span style='font-size:0.9rem'>{label}</span>", unsafe_allow_html=True)
+                gia_def = int(row.get("gia_ban", 0))
+                is_open = _is_open_price_row(row)
+
+                if is_open:
+                    label = f"✏️ {row['ma_hang']} — {row['ten_hang']}"
+                    col_lbl, col_sl, col_gia, col_btn = st.columns([4, 1, 2, 1])
+                else:
+                    label = f"{row['ma_hang']} — {row['ten_hang']}  |  {gia_def:,}đ".replace(",", ".")
+                    col_lbl, col_sl, col_btn = st.columns([5, 1, 1])
+
+                with col_lbl:
+                    st.markdown(f"<span style='font-size:0.9rem'>{label}</span>",
+                                unsafe_allow_html=True)
                 with col_sl:
                     sl = st.number_input("SL", min_value=1, value=1,
-                                          key=f"{key_prefix}_sl_{row['ma_hang']}", label_visibility="collapsed")
+                                          key=f"{key_prefix}_sl_{row['ma_hang']}",
+                                          label_visibility="collapsed")
+
+                if is_open:
+                    with col_gia:
+                        gia_input = st.number_input(
+                            "Giá", min_value=0, value=gia_def, step=10000,
+                            key=f"{key_prefix}_gia_{row['ma_hang']}",
+                            label_visibility="collapsed",
+                        )
+                else:
+                    gia_input = gia_def
+
                 with col_btn:
-                    if st.button("➕", key=f"{key_prefix}_add_{row['ma_hang']}"):
+                    can_add = (not is_open) or (gia_input > 0)
+                    if st.button("➕", key=f"{key_prefix}_add_{row['ma_hang']}",
+                                  disabled=not can_add):
                         st.session_state.setdefault(items_key, []).append({
                             "loai_dong": "Dịch vụ",
                             "ten_hang":  str(row["ten_hang"]),
                             "ma_hang":   str(row["ma_hang"]),
                             "so_luong":  int(sl),
-                            "don_gia":   gia,
+                            "don_gia":   int(gia_input),
                         })
                         st.rerun()
         elif ma_tim.strip():

@@ -1725,7 +1725,7 @@ def module_bao_cao():
                 _tab_cuoi_ngay()
             elif sub_tab == "Tổng quan":
                 _tab_tong_quan_dt()
-            elif sub_tab == "Bán hàng theo nhóm":
+            elif sub_tab == "Doanh thu theo nhóm":
                 _tab_ban_hang()
         else:
             # Kế toán và Nhân viên sẽ chạy thẳng vào đây, không thấy thanh chọn sub-tab

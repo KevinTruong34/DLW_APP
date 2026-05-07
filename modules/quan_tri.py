@@ -147,17 +147,6 @@ def module_quan_tri():
     if not is_admin():
         st.error("Bạn không có quyền truy cập."); return
 
-    # ── Banner nhắc kết sổ (nếu vượt ngưỡng) ──
-    rem = get_archive_reminder()
-    if rem["need_reminder"]:
-        st.warning(
-            f"⚠ **Nên kết sổ phiếu App** — đã **{rem['days_oldest']} ngày** kể từ "
-            f"phiếu App cũ nhất (ngày {rem['oldest_date'].strftime('%d/%m/%Y')}), "
-            f"hiện có **{rem['n_active']} phiếu** đang tính delta vào tồn kho. "
-            f"Quy trình: upload `the_kho` mới từ KiotViet ở tab **Upload**, "
-            f"rồi sang tab **Xóa dữ liệu** để nhấn nút **Kết sổ tất cả phiếu App**."
-        )
-
     tab_up, tab_del, tab_nv, tab_kh, tab_logs, tab_session = st.tabs(
         ["Upload","Xóa dữ liệu","Nhân viên","Upload KH","Logs","Sessions"])
 
@@ -254,8 +243,57 @@ def module_quan_tri():
                     if miss: st.error(f"Thiếu cột: {', '.join(miss)}")
                     else:
                         st.info(f"Chi nhánh: {', '.join(df['Chi nhánh'].unique())}")
-                        with st.expander("Xem trước"):
+                        with st.expander("Xem trước file"):
                             st.dataframe(df.head(), use_container_width=True, hide_index=True)
+
+                        # ══════ SO SÁNH FILE vs DB HIỆN TẠI ══════
+                        # Sau migrate Hướng B: the_kho là live data. Upload file
+                        # ghi đè trực tiếp → cần cảnh báo admin về chênh lệch.
+                        with st.expander("⚠ So sánh với tồn hiện tại trong DB", expanded=True):
+                            cn_in_file = df["Chi nhánh"].dropna().astype(str).str.strip().unique().tolist()
+                            cur_kho = load_the_kho(tuple(cn_in_file))
+                            cur_map = {}
+                            if not cur_kho.empty:
+                                for _, kr in cur_kho.iterrows():
+                                    key = (str(kr["Mã hàng"]).strip(), str(kr["Chi nhánh"]).strip())
+                                    cur_map[key] = int(kr.get("Tồn cuối kì", 0) or 0)
+
+                            diffs = []
+                            for _, r in df.iterrows():
+                                mh = str(r["Mã hàng"]).strip()
+                                cn = str(r["Chi nhánh"]).strip()
+                                ton_file = int(r.get("Tồn cuối kì", 0) or 0)
+                                ton_db = cur_map.get((mh, cn))
+                                if ton_db is None:
+                                    if ton_file != 0:
+                                        diffs.append({"Mã hàng": mh, "Chi nhánh": cn,
+                                                      "Tồn DB": "(chưa có)",
+                                                      "Tồn file": ton_file,
+                                                      "Chênh lệch": ton_file})
+                                elif ton_db != ton_file:
+                                    diffs.append({"Mã hàng": mh, "Chi nhánh": cn,
+                                                  "Tồn DB": ton_db,
+                                                  "Tồn file": ton_file,
+                                                  "Chênh lệch": ton_file - ton_db})
+
+                            if diffs:
+                                st.warning(
+                                    f"**{len(diffs)} dòng có chênh lệch** giữa file và DB hiện tại. "
+                                    f"Upload sẽ GHI ĐÈ tồn kho trong DB bằng giá trị từ file.\n\n"
+                                    f"**Quan trọng:** các giao dịch trong app POS từ sau lần upload "
+                                    f"trước đến giờ sẽ bị mất nếu file KiotViet chưa phản ánh chúng. "
+                                    f"Đảm bảo kế toán đã đồng bộ HĐ POS sang KiotViet trước khi upload."
+                                )
+                                df_diff = pd.DataFrame(diffs)
+                                df_diff["_abs"] = df_diff["Chênh lệch"].apply(
+                                    lambda x: abs(int(x)) if isinstance(x, (int, float)) else 0)
+                                df_diff = df_diff.sort_values("_abs", ascending=False).drop(columns=["_abs"])
+                                st.dataframe(df_diff.head(50), use_container_width=True, hide_index=True)
+                                if len(diffs) > 50:
+                                    st.caption(f"Hiển thị 50/{len(diffs)} dòng chênh lệch lớn nhất")
+                            else:
+                                st.success("✓ Không có chênh lệch — upload sẽ không thay đổi tồn nào.")
+
                         if st.button("Upload thẻ kho", key="btn_up_kho", type="primary"):
                             with st.spinner("Đang xử lý..."):
                                 tc = ["Nhóm hàng","Mã hàng","Mã vạch","Tên hàng","Thương hiệu","Chi nhánh"]
@@ -510,56 +548,6 @@ def module_quan_tri():
                         st.success("Xóa thành công!"); st.cache_data.clear()
                     except Exception as e: st.error(f"Lỗi: {e}")
 
-        # ══════ KẾT SỔ PHIẾU APP ══════
-        st.markdown("---")
-        st.markdown("**🔄 Kết sổ phiếu App (đồng bộ sau khi upload the_kho mới)**")
-        st.caption(
-            "Sau khi bạn upload the_kho mới từ KiotViet (snapshot đã phản ánh các "
-            "chuyển hàng vừa rồi), nhấn nút này để phiếu App <b>ngừng cộng/trừ</b> "
-            "thêm vào tồn kho. Phiếu vẫn lưu trong danh sách để tra cứu lịch sử.",
-            unsafe_allow_html=True
-        )
-        try:
-            n_active = supabase.table("phieu_chuyen_kho").select("id", count="exact") \
-                .eq("loai_phieu", IN_APP_MARKER).execute().count or 0
-            n_archived = supabase.table("phieu_chuyen_kho").select("id", count="exact") \
-                .eq("loai_phieu", ARCHIVED_MARKER).execute().count or 0
-        except Exception:
-            n_active, n_archived = 0, 0
-
-        ca1, ca2 = st.columns(2)
-        with ca1:
-            st.metric("Đang active (tính delta)", str(n_active))
-        with ca2:
-            st.metric("Đã kết sổ", str(n_archived))
-
-        if st.button("🔄 Kết sổ tất cả phiếu App", disabled=(n_active == 0),
-                     key="btn_archive_app"):
-            try:
-                supabase.table("phieu_chuyen_kho").update(
-                    {"loai_phieu": ARCHIVED_MARKER}
-                ).eq("loai_phieu", IN_APP_MARKER).execute()
-                st.cache_data.clear()
-                log_action("PHIEU_ARCHIVE", f"rows={n_active}")
-                st.success(f"✓ Đã kết sổ {n_active} dòng phiếu App!")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Lỗi: {e}")
-
-        if n_archived > 0:
-            if st.button("↩ Khôi phục phiếu đã kết sổ (chỉ khi cần)",
-                         key="btn_restore_archive"):
-                try:
-                    supabase.table("phieu_chuyen_kho").update(
-                        {"loai_phieu": IN_APP_MARKER}
-                    ).eq("loai_phieu", ARCHIVED_MARKER).execute()
-                    st.cache_data.clear()
-                    log_action("PHIEU_RESTORE", f"rows={n_archived}",
-                              level="warning")
-                    st.success(f"✓ Đã khôi phục {n_archived} dòng!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Lỗi: {e}")
 
     with tab_nv:
         module_nhan_vien()

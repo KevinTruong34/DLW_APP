@@ -417,13 +417,31 @@ def _get_loai_sp_map() -> dict:
 
 
 def _filter_chi_hang_hoa(df: pd.DataFrame, ma_col: str = "Mã hàng") -> pd.DataFrame:
-    """Lọc DataFrame chỉ giữ các dòng là Hàng hóa (loại bỏ Dịch vụ)."""
+    """
+    Lọc DataFrame chỉ giữ SP track tồn kho:
+    - loai_sp = 'Hàng hóa' (loại Dịch vụ + DVPS)
+    - loai_hang != 'Sản phẩm khác' (loại SPK)
+    """
     if df.empty or ma_col not in df.columns:
         return df
-    loai_map = _get_loai_sp_map()
-    if not loai_map:
+    hh = load_hang_hoa()
+    if hh.empty or "ma_hang" not in hh.columns:
         return df  # Không có master → giữ nguyên (an toàn)
-    return df[df[ma_col].astype(str).map(loai_map) == "Hàng hóa"].copy()
+    loai_sp_map = dict(zip(hh["ma_hang"].astype(str), hh["loai_sp"].fillna("")))
+    loai_hang_map = dict(zip(
+        hh["ma_hang"].astype(str),
+        hh.get("loai_hang", pd.Series(dtype=str)).fillna(""),
+    ))
+
+    def _is_track(ma):
+        ma = str(ma)
+        if loai_sp_map.get(ma) != "Hàng hóa":
+            return False
+        if loai_hang_map.get(ma) == "Sản phẩm khác":
+            return False
+        return True
+
+    return df[df[ma_col].astype(str).apply(_is_track)].copy()
 
 
 # ══════════════════════════════════════════════════════════

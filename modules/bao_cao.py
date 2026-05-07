@@ -778,11 +778,12 @@ def _tab_ban_hang():
         st.info("Không có dữ liệu.")
         return
 
-    # Loại bỏ APSC (sửa chữa) khỏi tab này; giữ KiotViet + POS + AHDD
-    # AHDD đã có "Thành tiền" âm cho 'tra' và dương cho 'moi' → sum() ra net đúng
-    df = raw[~raw["Mã hóa đơn"].apply(_is_apsc_hd)].copy()
+    # Gồm tất cả nguồn: KiotViet + POS + AHDD + APSC.
+    # APSC bán linh kiện (pin/máy/kim) + dịch vụ (lau dầu/tra keo) — đều là doanh thu.
+    # AHDD: "Thành tiền" âm cho 'tra' và dương cho 'moi' → sum() ra net đúng.
+    df = raw.copy()
     if df.empty:
-        st.info("Không có hóa đơn bán hàng trong khoảng này.")
+        st.info("Không có hóa đơn trong khoảng này.")
         return
 
     # Join với hang_hoa để lấy loai_sp, loai_hang, thuong_hieu
@@ -833,8 +834,8 @@ def _tab_ban_hang():
             use_container_width=True, hide_index=True
         )
         st.caption(
-            "Doanh thu = sum(Thành tiền) net. "
-            "Phiếu đổi/trả: items khách trả lại ghi âm, items mua mới ghi dương."
+            "Doanh thu = sum(Thành tiền) net từ KiotViet + POS + Đổi/Trả + Sửa chữa (APSC). "
+            "Đổi/Trả: items khách trả lại ghi âm, items mua mới ghi dương."
         )
     else:
         st.warning("Cột 'Thành tiền' hoặc 'Số lượng' không có trong dữ liệu hóa đơn.")
@@ -1712,7 +1713,7 @@ def module_bao_cao():
     if main_tab == "💰 Doanh thu":
         # CHỈNH SỬA TẠI ĐÂY: Đổi is_ke_toan_or_admin() thành is_admin()
         if is_admin(): 
-            sub_labels = ["Cuối ngày", "Tổng quan", "Bán hàng theo nhóm"]
+            sub_labels = ["Cuối ngày", "Tổng quan", "Doanh thu theo nhóm"]
             sub_tab = st.pills("bc_sub_nav", sub_labels,
                                default=sub_labels[0],
                                label_visibility="collapsed",

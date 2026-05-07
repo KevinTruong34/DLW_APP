@@ -322,7 +322,8 @@ def load_phieu_chuyen_kho(branches_key: tuple = None):
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
     if "ngay_chuyen" in df.columns:
-        df["_ngay"] = pd.to_datetime(df["ngay_chuyen"], errors="coerce")
+        df["_ngay"] = pd.to_datetime(df["ngay_chuyen"], errors="coerce", utc=True) \
+                       .dt.tz_convert("Asia/Ho_Chi_Minh")
         df["_date"] = df["_ngay"].dt.date
     return df
 

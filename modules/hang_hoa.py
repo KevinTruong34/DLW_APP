@@ -357,6 +357,8 @@ def _render_them_moi():
         new_gb   = st.number_input("Giá bán:", min_value=0, step=10000,
                                     key=f"hh_new_gb_{cnt}", value=0)
     with c2:
+        new_loai_sp = st.radio("Loại sản phẩm:", ["Hàng hóa", "Dịch vụ"],
+                                horizontal=True, key=f"hh_new_loai_sp_{cnt}")
         loai_sel = st.selectbox("Loại hàng:",
             ["-- Chọn --"] + loai_opts + ["(Nhập mới)"],
             key=f"hh_new_loai_{cnt}")
@@ -399,6 +401,7 @@ def _render_them_moi():
                     "ten_hang":   new_ten.strip(),
                     "ma_vach":    new_vach.strip() or None,
                     "gia_ban":    int(new_gb),
+                    "loai_sp":    new_loai_sp,
                     "loai_hang":  new_loai or None,
                     "thuong_hieu": new_th or None,
                     "bao_hanh":   new_bh.strip() or None,
@@ -434,6 +437,12 @@ def _render_sua_hang_hoa(row_m):
                                     value=int(row_m.get("gia_ban",0) or 0),
                                     key=f"hh_sua_gb_{ma}_{cnt}")
     with c2:
+        cur_loai_sp = str(row_m.get("loai_sp") or "Hàng hóa")
+        sp_options = ["Hàng hóa", "Dịch vụ"]
+        sp_idx = sp_options.index(cur_loai_sp) if cur_loai_sp in sp_options else 0
+        new_loai_sp = st.radio("Loại sản phẩm:", sp_options,
+                                index=sp_idx, horizontal=True,
+                                key=f"hh_sua_loai_sp_{ma}_{cnt}")
         loai_idx = (loai_opts.index(cur_loai) + 1) if cur_loai in loai_opts else 0
         loai_sel = st.selectbox("Loại hàng:",
             ["-- Giữ nguyên --"] + loai_opts,
@@ -462,6 +471,7 @@ def _render_sua_hang_hoa(row_m):
                 "ma_vach":  new_vach.strip() or None,
                 "gia_ban":  int(new_gb),
                 "bao_hanh": new_bh.strip() or None,
+                "loai_sp":  new_loai_sp,
             }
             if new_loai: payload["loai_hang"]   = new_loai
             if new_th:   payload["thuong_hieu"] = new_th

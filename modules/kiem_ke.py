@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 import numpy as np
 
-from utils.helpers import _normalize, now_vn, now_vn_iso, today_vn, fmt_vn
+from utils.helpers import _normalize, now_vn, today_vn, fmt_vn
 from utils.config import ALL_BRANCHES, CN_SHORT, IN_APP_MARKER, ARCHIVED_MARKER
 from utils.db import supabase, log_action, load_hoa_don, load_the_kho, load_hang_hoa, \
     load_phieu_chuyen_kho, load_phieu_kiem_ke, get_gia_ban_map, load_stock_deltas, \
@@ -225,28 +225,31 @@ def _kk_cancel_phieu(ma_phieu: str) -> tuple[bool, str]:
     except Exception as e:
         return False, f"Lỗi hủy phiếu: {e}"
 def _kk_approve(ma_phieu: str) -> tuple[bool, str]:
+    """
+    Duyệt phiếu kiểm kê — atomic qua RPC duyet_phieu_kiem_ke.
+    RPC sẽ:
+      1. Validate trạng thái phiếu = 'Chờ duyệt admin'
+      2. Apply sl_thuc_te vào the_kho cho từng dòng (UPDATE/INSERT)
+      3. Ghi chenh_lech + trạng thái 'Đã duyệt' cho chi tiết
+      4. Update header phiếu
+    """
     try:
-        lines = _kk_get_lines(ma_phieu)
-        if lines.empty:
-            return False, "Phiếu không có dòng hàng."
-        for _, r in lines.iterrows():
-            ton_ss = int(r.get("ton_snapshot", 0) or 0)
-            sl_tt = int(r.get("sl_thuc_te", 0) or 0)
-            ch = sl_tt - ton_ss
-            supabase.table("phieu_kiem_ke_chi_tiet").update({
-                "ton_ky_vong_luc_duyet": ton_ss,
-                "chenh_lech": ch,
-                "trang_thai_dong": "Đã duyệt",
-            }).eq("id", int(r["id"])).execute()
-
-        supabase.table("phieu_kiem_ke").update({
-            "trang_thai": "Đã duyệt",
-            "approved_by": (get_user() or {}).get("ho_ten", ""),
-            "approved_at": now_vn_iso(),
-        }).eq("ma_phieu_kk", ma_phieu).execute()
-        st.cache_data.clear()
-        log_action("KIEMKE_APPROVE", f"ma={ma_phieu}")
-        return True, "Đã duyệt phiếu kiểm kê."
+        res = supabase.rpc("duyet_phieu_kiem_ke", {
+            "p_ma_phieu":   ma_phieu,
+            "p_nguoi_duyet": (get_user() or {}).get("ho_ten", ""),
+        }).execute()
+        result = res.data
+        if isinstance(result, list):
+            result = result[0]
+        if result.get("ok"):
+            n_rows = result.get("updated_rows", 0)
+            cn     = result.get("chi_nhanh", "")
+            st.cache_data.clear()
+            log_action("KIEMKE_APPROVE",
+                       f"ma={ma_phieu} cn={cn} rows={n_rows}")
+            return True, f"✓ Đã duyệt phiếu — cập nhật tồn cho {n_rows} mặt hàng tại {cn}."
+        else:
+            return False, result.get("error", "Lỗi không xác định")
     except Exception as e:
         return False, f"Lỗi duyệt phiếu: {e}"
 

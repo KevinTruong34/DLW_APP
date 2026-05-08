@@ -15,6 +15,20 @@ PDT_PREFIXES  = ["AHDD"]                     # Phiếu đổi/trả POS
 APP_INVOICE_PREFIXES = APSC_PREFIXES + POS_PREFIXES + PDT_PREFIXES  # Tổng "App"
  
  
+def _apply_admin_filter(df: pd.DataFrame) -> pd.DataFrame:
+    """Lọc bỏ HĐ/phiếu admin nếu toggle 'Bao gồm HĐ admin' đang OFF.
+
+    Default behavior: include admin (toggle defaults to True).
+    """
+    if df is None or df.empty:
+        return df
+    if st.session_state.get("bc_include_admin", True):
+        return df
+    if "is_admin_created" not in df.columns:
+        return df
+    return df[~df["is_admin_created"].fillna(False).astype(bool)].copy()
+
+
 def _is_apsc_hd(ma: str) -> bool:
     """HĐ sửa chữa — bắt đầu APSC."""
     return any(str(ma).startswith(p) for p in APSC_PREFIXES)
@@ -138,7 +152,8 @@ def _load_sc_phieu(branches_key: tuple, d_from: date, d_to: date) -> pd.DataFram
     rows, batch, offset = [], 1000, 0
     while True:
         res = supabase.table("phieu_sua_chua").select(
-            "ma_phieu,chi_nhanh,trang_thai,created_by,nguoi_tiep_nhan,created_at,ten_khach,sdt_khach"
+            "ma_phieu,chi_nhanh,trang_thai,created_by,nguoi_tiep_nhan,"
+            "created_at,ten_khach,sdt_khach,is_admin_created,admin_note"
         ).in_("chi_nhanh", list(branches_key)) \
          .order("created_at", desc=True) \
          .range(offset, offset + batch - 1).execute()
@@ -467,8 +482,8 @@ def _tab_cuoi_ngay():
     yesterday = today - timedelta(days=1)
 
     # Load 2 ngày: hôm nay + hôm qua (để so sánh delta)
-    raw_today  = _load_hd(load_cns, today, today)
-    raw_yest   = _load_hd(load_cns, yesterday, yesterday)
+    raw_today  = _apply_admin_filter(_load_hd(load_cns, today, today))
+    raw_yest   = _apply_admin_filter(_load_hd(load_cns, yesterday, yesterday))
 
     def _summarize(raw: pd.DataFrame) -> dict:
         """
@@ -550,7 +565,7 @@ def _tab_cuoi_ngay():
         st.caption("💡 Bán hàng — " + " · ".join(parts))
     
     # ── Phiếu sửa chữa hôm nay — data chung CN ──
-    df_sc = _load_sc_phieu(load_cns, today, today)
+    df_sc = _apply_admin_filter(_load_sc_phieu(load_cns, today, today))
 
     so_sc_tao    = len(df_sc)
     so_sc_xong   = len(df_sc[df_sc["trang_thai"] == "Hoàn thành"]) if not df_sc.empty else 0
@@ -660,7 +675,7 @@ def _tab_tong_quan_dt():
     with col_date:
         d_from, d_to = _date_filter("bc_tq")
 
-    raw = _load_hd(load_cns, d_from, d_to)
+    raw = _apply_admin_filter(_load_hd(load_cns, d_from, d_to))
     if raw.empty:
         st.info("Không có dữ liệu trong khoảng thời gian này.")
         return
@@ -773,7 +788,7 @@ def _tab_ban_hang():
     with col_date:
         d_from, d_to = _date_filter("bc_bh")
 
-    raw = _load_hd(load_cns, d_from, d_to)
+    raw = _apply_admin_filter(_load_hd(load_cns, d_from, d_to))
     if raw.empty:
         st.info("Không có dữ liệu.")
         return
@@ -1711,8 +1726,16 @@ def module_bao_cao():
 
     # ── Render CHỈ tab đang chọn ──
     if main_tab == "💰 Doanh thu":
-        # CHỈNH SỬA TẠI ĐÂY: Đổi is_ke_toan_or_admin() thành is_admin()
-        if is_admin(): 
+        if is_admin():
+            st.checkbox(
+                "Bao gồm HĐ admin",
+                value=True,
+                key="bc_include_admin",
+                help="HĐ admin = HĐ tạo bởi admin với tham số tự do "
+                     "(backdate, custom giá, v.v.). Tắt để xem doanh thu "
+                     "'normal' không tính HĐ admin."
+            )
+
             sub_labels = ["Cuối ngày", "Tổng quan", "Doanh thu theo nhóm"]
             sub_tab = st.pills("bc_sub_nav", sub_labels,
                                default=sub_labels[0],

@@ -531,6 +531,8 @@ def _load_hoa_don_pos_flat(branches_key: tuple) -> pd.DataFrame:
                 "Nhân viên":         nguoi_ban,
                 "Ghi chú":           h.get("ghi_chu", "") or "",
                 "Kênh bán":          "POS",
+                "is_admin_created":  bool(h.get("is_admin_created", False)),
+                "admin_note":        h.get("admin_note") or None,
             }
 
             items = ct_map.get(ma_hd, [])
@@ -674,6 +676,8 @@ def _load_doi_tra_pos_flat(branches_key: tuple) -> pd.DataFrame:
                 "_pdt_ma_hd_goc":    h.get("ma_hd_goc", ""),
                 "_pdt_loai":         h.get("loai_phieu", ""),
                 "_pdt_chenh_lech":   chenh_lech,
+                "is_admin_created":  bool(h.get("is_admin_created", False)),
+                "admin_note":        h.get("admin_note") or None,
             }
 
             items = ct_map.get(ma_pdt, [])

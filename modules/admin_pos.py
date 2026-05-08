@@ -176,9 +176,10 @@ def _render_tao_hd_pos():
     st.markdown(f"**Tổng tiền hàng:** {fmt_vnd(tong_tien_hang)}")
 
     # ── 5. Giảm giá đơn (optional) ──
+    st.session_state.setdefault("admin_hd_gg", 0)
     giam_gia_don = st.number_input(
         "Giảm giá đơn (optional, default 0)",
-        min_value=0, value=0, step=10000,
+        min_value=0, step=10000,
         key="admin_hd_gg",
         help="Để bù HĐ KiotViet/POS gốc có giảm giá"
     )
@@ -190,18 +191,55 @@ def _render_tao_hd_pos():
 
     # ── 6. PTTT ──
     st.markdown("---")
-    st.markdown("**Phương thức thanh toán**")
+    st.markdown(f"**Phương thức thanh toán** (khách cần trả: {fmt_vnd(khach_can_tra)})")
+
+    st.session_state.setdefault("admin_hd_tm", 0)
+    st.session_state.setdefault("admin_hd_ck", 0)
+    st.session_state.setdefault("admin_hd_the", 0)
+
+    # Quick-fill: chỉ 1 PTTT, reset 2 cái kia về 0
+    col_q1, col_q2, col_q3 = st.columns(3)
+    with col_q1:
+        if st.button("💵 Toàn bộ Tiền mặt", key="admin_hd_qf_tm",
+                     use_container_width=True):
+            st.session_state["admin_hd_tm"] = int(khach_can_tra)
+            st.session_state["admin_hd_ck"] = 0
+            st.session_state["admin_hd_the"] = 0
+            st.rerun()
+    with col_q2:
+        if st.button("🏦 Toàn bộ Chuyển khoản", key="admin_hd_qf_ck",
+                     use_container_width=True):
+            st.session_state["admin_hd_tm"] = 0
+            st.session_state["admin_hd_ck"] = int(khach_can_tra)
+            st.session_state["admin_hd_the"] = 0
+            st.rerun()
+    with col_q3:
+        if st.button("💳 Toàn bộ Thẻ", key="admin_hd_qf_the",
+                     use_container_width=True):
+            st.session_state["admin_hd_tm"] = 0
+            st.session_state["admin_hd_ck"] = 0
+            st.session_state["admin_hd_the"] = int(khach_can_tra)
+            st.rerun()
+
     col_p1, col_p2, col_p3 = st.columns(3)
     with col_p1:
-        tien_mat = st.number_input("Tiền mặt", min_value=0,
-                                   value=khach_can_tra, step=10000,
+        tien_mat = st.number_input("Tiền mặt", min_value=0, step=1000,
                                    key="admin_hd_tm")
     with col_p2:
-        chuyen_khoan = st.number_input("Chuyển khoản", min_value=0, value=0,
-                                        step=10000, key="admin_hd_ck")
+        chuyen_khoan = st.number_input("Chuyển khoản", min_value=0, step=1000,
+                                        key="admin_hd_ck")
     with col_p3:
-        the = st.number_input("Thẻ", min_value=0, value=0, step=10000,
-                              key="admin_hd_the")
+        the = st.number_input("Thẻ", min_value=0, step=1000, key="admin_hd_the")
+
+    # Tổng PTTT vs khách cần trả
+    tong_pttt = int(tien_mat) + int(chuyen_khoan) + int(the)
+    diff = tong_pttt - int(khach_can_tra)
+    if diff == 0:
+        st.success(f"✓ Tổng PTTT: {fmt_vnd(tong_pttt)} (khớp)")
+    elif diff > 0:
+        st.info(f"Tổng PTTT: {fmt_vnd(tong_pttt)} (khách trả thừa {fmt_vnd(diff)})")
+    else:
+        st.warning(f"Tổng PTTT: {fmt_vnd(tong_pttt)} (còn thiếu {fmt_vnd(-diff)})")
 
     # ── 7. Admin note ──
     admin_note = st.text_area(
@@ -451,19 +489,54 @@ def _render_tao_doi_tra():
     # ── 7. PTTT ──
     st.markdown("---")
     if chenh_lech > 0:
-        st.caption(f"Khách cần bù {fmt_vnd(chenh_lech)} — chia 3 PTTT")
+        st.caption(f"Khách cần bù {fmt_vnd(chenh_lech)}")
+
+        st.session_state.setdefault("admin_pdt_tm", 0)
+        st.session_state.setdefault("admin_pdt_ck", 0)
+        st.session_state.setdefault("admin_pdt_the", 0)
+
+        col_q1, col_q2, col_q3 = st.columns(3)
+        with col_q1:
+            if st.button("💵 Toàn bộ Tiền mặt", key="admin_pdt_qf_tm",
+                         use_container_width=True):
+                st.session_state["admin_pdt_tm"] = int(chenh_lech)
+                st.session_state["admin_pdt_ck"] = 0
+                st.session_state["admin_pdt_the"] = 0
+                st.rerun()
+        with col_q2:
+            if st.button("🏦 Toàn bộ Chuyển khoản", key="admin_pdt_qf_ck",
+                         use_container_width=True):
+                st.session_state["admin_pdt_tm"] = 0
+                st.session_state["admin_pdt_ck"] = int(chenh_lech)
+                st.session_state["admin_pdt_the"] = 0
+                st.rerun()
+        with col_q3:
+            if st.button("💳 Toàn bộ Thẻ", key="admin_pdt_qf_the",
+                         use_container_width=True):
+                st.session_state["admin_pdt_tm"] = 0
+                st.session_state["admin_pdt_ck"] = 0
+                st.session_state["admin_pdt_the"] = int(chenh_lech)
+                st.rerun()
+
         col_p1, col_p2, col_p3 = st.columns(3)
         with col_p1:
-            tien_mat = st.number_input("Tiền mặt", min_value=0,
-                                       value=int(chenh_lech), step=10000,
+            tien_mat = st.number_input("Tiền mặt", min_value=0, step=1000,
                                        key="admin_pdt_tm")
         with col_p2:
             chuyen_khoan = st.number_input("Chuyển khoản", min_value=0,
-                                            value=0, step=10000,
-                                            key="admin_pdt_ck")
+                                            step=1000, key="admin_pdt_ck")
         with col_p3:
-            the = st.number_input("Thẻ", min_value=0, value=0, step=10000,
+            the = st.number_input("Thẻ", min_value=0, step=1000,
                                   key="admin_pdt_the")
+
+        tong_pttt = int(tien_mat) + int(chuyen_khoan) + int(the)
+        diff = tong_pttt - int(chenh_lech)
+        if diff == 0:
+            st.success(f"✓ Tổng PTTT: {fmt_vnd(tong_pttt)} (khớp)")
+        elif diff > 0:
+            st.info(f"Tổng PTTT: {fmt_vnd(tong_pttt)} (thừa {fmt_vnd(diff)})")
+        else:
+            st.warning(f"Tổng PTTT: {fmt_vnd(tong_pttt)} (thiếu {fmt_vnd(-diff)})")
     elif chenh_lech < 0:
         st.caption(f"Shop hoàn {fmt_vnd(-chenh_lech)} — chỉ tiền mặt (số âm)")
         tien_mat = chenh_lech

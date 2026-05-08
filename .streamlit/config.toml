@@ -5,3 +5,7 @@ fileWatcherType = "poll"
 
 # Tự rerun app khi phát hiện file thay đổi
 runOnSave = true
+
+[theme]
+# Force light theme bất kể system OS — không cho browser apply prefers-color-scheme: dark
+base = "light"

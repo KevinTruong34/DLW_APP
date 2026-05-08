@@ -18,14 +18,8 @@ from utils.helpers import _build_phieu_html, _in_phieu_sc
 # Helper: phân loại SP cho phép sửa giá khi bán (SPK/DVPS)
 # ══════════════════════════════════════════════════════════
 def _is_open_price_row(row) -> bool:
-    """Returns True nếu row hang_hoa là SPK hoặc DVPS (open-price)."""
-    loai_hang   = str(row.get("loai_hang") or "").strip()
-    thuong_hieu = str(row.get("thuong_hieu") or "").strip()
-    if loai_hang == "Sản phẩm khác":
-        return True
-    if loai_hang == "Sửa chữa" and thuong_hieu == "Chi phí sửa chữa phát sinh":
-        return True
-    return False
+    """True nếu row hang_hoa là open-price (đọc thẳng flag is_open_price)."""
+    return bool(row.get("is_open_price", False))
 
 
 # ══════════════════════════════════════════════════════════

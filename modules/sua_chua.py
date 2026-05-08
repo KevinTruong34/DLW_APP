@@ -151,8 +151,9 @@ def module_sua_chua():
             if not res.data: return pd.DataFrame()
             df = pd.DataFrame(res.data)
             if "ngay_tiep_nhan" in df.columns:
-                df["_ngay"] = (pd.to_datetime(df["ngay_tiep_nhan"],
-                                              utc=True, format="ISO8601")
+                df["_ngay"] = (pd.to_datetime(df["ngay_tiep_nhan"], utc=True,
+                                              format="ISO8601",
+                                              errors="coerce")
                                .dt.tz_convert("Asia/Ho_Chi_Minh"))
                 df["Ngày TN"] = df["_ngay"].dt.strftime("%d/%m/%Y %H:%M")
             return df

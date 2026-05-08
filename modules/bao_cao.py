@@ -419,8 +419,8 @@ def _get_loai_sp_map() -> dict:
 def _filter_chi_hang_hoa(df: pd.DataFrame, ma_col: str = "Mã hàng") -> pd.DataFrame:
     """
     Lọc DataFrame chỉ giữ SP track tồn kho:
-    - loai_sp = 'Hàng hóa' (loại Dịch vụ + DVPS)
-    - loai_hang != 'Sản phẩm khác' (loại SPK)
+    - loai_sp = 'Hàng hóa' (loại Dịch vụ)
+    - is_open_price = false (loại open-price: SPK, dịch vụ giá biến đổi)
     """
     if df.empty or ma_col not in df.columns:
         return df
@@ -428,16 +428,16 @@ def _filter_chi_hang_hoa(df: pd.DataFrame, ma_col: str = "Mã hàng") -> pd.Data
     if hh.empty or "ma_hang" not in hh.columns:
         return df  # Không có master → giữ nguyên (an toàn)
     loai_sp_map = dict(zip(hh["ma_hang"].astype(str), hh["loai_sp"].fillna("")))
-    loai_hang_map = dict(zip(
+    open_map = dict(zip(
         hh["ma_hang"].astype(str),
-        hh.get("loai_hang", pd.Series(dtype=str)).fillna(""),
+        hh.get("is_open_price", pd.Series(dtype=bool)).fillna(False),
     ))
 
     def _is_track(ma):
         ma = str(ma)
         if loai_sp_map.get(ma) != "Hàng hóa":
             return False
-        if loai_hang_map.get(ma) == "Sản phẩm khác":
+        if open_map.get(ma, False):
             return False
         return True
 

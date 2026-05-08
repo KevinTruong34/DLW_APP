@@ -49,6 +49,22 @@ except Exception:
     st.error("Chưa cấu hình SUPABASE_URL và SUPABASE_KEY trong Streamlit Secrets!")
     st.stop()
 
+
+def call_rpc(name: str, params: dict | None = None):
+    """Generic Supabase RPC wrapper. Returns res.data as-is (dict for jsonb RPCs)."""
+    res = supabase.rpc(name, params or {}).execute()
+    return res.data
+
+
+def load_all_nhan_vien(include_inactive: bool = False) -> list[dict]:
+    """Load NV danh sách. include_inactive=True để admin chọn cả NV đã nghỉ."""
+    q = supabase.table("nhan_vien").select("id, ho_ten, username, role, active")
+    if not include_inactive:
+        q = q.eq("active", True)
+    res = q.order("ho_ten").execute()
+    return res.data or []
+
+
 @st.cache_data(ttl=300)
 def load_hoa_don(branches_key: tuple):
     rows, batch, offset = [], 1000, 0

@@ -55,6 +55,33 @@ Plan phải handle 3 patterns khác nhau:
 → RPC admin cho phiếu sửa chữa phải store id riêng (vd qua audit log) hoặc thêm cột `created_by_id`. Decision:
 - **Recommend:** Thêm `created_by_id BIGINT` vào `phieu_sua_chua` để consistency.
 
+### 0.4 Schema cột tổng tiền `hoa_don_pos` (verified pre-flight)
+
+**KHÔNG có cột `tong_tien`** — actual columns:
+
+| Cột | Kiểu | Vai trò |
+|---|---|---|
+| `tong_tien_hang` | int | Tổng tiền hàng (sum `so_luong * don_gia` của items) trước giảm giá |
+| `giam_gia_don` | int | Giảm giá toàn đơn (default 0) |
+| `khach_can_tra` | int | = `tong_tien_hang - giam_gia_don` (số khách phải trả) |
+| `tien_mat`, `chuyen_khoan`, `the` | int | Phương thức thanh toán |
+| `tien_thua`, `tien_coc_da_thu` | int | Phụ trợ |
+| `ma_kh` | text | Mã khách (optional) |
+
+→ RPC admin (§3.2) phải map đúng 3 cột tổng tiền. Default `giam_gia_don=0`, nhưng admin có thể nhập optional để bù HĐ thật có giảm giá (vd HĐ KiotViet gốc có giảm).
+
+### 0.5 Sequences thực tế (verified pre-flight)
+
+| Plan kỳ vọng | Thực tế | Note |
+|---|---|---|
+| `ahd_seq` | ✓ tồn tại | Dùng cho `hoa_don_pos.ma_hd` (`AHD000XXX`) |
+| `ahdd_seq` | ✓ tồn tại | Dùng cho `phieu_doi_tra_pos.ma_pdt` (`AHDD000XXX`) |
+| `sc_seq` | **❌ chưa có** | Phải tạo Phase 1; Python `_gen_ma_phieu` hiện dùng `SELECT max+1` (race-prone) |
+
+→ Phase 1 thêm: tạo `sc_seq START WITH (max+1)`, wrapper RPC `next_sc_seq()`, sửa `modules/sua_chua.py:_gen_ma_phieu` dùng RPC.
+
+Bonus: tồn tại `ahdc_seq` (không nằm trong scope B1, để nguyên).
+
 ---
 
 ## 1. PRE-FLIGHT
@@ -86,15 +113,55 @@ ls modules/
 
 → **Kết quả grep này quan trọng** — Claude Code phải share trước khi viết code mới.
 
-### 1.3 Verify sequences tồn tại
+### 1.3 Verify + tạo sequences
+
+**Verify (đã chạy pre-flight):**
 
 ```sql
 SELECT sequence_name FROM information_schema.sequences
-WHERE sequence_schema = 'public' 
-  AND sequence_name LIKE 'ahd%' OR sequence_name LIKE 'sc%';
+WHERE sequence_schema = 'public'
+  AND (sequence_name LIKE 'ahd%' OR sequence_name LIKE 'sc%');
 ```
 
-Expected: `ahd_seq`, `ahdd_seq`, `sc_seq` (hoặc tên tương đương).
+Kết quả pre-flight: `ahd_seq` ✓, `ahdd_seq` ✓, `sc_seq` ❌ (chưa có), `ahdc_seq` (ngoài scope).
+
+**Tạo `sc_seq` + wrapper + sửa Python (Phase 1):**
+
+```sql
+-- Lấy max num hiện tại từ ma_phieu format SC######
+DO $$
+DECLARE
+    v_max int;
+BEGIN
+    SELECT COALESCE(MAX(NULLIF(regexp_replace(ma_phieu, '^SC', ''), '')::int), 0)
+    INTO v_max
+    FROM phieu_sua_chua
+    WHERE ma_phieu ~ '^SC[0-9]+$';
+
+    EXECUTE format('CREATE SEQUENCE IF NOT EXISTS sc_seq START WITH %s', v_max + 1);
+END $$;
+
+-- Wrapper để Python gọi qua supabase.rpc()
+CREATE OR REPLACE FUNCTION next_sc_seq()
+RETURNS bigint
+LANGUAGE sql
+AS $$ SELECT nextval('sc_seq') $$;
+```
+
+**Sửa Python — `DLW_APP/modules/sua_chua.py:173-180`:**
+
+```python
+def _gen_ma_phieu() -> str:
+    try:
+        res = supabase.rpc("next_sc_seq", {}).execute()
+        data = res.data
+        num = int(data[0]) if isinstance(data, list) and data else int(data) if data else 1
+        return f"SC{num:06d}"
+    except Exception:
+        return f"SC{datetime.now().strftime('%y%m%d%H%M')}"
+```
+
+→ Race-safe vĩnh viễn. RPC admin §3.4 cũng dùng `nextval('sc_seq')`.
 
 ---
 
@@ -221,7 +288,9 @@ DECLARE
     v_so_luong int;
     v_don_gia int;
     v_thanh_tien int;
-    v_tong_tien int := 0;
+    v_tong_tien_hang int := 0;
+    v_giam_gia_don int := 0;
+    v_khach_can_tra int := 0;
     v_ton_hien_tai int;
 BEGIN
     -- 1. Extract admin info
@@ -283,17 +352,30 @@ BEGIN
             END IF;
         END IF;
         
-        -- Compute tong_tien
+        -- Compute tong_tien_hang
         v_don_gia := (v_item->>'don_gia')::int;
-        v_tong_tien := v_tong_tien + (v_so_luong * v_don_gia);
+        v_tong_tien_hang := v_tong_tien_hang + (v_so_luong * v_don_gia);
     END LOOP;
-    
+
+    -- 7b. Tính giam_gia_don + khach_can_tra
+    v_giam_gia_don := COALESCE((payload->>'giam_gia_don')::int, 0);
+    IF v_giam_gia_don < 0 THEN
+        RETURN jsonb_build_object('ok', false, 'error', 'giam_gia_don không được âm');
+    END IF;
+    IF v_giam_gia_don > v_tong_tien_hang THEN
+        RETURN jsonb_build_object('ok', false,
+            'error', format('giam_gia_don (%s) vượt quá tong_tien_hang (%s)',
+                            v_giam_gia_don, v_tong_tien_hang));
+    END IF;
+    v_khach_can_tra := v_tong_tien_hang - v_giam_gia_don;
+
     -- 8. Insert header
     INSERT INTO hoa_don_pos (
         ma_hd, chi_nhanh, ten_khach, sdt_khach,
         nguoi_ban, nguoi_ban_id,
         tien_mat, chuyen_khoan, the,
-        tong_tien, ghi_chu, trang_thai,
+        tong_tien_hang, giam_gia_don, khach_can_tra,
+        ghi_chu, trang_thai,
         is_admin_created, admin_note,
         created_at
     ) VALUES (
@@ -303,10 +385,10 @@ BEGIN
         COALESCE((payload->>'tien_mat')::int, 0),
         COALESCE((payload->>'chuyen_khoan')::int, 0),
         COALESCE((payload->>'the')::int, 0),
-        v_tong_tien, 
-        payload->>'ghi_chu', 
+        v_tong_tien_hang, v_giam_gia_don, v_khach_can_tra,
+        payload->>'ghi_chu',
         'Hoàn thành',
-        true, 
+        true,
         payload->>'admin_note',
         v_created_at
     );
@@ -342,21 +424,43 @@ BEGIN
         v_admin_ho_ten,
         v_chi_nhanh,
         'ADMIN_HD_CREATE',
-        format('ma=%s nguoi_ban=%s (id=%s) created_at=%s tong=%s items=%s note=%s',
+        format('ma=%s nguoi_ban=%s (id=%s) created_at=%s tong_hang=%s gg=%s can_tra=%s items=%s note=%s',
                v_ma_hd, v_nguoi_ban, v_nguoi_ban_id,
-               v_created_at, v_tong_tien, jsonb_array_length(v_items),
+               v_created_at, v_tong_tien_hang, v_giam_gia_don, v_khach_can_tra,
+               jsonb_array_length(v_items),
                COALESCE(payload->>'admin_note', '-')),
         'warn'
     );
-    
+
     RETURN jsonb_build_object(
         'ok', true,
         'ma_hd', v_ma_hd,
-        'tong_tien', v_tong_tien,
+        'tong_tien_hang', v_tong_tien_hang,
+        'giam_gia_don', v_giam_gia_don,
+        'khach_can_tra', v_khach_can_tra,
         'created_at', v_created_at
     );
 END;
 $$;
+```
+
+**Payload shape:**
+
+```json
+{
+  "admin_id": 2,
+  "created_at": "2026-04-15T14:30:00+07:00",
+  "nguoi_ban_id": 5,
+  "chi_nhanh": "100 Lê Quý Đôn",
+  "ten_khach": "...", "sdt_khach": "...",
+  "tien_mat": 500000, "chuyen_khoan": 0, "the": 0,
+  "giam_gia_don": 0,
+  "ghi_chu": "...",
+  "admin_note": "Bù HĐ KiotViet ngày 2026-04-15",
+  "items": [
+    {"ma_hang": "...", "ten_hang": "...", "so_luong": 1, "don_gia": 500000}
+  ]
+}
 ```
 
 ### 3.3 RPC: `tao_phieu_doi_tra_pos_admin`
@@ -372,14 +476,121 @@ Tương tự nhưng cho phiếu đổi/trả. Khác biệt chính:
 
 ### 3.4 RPC: `tao_phieu_sua_chua_admin`
 
-Tương tự nhưng:
-- Không có items mặc định (phiếu mới chỉ có header)
-- Hoặc cho phép tạo + thêm dịch vụ luôn
-- Sequence: `sc_seq` → `SC000XXX`
-- Store `created_by_id` (cột mới thêm Phase 1)
-- Audit: `ADMIN_SC_CREATE`
+**Khác biệt cốt lõi với §3.2 / §3.3:** phiếu sửa chữa **KHÔNG đụng kho**. Logic kho chỉ trigger khi convert sang HĐ APSC (action `SC_HOA_DON` trong action_logs) — flow đó vẫn dùng path normal, RPC admin B1 không can thiệp.
 
-(Implementation details tương tự, schema khác.)
+**Scope RPC admin:**
+- Validate admin (helper `_admin_validate_request`)
+- Insert header `phieu_sua_chua` (chi nhánh, khách, NV tiếp nhận, trạng thái mặc định `'Đang sửa'`, `is_admin_created=true`, `admin_note`, `created_by_id`)
+- Insert chi tiết items vào `phieu_sua_chua_chi_tiet` nếu payload có (chỉ ghi nhận giá dịch vụ/phụ tùng — KHÔNG trừ kho)
+- Sequence: `sc_seq` → `SC000XXX` (đã tạo Phase 1)
+- Audit: `ADMIN_SC_CREATE`, level=`warn`
+- Khi admin muốn finalize → convert sang APSC qua flow normal (Phase B2 hoặc UI hiện có)
+
+```sql
+CREATE OR REPLACE FUNCTION tao_phieu_sua_chua_admin(payload jsonb)
+RETURNS jsonb
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_admin_id bigint;
+    v_admin_username text;
+    v_admin_ho_ten text;
+    v_validate jsonb;
+    v_created_at timestamp with time zone;
+    v_chi_nhanh text;
+    v_nguoi_tiep_nhan_id bigint;
+    v_nguoi_tiep_nhan text;
+    v_seq bigint;
+    v_ma_phieu text;
+    v_items jsonb;
+    v_item jsonb;
+BEGIN
+    -- 1. Extract admin info
+    v_admin_id := (payload->>'admin_id')::bigint;
+    SELECT username, ho_ten INTO v_admin_username, v_admin_ho_ten
+    FROM nhan_vien WHERE id = v_admin_id;
+
+    -- 2. created_at + validate
+    v_created_at := COALESCE((payload->>'created_at')::timestamp with time zone, now());
+    SELECT _admin_validate_request(v_admin_id, v_created_at) INTO v_validate;
+    IF NOT (v_validate->>'ok')::boolean THEN
+        RETURN v_validate;
+    END IF;
+
+    -- 3. NV tiếp nhận (có thể là chính admin hoặc NV khác)
+    v_nguoi_tiep_nhan_id := (payload->>'nguoi_tiep_nhan_id')::bigint;
+    SELECT ho_ten INTO v_nguoi_tiep_nhan FROM nhan_vien WHERE id = v_nguoi_tiep_nhan_id;
+    IF v_nguoi_tiep_nhan IS NULL THEN
+        RETURN jsonb_build_object('ok', false, 'error', 'nguoi_tiep_nhan_id không tồn tại');
+    END IF;
+
+    -- 4. Generate ma_phieu
+    v_seq := nextval('sc_seq');
+    v_ma_phieu := 'SC' || LPAD(v_seq::text, 6, '0');
+
+    -- 5. Insert header (KHÔNG đụng kho)
+    v_chi_nhanh := payload->>'chi_nhanh';
+    INSERT INTO phieu_sua_chua (
+        ma_phieu, chi_nhanh, ten_khach, sdt_khach,
+        loai_yeu_cau, hieu_dong_ho, dac_diem, mo_ta_loi,
+        khach_tra_truoc, ghi_chu_noi_bo, trang_thai,
+        nguoi_tiep_nhan, ngay_tiep_nhan, ngay_hen_tra,
+        created_by, created_by_id,
+        is_admin_created, admin_note,
+        created_at
+    ) VALUES (
+        v_ma_phieu, v_chi_nhanh,
+        payload->>'ten_khach', payload->>'sdt_khach',
+        COALESCE(payload->>'loai_yeu_cau', 'Sửa chữa'),
+        payload->>'hieu_dong_ho', payload->>'dac_diem', payload->>'mo_ta_loi',
+        COALESCE((payload->>'khach_tra_truoc')::int, 0),
+        payload->>'ghi_chu_noi_bo',
+        COALESCE(payload->>'trang_thai', 'Đang sửa'),
+        v_nguoi_tiep_nhan, v_created_at,
+        NULLIF(payload->>'ngay_hen_tra','')::date,
+        v_admin_username, v_admin_id,
+        true, payload->>'admin_note',
+        v_created_at
+    );
+
+    -- 6. Items (optional, chỉ ghi nhận giá — KHÔNG trừ kho)
+    v_items := COALESCE(payload->'items', '[]'::jsonb);
+    FOR v_item IN SELECT * FROM jsonb_array_elements(v_items)
+    LOOP
+        INSERT INTO phieu_sua_chua_chi_tiet (
+            ma_phieu, ma_hang, ten_hang, so_luong, don_gia
+        ) VALUES (
+            v_ma_phieu,
+            v_item->>'ma_hang',
+            v_item->>'ten_hang',
+            COALESCE((v_item->>'so_luong')::int, 1),
+            COALESCE((v_item->>'don_gia')::int, 0)
+        );
+    END LOOP;
+
+    -- 7. Audit
+    INSERT INTO action_logs (username, ho_ten, chi_nhanh, action, detail, level)
+    VALUES (
+        v_admin_username, v_admin_ho_ten, v_chi_nhanh,
+        'ADMIN_SC_CREATE',
+        format('ma=%s nguoi_tiep_nhan=%s (id=%s) created_at=%s items=%s note=%s',
+               v_ma_phieu, v_nguoi_tiep_nhan, v_nguoi_tiep_nhan_id,
+               v_created_at, jsonb_array_length(v_items),
+               COALESCE(payload->>'admin_note', '-')),
+        'warn'
+    );
+
+    RETURN jsonb_build_object(
+        'ok', true,
+        'ma_phieu', v_ma_phieu,
+        'created_at', v_created_at,
+        'items_count', jsonb_array_length(v_items)
+    );
+END;
+$$;
+```
+
+**Note:** Schema `phieu_sua_chua_chi_tiet` cần verify khi viết RPC (cột `ma_phieu, ma_hang, ten_hang, so_luong, don_gia` — Pre-flight đã thấy có table này dùng ở `sua_chua.py:163`). Nếu schema khác, adjust INSERT cho đúng.
 
 ### 3.5 Verify RPC
 
@@ -847,7 +1058,8 @@ Phase B2 sẽ build feature **Sửa HĐ existing**:
 | `utils/db.py` | DLW_APP | `load_all_nhan_vien`, `call_rpc` (extend) |
 | `modules/admin_pos.py` | DLW_APP | UI panel (FILE MỚI) |
 | `modules/bao_cao.py` | DLW_APP | Toggle "Bao gồm HĐ admin", badge |
-| `main.py` / `app.py` | DLW_APP | Sidebar menu admin |
+| `modules/sua_chua.py` | DLW_APP | Sửa `_gen_ma_phieu` dùng `nextval('sc_seq')` qua RPC `next_sc_seq` |
+| `app.py` | DLW_APP | Sidebar menu admin (đã có pattern `is_admin()` ở line 228-229) |
 
 KHÔNG cần edit:
 - `dl-watch-pos` repo (POS không đụng trong B1)
@@ -874,14 +1086,17 @@ Chia 2 buổi 2.5h hoặc 1 buổi 5h tùy schedule.
 
 ```
 PRE-FLIGHT
-[ ] Backup 4 bảng (hoa_don_pos, phieu_doi_tra_pos, phieu_sua_chua, action_logs)
-[ ] Claude Code đọc code DLW_APP để verify auth flow + UI pattern
-[ ] Verify 3 sequences tồn tại (ahd_seq, ahdd_seq, sc_seq)
+[x] Backup 4 bảng (hoa_don_pos, phieu_doi_tra_pos, phieu_sua_chua, action_logs)
+[x] Claude Code đọc code DLW_APP để verify auth flow + UI pattern (is_admin đã có sẵn)
+[x] Verify sequences (ahd_seq ✓, ahdd_seq ✓, sc_seq ❌ → tạo Phase 1)
 
 PHASE 1 — Schema
 [ ] ALTER TABLE 3 bảng: is_admin_created + admin_note
 [ ] ALTER TABLE phieu_sua_chua: thêm created_by_id
 [ ] CREATE 3 partial indexes
+[ ] CREATE SEQUENCE sc_seq START WITH (max+1)
+[ ] CREATE FUNCTION next_sc_seq() wrapper
+[ ] Sửa modules/sua_chua.py:_gen_ma_phieu dùng RPC next_sc_seq
 [ ] Verify schema bằng SQL query
 
 PHASE 2 — RPC

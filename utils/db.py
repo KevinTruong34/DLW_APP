@@ -49,6 +49,22 @@ except Exception:
     st.error("Chưa cấu hình SUPABASE_URL và SUPABASE_KEY trong Streamlit Secrets!")
     st.stop()
 
+
+def call_rpc(name: str, params: dict | None = None):
+    """Generic Supabase RPC wrapper. Returns res.data as-is (dict for jsonb RPCs)."""
+    res = supabase.rpc(name, params or {}).execute()
+    return res.data
+
+
+def load_all_nhan_vien(include_inactive: bool = False) -> list[dict]:
+    """Load NV danh sách. include_inactive=True để admin chọn cả NV đã nghỉ."""
+    q = supabase.table("nhan_vien").select("id, ho_ten, username, role, active")
+    if not include_inactive:
+        q = q.eq("active", True)
+    res = q.order("ho_ten").execute()
+    return res.data or []
+
+
 @st.cache_data(ttl=300)
 def load_hoa_don(branches_key: tuple):
     rows, batch, offset = [], 1000, 0
@@ -515,6 +531,8 @@ def _load_hoa_don_pos_flat(branches_key: tuple) -> pd.DataFrame:
                 "Nhân viên":         nguoi_ban,
                 "Ghi chú":           h.get("ghi_chu", "") or "",
                 "Kênh bán":          "POS",
+                "is_admin_created":  bool(h.get("is_admin_created", False)),
+                "admin_note":        h.get("admin_note") or None,
             }
 
             items = ct_map.get(ma_hd, [])
@@ -658,6 +676,8 @@ def _load_doi_tra_pos_flat(branches_key: tuple) -> pd.DataFrame:
                 "_pdt_ma_hd_goc":    h.get("ma_hd_goc", ""),
                 "_pdt_loai":         h.get("loai_phieu", ""),
                 "_pdt_chenh_lech":   chenh_lech,
+                "is_admin_created":  bool(h.get("is_admin_created", False)),
+                "admin_note":        h.get("admin_note") or None,
             }
 
             items = ct_map.get(ma_pdt, [])

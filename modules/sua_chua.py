@@ -172,9 +172,14 @@ def module_sua_chua():
 
     def _gen_ma_phieu() -> str:
         try:
-            res = supabase.table("phieu_sua_chua").select("ma_phieu") \
-                .like("ma_phieu", "SC______").order("ma_phieu", desc=True).limit(1).execute()
-            num = int(res.data[0]["ma_phieu"][2:]) + 1 if res.data else 1
+            res = supabase.rpc("next_sc_seq", {}).execute()
+            data = res.data
+            if isinstance(data, list):
+                num = int(data[0]) if data else 1
+            elif data is not None:
+                num = int(data)
+            else:
+                num = 1
             return f"SC{num:06d}"
         except Exception:
             return f"SC{datetime.now().strftime('%y%m%d%H%M')}"

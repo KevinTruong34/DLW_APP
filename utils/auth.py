@@ -104,6 +104,11 @@ def is_admin(): u = get_user(); return u and u.get("role") == "admin"
 def is_ke_toan_or_admin(): u = get_user(); return u and u.get("role") in ("admin","ke_toan")
 def get_active_branch(): return st.session_state.get("active_chi_nhanh","")
 
+def require_admin():
+    if not is_admin():
+        st.error("⛔ Tính năng này chỉ dành cho admin.")
+        st.stop()
+
 def get_accessible_branches():
     u = get_user()
     if not u: return []

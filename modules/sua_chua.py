@@ -629,249 +629,254 @@ def module_sua_chua():
             else:
                 opts = [f"{r['ma_phieu']} · {r.get('ten_khach','')} · {r.get('trang_thai','')}"
                         for _, r in df_filtered.iterrows()]
-                idx = 0
+                matched_idx = None
                 saved = st.session_state.get("sc_active_ma")
                 if saved:
                     for i, o in enumerate(opts):
-                        if o.startswith(saved): idx = i; break
+                        if o.startswith(saved): matched_idx = i; break
 
                 with col_p:
-                    picked = st.selectbox("Chọn phiếu:", opts, index=idx, key="sc_detail_pick")
-                ma_pick = picked.split(" · ")[0]
-                st.session_state["sc_active_ma"] = ma_pick
+                    picked = st.selectbox("Chọn phiếu:", opts, index=matched_idx,
+                                           placeholder="Chọn phiếu để xem chi tiết...",
+                                           key="sc_detail_pick")
+                if not picked:
+                    st.info("Chọn phiếu từ danh sách trên để xem chi tiết.")
+                else:
+                    ma_pick = picked.split(" · ")[0]
+                    st.session_state["sc_active_ma"] = ma_pick
 
-                phieu = df_chua_xong[df_chua_xong["ma_phieu"] == ma_pick].iloc[0]
-                ct    = _load_chi_tiet(ma_pick)
+                    phieu = df_chua_xong[df_chua_xong["ma_phieu"] == ma_pick].iloc[0]
+                    ct    = _load_chi_tiet(ma_pick)
 
-                # ── Header phiếu với badge trạng thái ──
-                st.markdown(
-                    f'<div style="display:flex;justify-content:space-between;'
-                    f'align-items:center;margin:18px 0 10px;">'
-                    f'<div>'
-                    f'<div style="font-size:1.25rem;font-weight:700;color:#1a1a2e;">'
-                    f'{ma_pick} — {phieu.get("ten_khach","")}</div>'
-                    f'<div style="font-size:0.85rem;color:#777;">'
-                    f'📞 {phieu.get("sdt_khach","")}</div>'
-                    f'</div>'
-                    f'<div>{_badge_status_html(phieu.get("trang_thai",""))}</div>'
-                    f'</div>',
-                    unsafe_allow_html=True
-                )
-
-                # ── Layout 2 cột: Thông tin khách + Chi tiết DV ──
-                col_left, col_right = st.columns([1, 1])
-
-                with col_left:
-                    # Card thông tin tiếp nhận
-                    info_html = (
-                        '<div class="sc-card">'
-                        '<div class="sc-card-header">📋 Thông tin tiếp nhận</div>'
-                    )
-                    rows = [
-                        ("Chi nhánh", phieu.get("chi_nhanh","")),
-                        ("Hiệu ĐH", phieu.get("hieu_dong_ho") or "—"),
-                        ("Đặc điểm", phieu.get("dac_diem") or "—"),
-                        ("Loại YC", phieu.get("loai_yeu_cau","")),
-                        ("NV tiếp nhận", phieu.get("nguoi_tiep_nhan") or "—"),
-                        ("Ngày TN", phieu.get("Ngày TN","—")),
-                        ("Hẹn trả", phieu.get("ngay_hen_tra") or "—"),
-                    ]
-                    for label, val in rows:
-                        info_html += (
-                            f'<div class="sc-info-row">'
-                            f'<div class="sc-info-label">{label}:</div>'
-                            f'<div class="sc-info-val">{val}</div>'
-                            f'</div>'
-                        )
-                    info_html += '</div>'
-                    st.markdown(info_html, unsafe_allow_html=True)
-
-                    # Card mô tả lỗi
-                    desc_html = (
-                        '<div class="sc-card">'
-                        '<div class="sc-card-header">📝 Mô tả lỗi / Ghi chú</div>'
-                        f'<div style="font-size:0.92rem;color:#1a1a2e;line-height:1.5;">'
-                        f'{phieu.get("mo_ta_loi","") or "—"}</div>'
-                    )
-                    if phieu.get("ghi_chu_noi_bo"):
-                        desc_html += (
-                            f'<div style="margin-top:8px;padding-top:8px;'
-                            f'border-top:1px dashed #ddd;">'
-                            f'<div style="font-size:0.78rem;color:#888;">Ghi chú nội bộ:</div>'
-                            f'<div style="font-size:0.88rem;color:#555;">'
-                            f'{phieu.get("ghi_chu_noi_bo","")}</div>'
-                            f'</div>'
-                        )
-                    desc_html += '</div>'
-                    st.markdown(desc_html, unsafe_allow_html=True)
-
-                with col_right:
-                    # Card dịch vụ / linh kiện
+                    # ── Header phiếu với badge trạng thái ──
                     st.markdown(
-                        '<div class="sc-card-header" style="margin-top:8px;">'
-                        '🔧 Dịch vụ / Linh kiện</div>',
+                        f'<div style="display:flex;justify-content:space-between;'
+                        f'align-items:center;margin:18px 0 10px;">'
+                        f'<div>'
+                        f'<div style="font-size:1.25rem;font-weight:700;color:#1a1a2e;">'
+                        f'{ma_pick} — {phieu.get("ten_khach","")}</div>'
+                        f'<div style="font-size:0.85rem;color:#777;">'
+                        f'📞 {phieu.get("sdt_khach","")}</div>'
+                        f'</div>'
+                        f'<div>{_badge_status_html(phieu.get("trang_thai",""))}</div>'
+                        f'</div>',
                         unsafe_allow_html=True
                     )
-                    if not ct.empty:
-                        ct["Thành tiền"] = ct["so_luong"] * ct["don_gia"]
-                        ct_view = ct.rename(columns={
-                            "loai_dong": "Loại", "ten_hang": "Tên", "ma_hang": "Mã",
-                            "so_luong": "SL", "don_gia": "Đơn giá"
-                        })
-                        vcols = ["Loại", "Tên", "Mã", "SL", "Đơn giá", "Thành tiền"]
-                        vcols = [c for c in vcols if c in ct_view.columns]
-                        st.dataframe(ct_view[vcols], use_container_width=True, hide_index=True,
-                                     height=min(280, 42 + len(ct_view) * 35))
 
-                        # 3 metric cards
-                        tong = int(ct["Thành tiền"].sum())
-                        tra_truoc = int(phieu.get("khach_tra_truoc", 0))
-                        con_lai = tong - tra_truoc
+                    # ── Layout 2 cột: Thông tin khách + Chi tiết DV ──
+                    col_left, col_right = st.columns([1, 1])
 
-                        m1, m2, m3 = st.columns(3)
-                        with m1:
-                            st.markdown(
-                                f'<div class="sc-money-card">'
-                                f'<div class="sc-money-label">Tổng cộng</div>'
-                                f'<div class="sc-money-value">{tong:,}đ</div>'
-                                f'</div>'.replace(",","."),
-                                unsafe_allow_html=True
+                    with col_left:
+                        # Card thông tin tiếp nhận
+                        info_html = (
+                            '<div class="sc-card">'
+                            '<div class="sc-card-header">📋 Thông tin tiếp nhận</div>'
+                        )
+                        rows = [
+                            ("Chi nhánh", phieu.get("chi_nhanh","")),
+                            ("Hiệu ĐH", phieu.get("hieu_dong_ho") or "—"),
+                            ("Đặc điểm", phieu.get("dac_diem") or "—"),
+                            ("Loại YC", phieu.get("loai_yeu_cau","")),
+                            ("NV tiếp nhận", phieu.get("nguoi_tiep_nhan") or "—"),
+                            ("Ngày TN", phieu.get("Ngày TN","—")),
+                            ("Hẹn trả", phieu.get("ngay_hen_tra") or "—"),
+                        ]
+                        for label, val in rows:
+                            info_html += (
+                                f'<div class="sc-info-row">'
+                                f'<div class="sc-info-label">{label}:</div>'
+                                f'<div class="sc-info-val">{val}</div>'
+                                f'</div>'
                             )
-                        with m2:
-                            st.markdown(
-                                f'<div class="sc-money-card">'
-                                f'<div class="sc-money-label">Đã trả trước</div>'
-                                f'<div class="sc-money-value">{tra_truoc:,}đ</div>'
-                                f'</div>'.replace(",","."),
-                                unsafe_allow_html=True
+                        info_html += '</div>'
+                        st.markdown(info_html, unsafe_allow_html=True)
+
+                        # Card mô tả lỗi
+                        desc_html = (
+                            '<div class="sc-card">'
+                            '<div class="sc-card-header">📝 Mô tả lỗi / Ghi chú</div>'
+                            f'<div style="font-size:0.92rem;color:#1a1a2e;line-height:1.5;">'
+                            f'{phieu.get("mo_ta_loi","") or "—"}</div>'
+                        )
+                        if phieu.get("ghi_chu_noi_bo"):
+                            desc_html += (
+                                f'<div style="margin-top:8px;padding-top:8px;'
+                                f'border-top:1px dashed #ddd;">'
+                                f'<div style="font-size:0.78rem;color:#888;">Ghi chú nội bộ:</div>'
+                                f'<div style="font-size:0.88rem;color:#555;">'
+                                f'{phieu.get("ghi_chu_noi_bo","")}</div>'
+                                f'</div>'
                             )
-                        with m3:
-                            st.markdown(
-                                f'<div class="sc-money-card sc-money-card-red">'
-                                f'<div class="sc-money-label">Còn lại</div>'
-                                f'<div class="sc-money-value sc-money-value-red">'
-                                f'{con_lai:,}đ</div>'
-                                f'</div>'.replace(",","."),
-                                unsafe_allow_html=True
-                            )
-                    else:
-                        st.caption("_Chưa có dịch vụ / linh kiện nào_")
+                        desc_html += '</div>'
+                        st.markdown(desc_html, unsafe_allow_html=True)
 
-                # ── Section: Cập nhật phiếu ──
-                if "sc_upd_open" not in st.session_state:
-                    st.session_state["sc_upd_open"] = False
-                if (st.session_state.get("sc_upd_dv_ma_tim", "").strip()
-                        or st.session_state.get("sc_upd_items", [])):
-                    st.session_state["sc_upd_open"] = True
-
-                st.markdown("<div style='margin-top:18px;'></div>", unsafe_allow_html=True)
-
-                with st.expander("✏️ Cập nhật phiếu", expanded=st.session_state["sc_upd_open"]):
-                    cur_tt = phieu.get("trang_thai", "Đang sửa")
-
-                    col_u1, col_u2 = st.columns(2)
-                    with col_u1:
-                        new_tt = st.selectbox("Trạng thái:", TRANG_THAI_LIST,
-                                              index=TRANG_THAI_LIST.index(cur_tt) if cur_tt in TRANG_THAI_LIST else 0,
-                                              key="sc_upd_tt")
-                    with col_u2:
-                        new_hen = st.date_input("Ngày hẹn trả:", key="sc_upd_hen",
-                                                 value=pd.to_datetime(phieu["ngay_hen_tra"]).date()
-                                                 if phieu.get("ngay_hen_tra") else None,
-                                                 format="DD/MM/YYYY")
-
-                    new_gc  = st.text_area("Ghi chú nội bộ:", value=phieu.get("ghi_chu_noi_bo") or "",
-                                            key="sc_upd_gc", height=80)
-
-                    # Dịch vụ đã lưu
-                    if not ct.empty:
+                    with col_right:
+                        # Card dịch vụ / linh kiện
                         st.markdown(
-                            '<div class="sc-section-title" style="margin-top:14px;">'
-                            'Dịch vụ / Linh kiện đã lưu</div>',
+                            '<div class="sc-card-header" style="margin-top:8px;">'
+                            '🔧 Dịch vụ / Linh kiện</div>',
                             unsafe_allow_html=True
                         )
-                        for _, row in ct.iterrows():
-                            ci1, ci2, ci3, ci4, ci5 = st.columns([2, 4, 1, 2, 1])
-                            with ci1:
-                                st.markdown(f"<span style='font-size:0.9rem'>{row.get('loai_dong','')}</span>", unsafe_allow_html=True)
-                            with ci2:
-                                st.markdown(f"<span style='font-size:0.9rem'>{row.get('ten_hang','')}</span>", unsafe_allow_html=True)
-                            with ci3:
-                                st.markdown(f"<span style='font-size:0.9rem'>x{int(row.get('so_luong',1))}</span>", unsafe_allow_html=True)
-                            with ci4:
-                                st.markdown(f"<span style='font-size:0.9rem'>{int(row.get('don_gia',0)):,}đ</span>".replace(",","."), unsafe_allow_html=True)
-                            with ci5:
-                                if st.button("✕", key=f"del_ct_{row['id']}"):
-                                    try:
-                                        supabase.table("phieu_sua_chua_chi_tiet").delete() \
-                                            .eq("id", int(row["id"])).execute()
-                                        st.cache_data.clear()
-                                        log_action("SC_DEL_ITEM", f"ma={ma_pick} item={row.get('ten_hang','')}")
-                                        st.rerun()
-                                    except Exception as e:
-                                        st.error(f"Lỗi xóa: {e}")
+                        if not ct.empty:
+                            ct["Thành tiền"] = ct["so_luong"] * ct["don_gia"]
+                            ct_view = ct.rename(columns={
+                                "loai_dong": "Loại", "ten_hang": "Tên", "ma_hang": "Mã",
+                                "so_luong": "SL", "don_gia": "Đơn giá"
+                            })
+                            vcols = ["Loại", "Tên", "Mã", "SL", "Đơn giá", "Thành tiền"]
+                            vcols = [c for c in vcols if c in ct_view.columns]
+                            st.dataframe(ct_view[vcols], use_container_width=True, hide_index=True,
+                                         height=min(280, 42 + len(ct_view) * 35))
 
-                    # Thêm dịch vụ mới
-                    st.markdown(
-                        '<div class="sc-section-title" style="margin-top:14px;">'
-                        '➕ Thêm dịch vụ / Linh kiện</div>',
-                        unsafe_allow_html=True
-                    )
-                    _widget_them_dv("sc_upd_dv", "sc_upd_items")
-                    upd_items = st.session_state.get("sc_upd_items", [])
-                    _hien_thi_items("sc_upd_items")
-                    if upd_items:
-                        tong_moi = sum(x["so_luong"] * x["don_gia"] for x in upd_items)
-                        st.caption(f"Tổng dịch vụ mới thêm: **{tong_moi:,}đ**".replace(",","."))
+                            # 3 metric cards
+                            tong = int(ct["Thành tiền"].sum())
+                            tra_truoc = int(phieu.get("khach_tra_truoc", 0))
+                            con_lai = tong - tra_truoc
 
-                    st.markdown("<div style='margin-top:14px;'></div>", unsafe_allow_html=True)
-                    if st.button("💾 Lưu cập nhật", type="primary", use_container_width=True, key="sc_save_upd"):
-                        try:
-                            supabase.table("phieu_sua_chua").update({
-                                "trang_thai":     new_tt,
-                                "ghi_chu_noi_bo": new_gc.strip() or None,
-                                "ngay_hen_tra":   new_hen.isoformat() if new_hen else None,
-                                "updated_at":     now_vn_iso(),
-                            }).eq("ma_phieu", ma_pick).execute()
+                            m1, m2, m3 = st.columns(3)
+                            with m1:
+                                st.markdown(
+                                    f'<div class="sc-money-card">'
+                                    f'<div class="sc-money-label">Tổng cộng</div>'
+                                    f'<div class="sc-money-value">{tong:,}đ</div>'
+                                    f'</div>'.replace(",","."),
+                                    unsafe_allow_html=True
+                                )
+                            with m2:
+                                st.markdown(
+                                    f'<div class="sc-money-card">'
+                                    f'<div class="sc-money-label">Đã trả trước</div>'
+                                    f'<div class="sc-money-value">{tra_truoc:,}đ</div>'
+                                    f'</div>'.replace(",","."),
+                                    unsafe_allow_html=True
+                                )
+                            with m3:
+                                st.markdown(
+                                    f'<div class="sc-money-card sc-money-card-red">'
+                                    f'<div class="sc-money-label">Còn lại</div>'
+                                    f'<div class="sc-money-value sc-money-value-red">'
+                                    f'{con_lai:,}đ</div>'
+                                    f'</div>'.replace(",","."),
+                                    unsafe_allow_html=True
+                                )
+                        else:
+                            st.caption("_Chưa có dịch vụ / linh kiện nào_")
 
-                            new_items = st.session_state.get("sc_upd_items", [])
-                            if new_items:
-                                supabase.table("phieu_sua_chua_chi_tiet").insert(
-                                    [{"ma_phieu": ma_pick, **item} for item in new_items]
-                                ).execute()
-                                st.session_state["sc_upd_items"] = []
+                    # ── Section: Cập nhật phiếu ──
+                    if "sc_upd_open" not in st.session_state:
+                        st.session_state["sc_upd_open"] = False
+                    if (st.session_state.get("sc_upd_dv_ma_tim", "").strip()
+                            or st.session_state.get("sc_upd_items", [])):
+                        st.session_state["sc_upd_open"] = True
 
-                            st.cache_data.clear()
-                            log_action("SC_UPDATE", f"ma={ma_pick} trang_thai={new_tt}")
-                            st.session_state["sc_upd_open"] = False
-                            st.session_state["sc_scroll_top"] = True
-                            st.success("✓ Đã cập nhật!")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Lỗi: {e}")
+                    st.markdown("<div style='margin-top:18px;'></div>", unsafe_allow_html=True)
 
-                # ── Action buttons ──
-                st.markdown("<div style='margin-top:18px;'></div>", unsafe_allow_html=True)
-                col_a1, col_a2 = st.columns(2)
-                with col_a1:
-                    if st.button("🖨️ In phiếu (A5)", use_container_width=True, key="sc_print_detail"):
-                        _in_phieu_sc(_build_phieu_html(dict(phieu), ct), key="sc_print_d")
+                    with st.expander("✏️ Cập nhật phiếu", expanded=st.session_state["sc_upd_open"]):
+                        cur_tt = phieu.get("trang_thai", "Đang sửa")
 
-                with col_a2:
-                    if is_admin():
-                        if st.button("🗑️ Hủy / Xóa phiếu này", type="secondary",
-                                     use_container_width=True, key="sc_delete"):
+                        col_u1, col_u2 = st.columns(2)
+                        with col_u1:
+                            new_tt = st.selectbox("Trạng thái:", TRANG_THAI_LIST,
+                                                  index=TRANG_THAI_LIST.index(cur_tt) if cur_tt in TRANG_THAI_LIST else 0,
+                                                  key="sc_upd_tt")
+                        with col_u2:
+                            new_hen = st.date_input("Ngày hẹn trả:", key="sc_upd_hen",
+                                                     value=pd.to_datetime(phieu["ngay_hen_tra"]).date()
+                                                     if phieu.get("ngay_hen_tra") else None,
+                                                     format="DD/MM/YYYY")
+
+                        new_gc  = st.text_area("Ghi chú nội bộ:", value=phieu.get("ghi_chu_noi_bo") or "",
+                                                key="sc_upd_gc", height=80)
+
+                        # Dịch vụ đã lưu
+                        if not ct.empty:
+                            st.markdown(
+                                '<div class="sc-section-title" style="margin-top:14px;">'
+                                'Dịch vụ / Linh kiện đã lưu</div>',
+                                unsafe_allow_html=True
+                            )
+                            for _, row in ct.iterrows():
+                                ci1, ci2, ci3, ci4, ci5 = st.columns([2, 4, 1, 2, 1])
+                                with ci1:
+                                    st.markdown(f"<span style='font-size:0.9rem'>{row.get('loai_dong','')}</span>", unsafe_allow_html=True)
+                                with ci2:
+                                    st.markdown(f"<span style='font-size:0.9rem'>{row.get('ten_hang','')}</span>", unsafe_allow_html=True)
+                                with ci3:
+                                    st.markdown(f"<span style='font-size:0.9rem'>x{int(row.get('so_luong',1))}</span>", unsafe_allow_html=True)
+                                with ci4:
+                                    st.markdown(f"<span style='font-size:0.9rem'>{int(row.get('don_gia',0)):,}đ</span>".replace(",","."), unsafe_allow_html=True)
+                                with ci5:
+                                    if st.button("✕", key=f"del_ct_{row['id']}"):
+                                        try:
+                                            supabase.table("phieu_sua_chua_chi_tiet").delete() \
+                                                .eq("id", int(row["id"])).execute()
+                                            st.cache_data.clear()
+                                            log_action("SC_DEL_ITEM", f"ma={ma_pick} item={row.get('ten_hang','')}")
+                                            st.rerun()
+                                        except Exception as e:
+                                            st.error(f"Lỗi xóa: {e}")
+
+                        # Thêm dịch vụ mới
+                        st.markdown(
+                            '<div class="sc-section-title" style="margin-top:14px;">'
+                            '➕ Thêm dịch vụ / Linh kiện</div>',
+                            unsafe_allow_html=True
+                        )
+                        _widget_them_dv("sc_upd_dv", "sc_upd_items")
+                        upd_items = st.session_state.get("sc_upd_items", [])
+                        _hien_thi_items("sc_upd_items")
+                        if upd_items:
+                            tong_moi = sum(x["so_luong"] * x["don_gia"] for x in upd_items)
+                            st.caption(f"Tổng dịch vụ mới thêm: **{tong_moi:,}đ**".replace(",","."))
+
+                        st.markdown("<div style='margin-top:14px;'></div>", unsafe_allow_html=True)
+                        if st.button("💾 Lưu cập nhật", type="primary", use_container_width=True, key="sc_save_upd"):
                             try:
-                                supabase.table("phieu_sua_chua_chi_tiet").delete() \
-                                    .eq("ma_phieu", ma_pick).execute()
-                                supabase.table("phieu_sua_chua").delete() \
-                                    .eq("ma_phieu", ma_pick).execute()
-                                st.session_state.pop("sc_active_ma", None)
+                                supabase.table("phieu_sua_chua").update({
+                                    "trang_thai":     new_tt,
+                                    "ghi_chu_noi_bo": new_gc.strip() or None,
+                                    "ngay_hen_tra":   new_hen.isoformat() if new_hen else None,
+                                    "updated_at":     now_vn_iso(),
+                                }).eq("ma_phieu", ma_pick).execute()
+
+                                new_items = st.session_state.get("sc_upd_items", [])
+                                if new_items:
+                                    supabase.table("phieu_sua_chua_chi_tiet").insert(
+                                        [{"ma_phieu": ma_pick, **item} for item in new_items]
+                                    ).execute()
+                                    st.session_state["sc_upd_items"] = []
+
                                 st.cache_data.clear()
-                                log_action("SC_DELETE", f"ma={ma_pick}", level="warning")
-                                st.success("Đã xóa phiếu."); st.rerun()
+                                log_action("SC_UPDATE", f"ma={ma_pick} trang_thai={new_tt}")
+                                st.session_state["sc_upd_open"] = False
+                                st.session_state["sc_scroll_top"] = True
+                                st.success("✓ Đã cập nhật!")
+                                st.rerun()
                             except Exception as e:
-                                st.error(f"Lỗi xóa: {e}")
+                                st.error(f"Lỗi: {e}")
+
+                    # ── Action buttons ──
+                    st.markdown("<div style='margin-top:18px;'></div>", unsafe_allow_html=True)
+                    col_a1, col_a2 = st.columns(2)
+                    with col_a1:
+                        if st.button("🖨️ In phiếu (A5)", use_container_width=True, key="sc_print_detail"):
+                            _in_phieu_sc(_build_phieu_html(dict(phieu), ct), key="sc_print_d")
+
+                    with col_a2:
+                        if is_admin():
+                            if st.button("🗑️ Hủy / Xóa phiếu này", type="secondary",
+                                         use_container_width=True, key="sc_delete"):
+                                try:
+                                    supabase.table("phieu_sua_chua_chi_tiet").delete() \
+                                        .eq("ma_phieu", ma_pick).execute()
+                                    supabase.table("phieu_sua_chua").delete() \
+                                        .eq("ma_phieu", ma_pick).execute()
+                                    st.session_state.pop("sc_active_ma", None)
+                                    st.cache_data.clear()
+                                    log_action("SC_DELETE", f"ma={ma_pick}", level="warning")
+                                    st.success("Đã xóa phiếu."); st.rerun()
+                                except Exception as e:
+                                    st.error(f"Lỗi xóa: {e}")
 
     # ══════════════════════════════════════════════════════════
     # TAB 4 — TẠO HÓA ĐƠN SỬA
@@ -901,144 +906,150 @@ def module_sua_chua():
                     st.stop()
 
             with col_ph:
-                picked_hd = st.selectbox("Chọn phiếu:", opts_hd, key="sc_hd_pick")
-            ma_hd_pick = picked_hd.split(" · ")[0]
-
-            phieu_hd = cho_giao[cho_giao["ma_phieu"] == ma_hd_pick].iloc[0]
-            ct_hd    = _load_chi_tiet(ma_hd_pick)
-
-            # ── Header phiếu chọn ──
-            st.markdown(
-                f'<div class="sc-card" style="margin-top:14px;">'
-                f'<div style="display:flex;justify-content:space-between;align-items:center;">'
-                f'<div>'
-                f'<div class="sc-card-header">{ma_hd_pick} — {phieu_hd.get("ten_khach","")}</div>'
-                f'<div class="sc-card-sub">📞 {phieu_hd.get("sdt_khach","")}'
-                f' · ⌚ {phieu_hd.get("hieu_dong_ho") or "—"}</div>'
-                f'</div>'
-                f'<div>{_badge_status_html("Chờ giao khách")}</div>'
-                f'</div>'
-                f'<div style="margin-top:8px;font-size:0.88rem;color:#555;">'
-                f'<b>Mô tả:</b> {phieu_hd.get("mo_ta_loi","") or "—"}</div>'
-                f'</div>',
-                unsafe_allow_html=True
-            )
-
-            # ── Bảng dịch vụ ──
-            if ct_hd.empty:
-                st.warning("Phiếu chưa có dịch vụ/linh kiện nào. Thêm trước ở tab Chi tiết.")
+                picked_hd = st.selectbox("Chọn phiếu:", opts_hd, index=None,
+                                          placeholder="Chọn phiếu để tạo hóa đơn...",
+                                          key="sc_hd_pick")
+            if not picked_hd:
+                st.info("Chọn phiếu từ danh sách trên để tạo hóa đơn.")
             else:
+                ma_hd_pick = picked_hd.split(" · ")[0]
+
+                phieu_hd = cho_giao[cho_giao["ma_phieu"] == ma_hd_pick].iloc[0]
+                ct_hd    = _load_chi_tiet(ma_hd_pick)
+
+                # ── Header phiếu chọn ──
                 st.markdown(
-                    '<div class="sc-section-title">🔧 Chi tiết dịch vụ / linh kiện</div>',
-                    unsafe_allow_html=True
-                )
-                ct_hd["Thành tiền"] = ct_hd["so_luong"] * ct_hd["don_gia"]
-                ct_view = ct_hd.rename(columns={
-                    "ten_hang": "Tên", "ma_hang": "Mã",
-                    "so_luong": "SL", "don_gia": "Đơn giá"
-                })
-                vcols = ["Tên", "Mã", "SL", "Đơn giá", "Thành tiền"]
-                vcols = [c for c in vcols if c in ct_view.columns]
-                st.dataframe(ct_view[vcols], use_container_width=True, hide_index=True)
-
-            tong_dv = int(ct_hd["Thành tiền"].sum()) if not ct_hd.empty else 0
-            tra_truoc = int(phieu_hd.get("khach_tra_truoc", 0))
-
-            # ── Section: Thông tin hóa đơn ──
-            st.markdown(
-                '<div class="sc-section-title">💰 Thông tin hóa đơn</div>',
-                unsafe_allow_html=True
-            )
-
-            giam_gia = st.number_input("Giảm giá (đ):", min_value=0, step=10000,
-                                        value=0, key="sc_hd_giam")
-            if giam_gia > 0:
-                st.caption(f"= {int(giam_gia):,}đ".replace(",","."))
-
-            can_tra = max(0, tong_dv - giam_gia - tra_truoc)
-
-            # ── 3 metric cards ──
-            m1, m2, m3 = st.columns(3)
-            with m1:
-                st.markdown(
-                    f'<div class="sc-money-card">'
-                    f'<div class="sc-money-label">Tổng dịch vụ</div>'
-                    f'<div class="sc-money-value">{tong_dv:,}đ</div>'
-                    f'</div>'.replace(",","."),
-                    unsafe_allow_html=True
-                )
-            with m2:
-                st.markdown(
-                    f'<div class="sc-money-card">'
-                    f'<div class="sc-money-label">Giảm giá + Trả trước</div>'
-                    f'<div class="sc-money-value">{giam_gia + tra_truoc:,}đ</div>'
-                    f'</div>'.replace(",","."),
-                    unsafe_allow_html=True
-                )
-            with m3:
-                st.markdown(
-                    f'<div class="sc-money-card sc-money-card-red">'
-                    f'<div class="sc-money-label">Khách cần trả</div>'
-                    f'<div class="sc-money-value sc-money-value-red">{can_tra:,}đ</div>'
-                    f'</div>'.replace(",","."),
+                    f'<div class="sc-card" style="margin-top:14px;">'
+                    f'<div style="display:flex;justify-content:space-between;align-items:center;">'
+                    f'<div>'
+                    f'<div class="sc-card-header">{ma_hd_pick} — {phieu_hd.get("ten_khach","")}</div>'
+                    f'<div class="sc-card-sub">📞 {phieu_hd.get("sdt_khach","")}'
+                    f' · ⌚ {phieu_hd.get("hieu_dong_ho") or "—"}</div>'
+                    f'</div>'
+                    f'<div>{_badge_status_html("Chờ giao khách")}</div>'
+                    f'</div>'
+                    f'<div style="margin-top:8px;font-size:0.88rem;color:#555;">'
+                    f'<b>Mô tả:</b> {phieu_hd.get("mo_ta_loi","") or "—"}</div>'
+                    f'</div>',
                     unsafe_allow_html=True
                 )
 
-            # ── Phương thức thanh toán ──
-            st.markdown(
-                '<div class="sc-section-title">💳 Phương thức thanh toán</div>',
-                unsafe_allow_html=True
-            )
-
-            chia_pttt = st.checkbox("Chia nhiều phương thức", key="sc_hd_chia",
-                                     help="Bật để chia tiền giữa các phương thức")
-
-            if not chia_pttt:
-                pttt_chon = st.radio("PTTT:", ["Tiền mặt", "Chuyển khoản", "Thẻ"],
-                                      horizontal=True, key="sc_hd_pttt",
-                                      label_visibility="collapsed")
-                pttt = {
-                    "tien_mat":      can_tra if pttt_chon == "Tiền mặt" else 0,
-                    "chuyen_khoan":  can_tra if pttt_chon == "Chuyển khoản" else 0,
-                    "the":           can_tra if pttt_chon == "Thẻ" else 0,
-                }
-            else:
-                p1, p2, p3 = st.columns(3)
-                with p1:
-                    tm = st.number_input("Tiền mặt:", min_value=0, step=10000,
-                                          value=can_tra, key="sc_hd_tm")
-                    if tm > 0: st.caption(f"= {int(tm):,}đ".replace(",","."))
-                with p2:
-                    ck = st.number_input("Chuyển khoản:", min_value=0, step=10000,
-                                          value=0, key="sc_hd_ck")
-                    if ck > 0: st.caption(f"= {int(ck):,}đ".replace(",","."))
-                with p3:
-                    the = st.number_input("Thẻ:", min_value=0, step=10000,
-                                           value=0, key="sc_hd_the")
-                    if the > 0: st.caption(f"= {int(the):,}đ".replace(",","."))
-                tong_pttt = tm + ck + the
-                lech = tong_pttt - can_tra
-                if lech != 0:
-                    lech_label = f"Dư: +{lech:,}đ" if lech > 0 else f"Thiếu: {lech:,}đ"
-                    st.warning(
-                        f"Tổng cần trả: **{can_tra:,}đ** &nbsp;|&nbsp; "
-                        f"Đã nhập: **{tong_pttt:,}đ** &nbsp;|&nbsp; {lech_label}".replace(",",".")
+                # ── Bảng dịch vụ ──
+                if ct_hd.empty:
+                    st.warning("Phiếu chưa có dịch vụ/linh kiện nào. Thêm trước ở tab Chi tiết.")
+                else:
+                    st.markdown(
+                        '<div class="sc-section-title">🔧 Chi tiết dịch vụ / linh kiện</div>',
+                        unsafe_allow_html=True
                     )
-                pttt = {"tien_mat": tm, "chuyen_khoan": ck, "the": the}
+                    ct_hd["Thành tiền"] = ct_hd["so_luong"] * ct_hd["don_gia"]
+                    ct_view = ct_hd.rename(columns={
+                        "ten_hang": "Tên", "ma_hang": "Mã",
+                        "so_luong": "SL", "don_gia": "Đơn giá"
+                    })
+                    vcols = ["Tên", "Mã", "SL", "Đơn giá", "Thành tiền"]
+                    vcols = [c for c in vcols if c in ct_view.columns]
+                    st.dataframe(ct_view[vcols], use_container_width=True, hide_index=True)
 
-            st.markdown("<div style='margin-top:18px;'></div>", unsafe_allow_html=True)
-            if st.button("✅ Tạo hóa đơn APSC", type="primary",
-                          use_container_width=True, key="sc_hd_create",
-                          disabled=ct_hd.empty):
-                try:
-                    apsc_ma = _tao_hoa_don_apsc(dict(phieu_hd), ct_hd, giam_gia, pttt)
-                    supabase.table("phieu_sua_chua").update({
-                        "trang_thai": "Hoàn thành",
-                        "updated_at": (now_vn()).isoformat(),
-                    }).eq("ma_phieu", ma_hd_pick).execute()
-                    st.cache_data.clear()
-                    log_action("SC_HOA_DON", f"ma={ma_hd_pick} apsc={apsc_ma}")
-                    st.success(f"✓ Đã tạo hóa đơn **{apsc_ma}** — phiếu chuyển sang Hoàn thành!")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Lỗi tạo hóa đơn: {e}")
+                tong_dv = int(ct_hd["Thành tiền"].sum()) if not ct_hd.empty else 0
+                tra_truoc = int(phieu_hd.get("khach_tra_truoc", 0))
+
+                # ── Section: Thông tin hóa đơn ──
+                st.markdown(
+                    '<div class="sc-section-title">💰 Thông tin hóa đơn</div>',
+                    unsafe_allow_html=True
+                )
+
+                giam_gia = st.number_input("Giảm giá (đ):", min_value=0, step=10000,
+                                            value=0, key="sc_hd_giam")
+                if giam_gia > 0:
+                    st.caption(f"= {int(giam_gia):,}đ".replace(",","."))
+
+                can_tra = max(0, tong_dv - giam_gia - tra_truoc)
+
+                # ── 3 metric cards ──
+                m1, m2, m3 = st.columns(3)
+                with m1:
+                    st.markdown(
+                        f'<div class="sc-money-card">'
+                        f'<div class="sc-money-label">Tổng dịch vụ</div>'
+                        f'<div class="sc-money-value">{tong_dv:,}đ</div>'
+                        f'</div>'.replace(",","."),
+                        unsafe_allow_html=True
+                    )
+                with m2:
+                    st.markdown(
+                        f'<div class="sc-money-card">'
+                        f'<div class="sc-money-label">Giảm giá + Trả trước</div>'
+                        f'<div class="sc-money-value">{giam_gia + tra_truoc:,}đ</div>'
+                        f'</div>'.replace(",","."),
+                        unsafe_allow_html=True
+                    )
+                with m3:
+                    st.markdown(
+                        f'<div class="sc-money-card sc-money-card-red">'
+                        f'<div class="sc-money-label">Khách cần trả</div>'
+                        f'<div class="sc-money-value sc-money-value-red">{can_tra:,}đ</div>'
+                        f'</div>'.replace(",","."),
+                        unsafe_allow_html=True
+                    )
+
+                # ── Phương thức thanh toán ──
+                st.markdown(
+                    '<div class="sc-section-title">💳 Phương thức thanh toán</div>',
+                    unsafe_allow_html=True
+                )
+
+                chia_pttt = st.checkbox("Chia nhiều phương thức", key="sc_hd_chia",
+                                         help="Bật để chia tiền giữa các phương thức")
+
+                if not chia_pttt:
+                    pttt_chon = st.radio("PTTT:", ["Tiền mặt", "Chuyển khoản", "Thẻ"],
+                                          horizontal=True, key="sc_hd_pttt",
+                                          label_visibility="collapsed")
+                    pttt = {
+                        "tien_mat":      can_tra if pttt_chon == "Tiền mặt" else 0,
+                        "chuyen_khoan":  can_tra if pttt_chon == "Chuyển khoản" else 0,
+                        "the":           can_tra if pttt_chon == "Thẻ" else 0,
+                    }
+                else:
+                    p1, p2, p3 = st.columns(3)
+                    with p1:
+                        tm = st.number_input("Tiền mặt:", min_value=0, step=10000,
+                                              value=can_tra, key="sc_hd_tm")
+                        if tm > 0: st.caption(f"= {int(tm):,}đ".replace(",","."))
+                    with p2:
+                        ck = st.number_input("Chuyển khoản:", min_value=0, step=10000,
+                                              value=0, key="sc_hd_ck")
+                        if ck > 0: st.caption(f"= {int(ck):,}đ".replace(",","."))
+                    with p3:
+                        the = st.number_input("Thẻ:", min_value=0, step=10000,
+                                               value=0, key="sc_hd_the")
+                        if the > 0: st.caption(f"= {int(the):,}đ".replace(",","."))
+                    tong_pttt = tm + ck + the
+                    lech = tong_pttt - can_tra
+                    if lech != 0:
+                        lech_label = f"Dư: +{lech:,}đ" if lech > 0 else f"Thiếu: {lech:,}đ"
+                        st.warning(
+                            f"Tổng cần trả: **{can_tra:,}đ** &nbsp;|&nbsp; "
+                            f"Đã nhập: **{tong_pttt:,}đ** &nbsp;|&nbsp; {lech_label}".replace(",",".")
+                        )
+                    pttt = {"tien_mat": tm, "chuyen_khoan": ck, "the": the}
+
+                st.markdown("<div style='margin-top:18px;'></div>", unsafe_allow_html=True)
+                if st.button("✅ Tạo hóa đơn APSC", type="primary",
+                              use_container_width=True, key="sc_hd_create",
+                              disabled=ct_hd.empty):
+                    try:
+                        apsc_ma = _tao_hoa_don_apsc(dict(phieu_hd), ct_hd, giam_gia, pttt)
+                        supabase.table("phieu_sua_chua").update({
+                            "trang_thai": "Hoàn thành",
+                            "updated_at": (now_vn()).isoformat(),
+                        }).eq("ma_phieu", ma_hd_pick).execute()
+                        st.cache_data.clear()
+                        log_action("SC_HOA_DON", f"ma={ma_hd_pick} apsc={apsc_ma}")
+                        st.session_state.pop("sc_hd_pick", None)
+                        st.success(f"✓ Đã tạo hóa đơn **{apsc_ma}** — phiếu chuyển sang Hoàn thành!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Lỗi tạo hóa đơn: {e}")

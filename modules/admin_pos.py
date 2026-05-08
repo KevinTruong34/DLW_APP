@@ -176,9 +176,10 @@ def _render_tao_hd_pos():
     st.markdown(f"**Tổng tiền hàng:** {fmt_vnd(tong_tien_hang)}")
 
     # ── 5. Giảm giá đơn (optional) ──
+    st.session_state.setdefault("admin_hd_gg", 0)
     giam_gia_don = st.number_input(
         "Giảm giá đơn (optional, default 0)",
-        min_value=0, value=0, step=10000,
+        min_value=0, step=10000,
         key="admin_hd_gg",
         help="Để bù HĐ KiotViet/POS gốc có giảm giá"
     )
@@ -190,18 +191,28 @@ def _render_tao_hd_pos():
 
     # ── 6. PTTT ──
     st.markdown("---")
-    st.markdown("**Phương thức thanh toán**")
+    st.markdown(f"**Phương thức thanh toán** (khách cần trả: {fmt_vnd(khach_can_tra)})")
+
+    if st.button("⤵️ Tự điền tiền mặt = khách cần trả",
+                 key="admin_hd_autofill_tm"):
+        st.session_state["admin_hd_tm"] = int(khach_can_tra)
+        st.session_state["admin_hd_ck"] = 0
+        st.session_state["admin_hd_the"] = 0
+        st.rerun()
+
+    st.session_state.setdefault("admin_hd_tm", 0)
+    st.session_state.setdefault("admin_hd_ck", 0)
+    st.session_state.setdefault("admin_hd_the", 0)
+
     col_p1, col_p2, col_p3 = st.columns(3)
     with col_p1:
-        tien_mat = st.number_input("Tiền mặt", min_value=0,
-                                   value=khach_can_tra, step=10000,
+        tien_mat = st.number_input("Tiền mặt", min_value=0, step=10000,
                                    key="admin_hd_tm")
     with col_p2:
-        chuyen_khoan = st.number_input("Chuyển khoản", min_value=0, value=0,
-                                        step=10000, key="admin_hd_ck")
+        chuyen_khoan = st.number_input("Chuyển khoản", min_value=0, step=10000,
+                                        key="admin_hd_ck")
     with col_p3:
-        the = st.number_input("Thẻ", min_value=0, value=0, step=10000,
-                              key="admin_hd_the")
+        the = st.number_input("Thẻ", min_value=0, step=10000, key="admin_hd_the")
 
     # ── 7. Admin note ──
     admin_note = st.text_area(
@@ -452,17 +463,27 @@ def _render_tao_doi_tra():
     st.markdown("---")
     if chenh_lech > 0:
         st.caption(f"Khách cần bù {fmt_vnd(chenh_lech)} — chia 3 PTTT")
+
+        if st.button("⤵️ Tự điền tiền mặt = chênh lệch",
+                     key="admin_pdt_autofill_tm"):
+            st.session_state["admin_pdt_tm"] = int(chenh_lech)
+            st.session_state["admin_pdt_ck"] = 0
+            st.session_state["admin_pdt_the"] = 0
+            st.rerun()
+
+        st.session_state.setdefault("admin_pdt_tm", 0)
+        st.session_state.setdefault("admin_pdt_ck", 0)
+        st.session_state.setdefault("admin_pdt_the", 0)
+
         col_p1, col_p2, col_p3 = st.columns(3)
         with col_p1:
-            tien_mat = st.number_input("Tiền mặt", min_value=0,
-                                       value=int(chenh_lech), step=10000,
+            tien_mat = st.number_input("Tiền mặt", min_value=0, step=10000,
                                        key="admin_pdt_tm")
         with col_p2:
             chuyen_khoan = st.number_input("Chuyển khoản", min_value=0,
-                                            value=0, step=10000,
-                                            key="admin_pdt_ck")
+                                            step=10000, key="admin_pdt_ck")
         with col_p3:
-            the = st.number_input("Thẻ", min_value=0, value=0, step=10000,
+            the = st.number_input("Thẻ", min_value=0, step=10000,
                                   key="admin_pdt_the")
     elif chenh_lech < 0:
         st.caption(f"Shop hoàn {fmt_vnd(-chenh_lech)} — chỉ tiền mặt (số âm)")

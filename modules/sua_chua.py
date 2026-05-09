@@ -697,16 +697,36 @@ def module_sua_chua():
             else:
                 opts = [f"{r['ma_phieu']} · {r.get('ten_khach','')} · {r.get('trang_thai','')}"
                         for _, r in df_filtered.iterrows()]
-                matched_idx = None
-                saved = st.session_state.get("sc_active_ma")
-                if saved:
-                    for i, o in enumerate(opts):
-                        if o.startswith(saved): matched_idx = i; break
+
+                # Determine target pick:
+                # 1) search filter narrow xuống 1 → auto-pick (user gõ mã chính xác)
+                # 2) khôi phục saved selection nếu vẫn còn trong filtered opts
+                target_pick = None
+                if search_dt.strip() and len(opts) == 1:
+                    target_pick = opts[0]
+                else:
+                    saved = st.session_state.get("sc_active_ma")
+                    if saved:
+                        for o in opts:
+                            if o.startswith(saved):
+                                target_pick = o
+                                break
+
+                # Sync session_state TRƯỚC khi widget render (override stale pick)
+                pick_key = "sc_detail_pick"
+                cur_state = st.session_state.get(pick_key)
+                if target_pick and cur_state != target_pick:
+                    st.session_state[pick_key] = target_pick
+                elif cur_state and cur_state not in opts:
+                    st.session_state[pick_key] = None
 
                 with col_p:
-                    picked = st.selectbox("Chọn phiếu:", opts, index=matched_idx,
-                                           placeholder="Chọn phiếu để xem chi tiết...",
-                                           key="sc_detail_pick")
+                    picked = st.selectbox(
+                        "Chọn phiếu:", opts,
+                        index=opts.index(target_pick) if target_pick in opts else None,
+                        placeholder="Chọn phiếu để xem chi tiết...",
+                        key=pick_key,
+                    )
                 if not picked:
                     st.info("Chọn phiếu từ danh sách trên để xem chi tiết.")
                 else:

@@ -204,6 +204,25 @@ def module_sua_chua():
         except Exception:
             return f"SC{datetime.now().strftime('%y%m%d%H%M')}"
 
+    def _preview_next_ma_phieu() -> str:
+        """Mã phiếu DỰ KIẾN — đọc max+1 từ DB, KHÔNG advance sc_seq.
+        Tránh drift sequence khi user mở tab nhiều lần (mỗi rerun không consume seq).
+        Số thực sẽ lấy từ nextval('sc_seq') khi submit (qua _gen_ma_phieu).
+        """
+        try:
+            res = (
+                supabase.table("phieu_sua_chua")
+                .select("ma_phieu")
+                .like("ma_phieu", "SC______")
+                .order("ma_phieu", desc=True)
+                .limit(1)
+                .execute()
+            )
+            num = int(res.data[0]["ma_phieu"][2:]) + 1 if res.data else 1
+            return f"SC{num:06d}"
+        except Exception:
+            return "SC??????"
+
     def _gen_ma_apsc() -> str:
         try:
             res = supabase.rpc("get_next_apsc_num", {}).execute()
@@ -477,10 +496,10 @@ def module_sua_chua():
         # ── Header thông tin tạo phiếu ──
         col_h1, col_h2 = st.columns([2, 1])
         with col_h1:
-            ma_du_kien = _gen_ma_phieu()
+            ma_du_kien = _preview_next_ma_phieu()
             st.markdown(
                 f'<div class="sc-card" style="background:#f4f6fa;border-color:#d6def0;">'
-                f'<div style="font-size:0.78rem;color:#777;">Mã phiếu dự kiến</div>'
+                f'<div style="font-size:0.78rem;color:#777;">Mã phiếu dự kiến (tạm tính)</div>'
                 f'<div style="font-size:1.3rem;font-weight:700;color:#2E86DE;'
                 f'font-family:monospace;">{ma_du_kien}</div>'
                 f'</div>',

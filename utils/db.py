@@ -65,6 +65,58 @@ def load_all_nhan_vien(include_inactive: bool = False) -> list[dict]:
     return res.data or []
 
 
+def search_hd_pos_for_edit(
+    chi_nhanh: str | None = None,
+    ngay_tu: str | None = None,
+    ngay_den: str | None = None,
+    nguoi_ban_id: int | None = None,
+    ma_hd_search: str | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    """Tìm HĐ POS để admin chọn sửa. Chỉ trả HĐ trang_thai='Hoàn thành'.
+
+    Default UI filter: 7 ngày gần nhất (caller pass ngay_tu).
+    """
+    q = (
+        supabase.table("hoa_don_pos")
+        .select("ma_hd, chi_nhanh, created_at, nguoi_ban, nguoi_ban_id, "
+                "khach_can_tra, ten_khach, sdt_khach, trang_thai, is_admin_created")
+        .eq("trang_thai", "Hoàn thành")
+        .order("created_at", desc=True)
+        .limit(limit)
+    )
+    if chi_nhanh:
+        q = q.eq("chi_nhanh", chi_nhanh)
+    if ngay_tu:
+        q = q.gte("created_at", ngay_tu)
+    if ngay_den:
+        q = q.lte("created_at", ngay_den)
+    if nguoi_ban_id:
+        q = q.eq("nguoi_ban_id", nguoi_ban_id)
+    if ma_hd_search:
+        q = q.ilike("ma_hd", f"%{ma_hd_search}%")
+    res = q.execute()
+    return res.data or []
+
+
+def load_hd_with_edit_history(ma_hd: str) -> dict:
+    """Load HĐ + items + edit_count + edit_history qua RPC load_hd_pos_with_history."""
+    res = supabase.rpc("load_hd_pos_with_history", {"p_ma_hd": ma_hd}).execute()
+    return res.data or {}
+
+
+def has_active_pdt_for_hd(ma_hd: str) -> int:
+    """Đếm số phiếu đổi/trả active (KHÔNG bao gồm 'Đã hủy') ref đến ma_hd này."""
+    res = (
+        supabase.table("phieu_doi_tra_pos")
+        .select("ma_pdt", count="exact")
+        .eq("ma_hd_goc", ma_hd)
+        .neq("trang_thai", "Đã hủy")
+        .execute()
+    )
+    return res.count or 0
+
+
 @st.cache_data(ttl=300)
 def load_hoa_don(branches_key: tuple):
     rows, batch, offset = [], 1000, 0

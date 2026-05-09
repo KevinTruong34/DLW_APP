@@ -14,6 +14,7 @@ from utils.db import (
     supabase, call_rpc, load_all_nhan_vien, load_hang_hoa,
     invalidate_hoa_don_cache,
     search_hd_pos_for_edit, load_hd_with_edit_history, has_active_pdt_for_hd,
+    lookup_khach_hang, upsert_khach_hang_with_update,
 )
 from utils.config import ALL_BRANCHES
 from utils.helpers import now_vn
@@ -28,6 +29,88 @@ def fmt_vnd(n) -> str:
 
 def _safe_key(s: str) -> str:
     return re.sub(r"[^A-Za-z0-9_]", "_", str(s or ""))
+
+
+def _clean_sdt(s: str) -> str:
+    """Chỉ giữ digit, max 15."""
+    return "".join(c for c in str(s or "") if c.isdigit())[:15]
+
+
+def _render_kh_lookup_input(
+    key_prefix: str,
+    default_ten: str = "",
+    default_sdt: str = "",
+    label_sdt: str = "SĐT khách",
+    label_ten: str = "Tên khách",
+):
+    """Render SĐT + tên KH inputs với auto-lookup khach_hang.
+
+    Behavior:
+    - SĐT thay đổi → lookup khach_hang → auto-fill tên (override editable).
+    - SĐT không đổi → giữ tên user đã edit (không override).
+    - Sau RPC success, caller gọi upsert_khach_hang_with_update(ten, sdt, chi_nhanh)
+      để propagate tên về khach_hang master.
+
+    Returns: (ten_clean, sdt_clean, kh_existed_bool, ma_kh_or_none).
+    """
+    sdt_key = f"{key_prefix}_sdt"
+    ten_key = f"{key_prefix}_ten"
+    last_lookup_key = f"{key_prefix}_last_lookup"
+    lookup_kh_key = f"{key_prefix}_last_result"
+
+    if sdt_key not in st.session_state:
+        st.session_state[sdt_key] = default_sdt or ""
+    if ten_key not in st.session_state:
+        st.session_state[ten_key] = default_ten or ""
+
+    col_sdt, col_ten = st.columns(2)
+    with col_sdt:
+        sdt_raw = st.text_input(
+            label_sdt, key=sdt_key, max_chars=15, placeholder="0xxx xxx xxx",
+        )
+    sdt_clean = _clean_sdt(sdt_raw)
+
+    last_lookup = st.session_state.get(last_lookup_key, "")
+    if sdt_clean and sdt_clean != last_lookup:
+        kh = lookup_khach_hang(sdt_clean)
+        st.session_state[last_lookup_key] = sdt_clean
+        st.session_state[lookup_kh_key] = kh
+        st.session_state[ten_key] = (kh.get("ten_kh") if kh else "") or ""
+    elif not sdt_clean and last_lookup:
+        st.session_state[last_lookup_key] = ""
+        st.session_state[lookup_kh_key] = None
+        st.session_state[ten_key] = ""
+
+    with col_ten:
+        ten_raw = st.text_input(label_ten, key=ten_key)
+
+    ten_clean = (ten_raw or "").strip()
+    kh_found = st.session_state.get(lookup_kh_key)
+
+    if sdt_clean:
+        if kh_found:
+            old_name = (kh_found.get("ten_kh") or "").strip()
+            if ten_clean and ten_clean != old_name:
+                st.info(
+                    f"✏️ Khách hiện có (tên cũ: **{old_name or '—'}**) — "
+                    f"tên mới sẽ ghi đè vào `khach_hang` khi submit."
+                )
+            else:
+                st.success(f"✓ Khách hiện có: **{old_name or '(chưa có tên)'}**")
+        else:
+            if ten_clean:
+                st.caption("⚠️ SĐT chưa có — sẽ tạo khách mới khi submit.")
+            else:
+                st.caption("⚠️ SĐT chưa có — nhập tên để tạo khách mới.")
+
+    ma_kh = kh_found.get("ma_kh") if kh_found else None
+    return ten_clean, sdt_clean, bool(kh_found), ma_kh
+
+
+def _reset_kh_lookup_state(key_prefix: str):
+    """Reset state của _render_kh_lookup_input (sau submit success / quay lại)."""
+    for suffix in ("_sdt", "_ten", "_last_lookup", "_last_result"):
+        st.session_state.pop(f"{key_prefix}{suffix}", None)
 
 
 def display_hd_admin_badge(hd: dict | None):
@@ -109,12 +192,12 @@ def _render_tao_hd_pos():
         chi_nhanh = st.selectbox("Chi nhánh", options=ALL_BRANCHES, key="admin_hd_cn")
     nv_chosen = nv_map[nv_label]
 
-    # ── 3. Khách hàng (optional) ──
-    col_k1, col_k2 = st.columns(2)
-    with col_k1:
-        ten_khach = st.text_input("Tên khách (optional)", key="admin_hd_ten_kh")
-    with col_k2:
-        sdt_khach = st.text_input("SĐT khách (optional)", key="admin_hd_sdt_kh")
+    # ── 3. Khách hàng (optional) — auto-lookup từ SĐT, tên có thể override ──
+    ten_khach, sdt_khach, _, _ = _render_kh_lookup_input(
+        "admin_hd_kh",
+        label_sdt="SĐT khách (optional)",
+        label_ten="Tên khách (optional)",
+    )
 
     # ── 4. Items ──
     st.markdown("---")
@@ -305,7 +388,10 @@ def _render_tao_hd_pos():
                 f"✅ Đã tạo {result['ma_hd']} — "
                 f"khách trả {fmt_vnd(result.get('khach_can_tra'))}"
             )
+            if sdt_khach and ten_khach:
+                upsert_khach_hang_with_update(ten_khach, sdt_khach, chi_nhanh)
             st.session_state[cart_key] = []
+            _reset_kh_lookup_state("admin_hd_kh")
             invalidate_hoa_don_cache()
             st.rerun()
         else:
@@ -636,12 +722,12 @@ def _render_tao_sua_chua():
         nv_label = st.selectbox("NV tiếp nhận", options=nv_labels, key="admin_sc_nv")
         nv_chosen = nv_map[nv_label]
 
-    # ── 3. Khách hàng ──
-    col_k1, col_k2 = st.columns(2)
-    with col_k1:
-        ten_khach = st.text_input("Tên khách", key="admin_sc_ten_kh")
-    with col_k2:
-        sdt_khach = st.text_input("SĐT khách", key="admin_sc_sdt_kh")
+    # ── 3. Khách hàng — auto-lookup từ SĐT, tên có thể override ──
+    ten_khach, sdt_khach, _, _ = _render_kh_lookup_input(
+        "admin_sc_kh",
+        label_sdt="SĐT khách",
+        label_ten="Tên khách",
+    )
 
     # ── 4. Thông tin đồng hồ ──
     col_h1, col_h2 = st.columns(2)
@@ -767,7 +853,10 @@ def _render_tao_sua_chua():
             st.success(
                 f"✅ Đã tạo {result['ma_phieu']} ({result.get('items_count')} dịch vụ)"
             )
+            if sdt_khach and ten_khach:
+                upsert_khach_hang_with_update(ten_khach, sdt_khach, chi_nhanh)
             st.session_state[items_key] = []
+            _reset_kh_lookup_state("admin_sc_kh")
             st.rerun()
         else:
             st.error(f"❌ {result.get('error', 'Unknown error') if result else 'No response'}")
@@ -946,19 +1035,13 @@ def _render_edit_form_step(ma_hd: str):
     )
     new_nv_id = nv_label_to_id.get(new_nv_label)
 
-    col_kh1, col_kh2 = st.columns(2)
-    with col_kh1:
-        new_ten_khach = st.text_input(
-            "Tên khách",
-            value=header.get("ten_khach") or "",
-            key=f"adm_edit_form_ten_kh_{ma_hd}",
-        )
-    with col_kh2:
-        new_sdt_khach = st.text_input(
-            "SĐT khách",
-            value=header.get("sdt_khach") or "",
-            key=f"adm_edit_form_sdt_kh_{ma_hd}",
-        )
+    new_ten_khach, new_sdt_khach, _, _ = _render_kh_lookup_input(
+        f"adm_edit_form_kh_{ma_hd}",
+        default_ten=header.get("ten_khach") or "",
+        default_sdt=header.get("sdt_khach") or "",
+        label_sdt="SĐT khách",
+        label_ten="Tên khách",
+    )
 
     new_ghi_chu = st.text_area(
         "Ghi chú",
@@ -1122,6 +1205,11 @@ def _render_edit_form_step(ma_hd: str):
                     st.success(f"✅ Đã sửa {ma_hd}. Fields changed: {', '.join(fc)}")
                 else:
                     st.info(result.get("message", "Không có field nào thay đổi"))
+                # Propagate KH name change về khach_hang master nếu có thay đổi
+                if new_sdt_khach and new_ten_khach:
+                    upsert_khach_hang_with_update(
+                        new_ten_khach, new_sdt_khach, header.get("chi_nhanh", "")
+                    )
                 st.session_state["admin_edit_selected_ma_hd"] = None
                 _clear_edit_form_state()
                 invalidate_hoa_don_cache()

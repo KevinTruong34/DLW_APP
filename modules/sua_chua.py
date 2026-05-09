@@ -652,7 +652,9 @@ def module_sua_chua():
                     ma_pick = picked.split(" · ")[0]
                     st.session_state["sc_active_ma"] = ma_pick
 
-                    phieu = df_chua_xong[df_chua_xong["ma_phieu"] == ma_pick].iloc[0]
+                    phieu_row = df_chua_xong[df_chua_xong["ma_phieu"] == ma_pick].iloc[0]
+                    phieu = {k: (None if pd.isna(v) else v)
+                             for k, v in phieu_row.to_dict().items()}
                     ct    = _load_chi_tiet(ma_pick)
 
                     # ── Header phiếu với badge trạng thái ──
@@ -921,7 +923,9 @@ def module_sua_chua():
             else:
                 ma_hd_pick = picked_hd.split(" · ")[0]
 
-                phieu_hd = cho_giao[cho_giao["ma_phieu"] == ma_hd_pick].iloc[0]
+                phieu_hd_row = cho_giao[cho_giao["ma_phieu"] == ma_hd_pick].iloc[0]
+                phieu_hd = {k: (None if pd.isna(v) else v)
+                            for k, v in phieu_hd_row.to_dict().items()}
                 ct_hd    = _load_chi_tiet(ma_hd_pick)
 
                 # ── Header phiếu chọn ──

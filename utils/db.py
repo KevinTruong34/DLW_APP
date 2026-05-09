@@ -381,6 +381,43 @@ def _upsert_khach_hang(ten: str, sdt: str, chi_nhanh: str = "") -> str:
     except Exception: return ""
 
 
+def upsert_khach_hang_with_update(ten: str, sdt: str, chi_nhanh: str = "") -> str:
+    """Admin variant: UPDATE ten_kh nếu SĐT đã tồn tại + tên khác; INSERT nếu mới.
+
+    Khác `_upsert_khach_hang`: cho phép admin sửa tên khách → đẩy lên khach_hang
+    master data (per yêu cầu B2a admin tab Sửa HĐ POS).
+    Returns ma_kh ("" nếu lỗi/không có sdt).
+    """
+    if not sdt:
+        return ""
+    sdt_clean = "".join(c for c in str(sdt) if c.isdigit())[:15]
+    ten_clean = " ".join((ten or "").split())[:100]
+    if not sdt_clean:
+        return ""
+    existing = lookup_khach_hang(sdt_clean)
+    try:
+        if existing:
+            old_ten = (existing.get("ten_kh") or "").strip()
+            if ten_clean and old_ten != ten_clean:
+                supabase.table("khach_hang").update({
+                    "ten_kh": ten_clean,
+                    "updated_at": now_vn().isoformat(),
+                }).eq("ma_kh", existing["ma_kh"]).execute()
+            return existing.get("ma_kh", "")
+        if not ten_clean:
+            return ""
+        ma = _gen_ma_akh()
+        supabase.table("khach_hang").insert({
+            "ma_kh": ma, "ten_kh": ten_clean, "sdt": sdt_clean,
+            "chi_nhanh_tao": chi_nhanh,
+            "created_at": now_vn().isoformat(),
+            "updated_at": now_vn().isoformat(),
+        }).execute()
+        return ma
+    except Exception:
+        return ""
+
+
 @st.cache_data(ttl=120)
 def load_khach_hang_list() -> pd.DataFrame:
     """

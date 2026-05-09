@@ -1,0 +1,1121 @@
+# PLAN_ADMIN_B2a.md — Admin Override Phase B2a: Sửa HĐ POS
+
+> **Mục đích file:** Plan đầy đủ để execute trong session Claude Code mới. Đã chốt mọi decisions, không cần hỏi user lại trừ khi gặp tình huống ngoài plan.
+>
+> **Generated:** 2026-05-08
+> **Owner:** Kevin (DL Watch)
+> **Repo chính:** `KevinTruong34/DLW_APP` (web app, mọi UI ở đây)
+> **DB:** Supabase (Postgres)
+> **Phase:** B2a (sửa HĐ POS only). Sẽ có B2b sau (sửa đổi/trả + sửa chữa).
+> **Prerequisite:** B1 đã deploy + verify ổn (1 tuần).
+
+---
+
+## 0. CONTEXT
+
+### 0.1 Mục đích Phase B2a
+
+Cho phép admin **sửa nội dung HĐ POS đã tạo** (`hoa_don_pos`) — tương tự B1 nhưng cho HĐ existing thay vì tạo mới.
+
+Use cases chính:
+- Sửa nhầm đơn giá đã chốt
+- Đổi tên NV bán (nhập sai)
+- Migrate đơn cũ từ KiotViet/giấy tờ với sửa đổi nhỏ
+- Fix HĐ đã tạo ở B1 nhưng phát hiện sai sau
+
+Phase B2a **chỉ làm cho HĐ POS**. Đổi/trả + sửa chữa sẽ làm ở B2b sau khi B2a verify ổn.
+
+### 0.2 Decisions đã chốt
+
+| Decision | Value |
+|---|---|
+| Snapshot storage | Bảng riêng `admin_edit_history` (Option A) |
+| Phạm vi B2a | Chỉ `hoa_don_pos` |
+| Restriction | Chỉ sửa HĐ `trang_thai = 'Hoàn thành'` (không sửa đã hủy) |
+| **LOCK fields** | `ma_hd`, `trang_thai`, `nguoi_tao` (audit từ B1), `created_at`, `chi_nhanh` |
+| **Editable fields** | `nguoi_ban_id`, `ten_khach`, `sdt_khach`, `ghi_chu`, items (so_luong, don_gia, thêm/xóa), `giam_gia_don`, PTTT (tien_mat, chuyen_khoan, the) |
+| Edge case | HĐ có ref bởi `phieu_doi_tra_pos` → cho sửa **header**, BLOCK sửa **items** |
+| Đảo kho | Atomic khi sửa items (skip open-price), pattern: chênh lệch SL → cộng/trừ kho |
+| Confirmation UI | Type "XÁC NHẬN" + admin lý do (`edit_reason`) |
+| Audit log | `action_logs` action='ADMIN_HD_EDIT' + bảng `admin_edit_history` snapshot |
+| Visual marker | HĐ đã sửa hiện badge "✏️ ĐÃ CHỈNH SỬA (N lần)" + history viewer |
+| Undo từ snapshot | Defer B3 |
+| LINE notification | Không (consistent với B1) |
+
+### 0.3 Lý do LOCK created_at và chi_nhanh
+
+- **created_at**: Sửa ngày tạo HĐ phá vỡ continuity báo cáo (số liệu doanh thu kỳ trước đột nhiên thay đổi). Code đơn giản hơn (không cần validate 90 ngày range).
+- **chi_nhanh**: Đổi chi nhánh = đảo kho cross-branch (cộng kho cũ + trừ kho mới ở chi nhánh khác). Quá rủi ro, dễ corrupt data. Workaround: hủy HĐ + tạo lại admin (B1).
+
+→ Nếu user thực sự cần sửa 2 field này → hủy HĐ + tạo lại bằng tính năng B1.
+
+---
+
+## 1. PRE-FLIGHT
+
+### 1.1 Verify B1 production stable
+
+Trước khi đụng B2a, confirm B1 đã ổn ít nhất 7 ngày:
+- Không có complaint từ user về HĐ admin sai
+- `action_logs WHERE action LIKE 'ADMIN_%'` không có error
+- Báo cáo doanh thu nhất quán
+
+### 1.2 Backup
+
+```sql
+CREATE TABLE _backup_admin_b2a_20260515_hoa_don_pos AS SELECT * FROM hoa_don_pos;
+CREATE TABLE _backup_admin_b2a_20260515_hoa_don_pos_ct AS SELECT * FROM hoa_don_pos_ct;
+CREATE TABLE _backup_admin_b2a_20260515_action_logs AS SELECT * FROM action_logs;
+```
+
+(Đổi date trong tên table khi thực hiện thật.)
+
+### 1.3 Verify code DLW_APP từ B1
+
+Claude Code đọc lại để hiểu:
+- `utils/auth.py`: `is_admin()`, `require_admin()` đã có từ B1 — reuse
+- `utils/db.py`: `load_all_nhan_vien()`, `call_rpc()` — reuse
+- `modules/admin_pos.py`: structure 3 sub-tabs với pattern type "XÁC NHẬN" — reuse pattern cho tab sửa
+
+```bash
+grep -rn "require_admin\|is_admin\|call_rpc" --include="*.py"
+grep -rn "admin_pos" --include="*.py"
+```
+
+---
+
+## 2. PHASE 1 — SCHEMA
+
+### 2.1 Tạo bảng `admin_edit_history`
+
+```sql
+BEGIN;
+
+CREATE TABLE admin_edit_history (
+    id BIGSERIAL PRIMARY KEY,
+    table_name TEXT NOT NULL,
+    record_id TEXT NOT NULL,
+    snapshot_before JSONB NOT NULL,
+    snapshot_after JSONB NOT NULL,
+    fields_changed TEXT[] NOT NULL,
+    edited_by_id BIGINT NOT NULL REFERENCES nhan_vien(id),
+    edited_by_name TEXT NOT NULL,
+    edit_reason TEXT,
+    edited_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    
+    CHECK (table_name IN ('hoa_don_pos', 'phieu_doi_tra_pos', 'phieu_sua_chua'))
+);
+
+CREATE INDEX idx_aeh_record ON admin_edit_history(table_name, record_id);
+CREATE INDEX idx_aeh_edited_at ON admin_edit_history(edited_at DESC);
+CREATE INDEX idx_aeh_edited_by ON admin_edit_history(edited_by_id);
+
+COMMENT ON TABLE admin_edit_history IS 'Audit log full snapshot before/after mỗi lần admin sửa HĐ/phiếu. Append-only — không bao giờ DELETE/UPDATE.';
+
+COMMIT;
+```
+
+### 2.2 Verify
+
+```sql
+-- Schema check
+SELECT column_name, data_type, is_nullable
+FROM information_schema.columns
+WHERE table_schema = 'public' AND table_name = 'admin_edit_history'
+ORDER BY ordinal_position;
+
+-- Indexes
+SELECT indexname FROM pg_indexes
+WHERE tablename = 'admin_edit_history';
+
+-- Test FK
+INSERT INTO admin_edit_history 
+    (table_name, record_id, snapshot_before, snapshot_after, fields_changed, edited_by_id, edited_by_name, edit_reason)
+VALUES 
+    ('hoa_don_pos', 'TEST', '{}'::jsonb, '{}'::jsonb, ARRAY['test'], 99999, 'Test', 'Test');
+-- Expected: ERROR vì 99999 không tồn tại trong nhan_vien (FK violation) → confirm FK active
+
+ROLLBACK;  -- nếu test bằng INSERT thật
+```
+
+---
+
+## 3. PHASE 2 — RPC SQL
+
+### 3.1 Helper: `_admin_check_can_edit_hd_pos()`
+
+DRY check: HĐ có sửa được không?
+
+```sql
+CREATE OR REPLACE FUNCTION _admin_check_can_edit_hd_pos(p_ma_hd text)
+RETURNS jsonb
+LANGUAGE plpgsql STABLE
+AS $$
+DECLARE
+    v_hd hoa_don_pos%ROWTYPE;
+    v_pdt_count int;
+BEGIN
+    SELECT * INTO v_hd FROM hoa_don_pos WHERE ma_hd = p_ma_hd;
+    
+    IF NOT FOUND THEN
+        RETURN jsonb_build_object('ok', false, 'error', 'HĐ không tồn tại');
+    END IF;
+    
+    IF v_hd.trang_thai != 'Hoàn thành' THEN
+        RETURN jsonb_build_object('ok', false, 
+            'error', format('HĐ trang_thai = %s, chỉ sửa được HĐ Hoàn thành', v_hd.trang_thai));
+    END IF;
+    
+    -- Check có ref bởi phiếu đổi/trả không (active, không tính 'Đã hủy')
+    SELECT COUNT(*) INTO v_pdt_count
+    FROM phieu_doi_tra_pos
+    WHERE ma_hd_goc = p_ma_hd AND trang_thai != 'Đã hủy';
+    
+    RETURN jsonb_build_object(
+        'ok', true,
+        'has_active_pdt', v_pdt_count > 0,
+        'pdt_count', v_pdt_count,
+        'current_data', to_jsonb(v_hd)
+    );
+END;
+$$;
+```
+
+→ Trả về flag `has_active_pdt` để RPC sửa biết có BLOCK items hay không.
+
+### 3.2 RPC: `sua_hoa_don_pos_admin`
+
+Logic chính:
+1. Validate admin (reuse `_admin_validate_request` từ B1, không truyền `created_at` vì không cho sửa)
+2. Check HĐ có sửa được (reuse `_admin_check_can_edit_hd_pos`)
+3. Snapshot HĐ + items HIỆN TẠI (before)
+4. Validate input (LOCK fields không được trong payload, items chỉ sửa nếu không có pdt active)
+5. Apply changes:
+   - Update header fields (nguoi_ban_id, ten_khach, sdt_khach, ghi_chu, giam_gia_don, PTTT)
+   - Update items: detect changes (added/removed/modified) → đảo kho atomic cho mỗi change
+   - Recompute tong_tien_hang + khach_can_tra
+6. Build snapshot AFTER + fields_changed array
+7. INSERT vào `admin_edit_history`
+8. INSERT vào `action_logs` với detail liệt kê field changes
+
+```sql
+CREATE OR REPLACE FUNCTION sua_hoa_don_pos_admin(payload jsonb)
+RETURNS jsonb
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_admin_id bigint;
+    v_admin_username text;
+    v_admin_ho_ten text;
+    v_validate jsonb;
+    v_check jsonb;
+    v_ma_hd text;
+    v_has_pdt boolean;
+    v_snapshot_before jsonb;
+    v_snapshot_after jsonb;
+    v_fields_changed text[] := ARRAY[]::text[];
+    v_old_hd hoa_don_pos%ROWTYPE;
+    v_new_items jsonb;
+    v_new_item jsonb;
+    v_old_item RECORD;
+    v_chi_nhanh text;
+    v_ma_hang text;
+    v_old_sl int;
+    v_new_sl int;
+    v_old_dg int;
+    v_new_dg int;
+    v_diff_sl int;
+    v_ton_hien_tai int;
+    v_tong_tien_hang int := 0;
+    v_giam_gia int;
+    v_log_detail text := '';
+BEGIN
+    -- 1. Validate admin
+    v_admin_id := (payload->>'admin_id')::bigint;
+    SELECT username, ho_ten INTO v_admin_username, v_admin_ho_ten
+    FROM nhan_vien WHERE id = v_admin_id;
+    
+    SELECT _admin_validate_request(v_admin_id, NULL) INTO v_validate;
+    IF NOT (v_validate->>'ok')::boolean THEN
+        RETURN v_validate;
+    END IF;
+    
+    -- 2. Check HĐ có sửa được
+    v_ma_hd := payload->>'ma_hd';
+    SELECT _admin_check_can_edit_hd_pos(v_ma_hd) INTO v_check;
+    IF NOT (v_check->>'ok')::boolean THEN
+        RETURN v_check;
+    END IF;
+    v_has_pdt := (v_check->>'has_active_pdt')::boolean;
+    
+    -- 3. Lock row + load HĐ hiện tại
+    SELECT * INTO v_old_hd FROM hoa_don_pos WHERE ma_hd = v_ma_hd FOR UPDATE;
+    v_chi_nhanh := v_old_hd.chi_nhanh;
+    
+    -- 4. Snapshot BEFORE (header + items)
+    v_snapshot_before := jsonb_build_object(
+        'header', to_jsonb(v_old_hd),
+        'items', (SELECT jsonb_agg(to_jsonb(ct)) FROM hoa_don_pos_ct ct WHERE ma_hd = v_ma_hd)
+    );
+    
+    -- 5. Validate LOCK fields KHÔNG có trong payload (defensive)
+    IF payload ? 'created_at' THEN
+        RETURN jsonb_build_object('ok', false, 'error', 'created_at LOCKED, không được sửa');
+    END IF;
+    IF payload ? 'chi_nhanh' THEN
+        RETURN jsonb_build_object('ok', false, 'error', 'chi_nhanh LOCKED, không được sửa');
+    END IF;
+    IF payload ? 'trang_thai' THEN
+        RETURN jsonb_build_object('ok', false, 'error', 'trang_thai LOCKED');
+    END IF;
+    
+    -- 6. Validate items không sửa nếu có PDT active
+    IF v_has_pdt AND payload ? 'items' THEN
+        RETURN jsonb_build_object('ok', false, 
+            'error', format('HĐ này có %s phiếu đổi/trả active. Cho sửa header thôi, không sửa items.', 
+                            v_check->>'pdt_count'));
+    END IF;
+    
+    -- 7. Update header fields (chỉ field có trong payload)
+    IF payload ? 'nguoi_ban_id' THEN
+        DECLARE v_new_nv RECORD;
+        BEGIN
+            SELECT id, ho_ten INTO v_new_nv FROM nhan_vien 
+            WHERE id = (payload->>'nguoi_ban_id')::bigint;
+            IF NOT FOUND THEN
+                RETURN jsonb_build_object('ok', false, 'error', 'nguoi_ban_id không tồn tại');
+            END IF;
+            UPDATE hoa_don_pos 
+            SET nguoi_ban_id = v_new_nv.id, nguoi_ban = v_new_nv.ho_ten
+            WHERE ma_hd = v_ma_hd;
+            v_fields_changed := array_append(v_fields_changed, 'nguoi_ban');
+            v_log_detail := v_log_detail || format(' nguoi_ban %s→%s', v_old_hd.nguoi_ban, v_new_nv.ho_ten);
+        END;
+    END IF;
+    
+    IF payload ? 'ten_khach' THEN
+        UPDATE hoa_don_pos SET ten_khach = payload->>'ten_khach' WHERE ma_hd = v_ma_hd;
+        IF v_old_hd.ten_khach IS DISTINCT FROM (payload->>'ten_khach') THEN
+            v_fields_changed := array_append(v_fields_changed, 'ten_khach');
+        END IF;
+    END IF;
+    
+    IF payload ? 'sdt_khach' THEN
+        UPDATE hoa_don_pos SET sdt_khach = payload->>'sdt_khach' WHERE ma_hd = v_ma_hd;
+        IF v_old_hd.sdt_khach IS DISTINCT FROM (payload->>'sdt_khach') THEN
+            v_fields_changed := array_append(v_fields_changed, 'sdt_khach');
+        END IF;
+    END IF;
+    
+    IF payload ? 'ghi_chu' THEN
+        UPDATE hoa_don_pos SET ghi_chu = payload->>'ghi_chu' WHERE ma_hd = v_ma_hd;
+        IF v_old_hd.ghi_chu IS DISTINCT FROM (payload->>'ghi_chu') THEN
+            v_fields_changed := array_append(v_fields_changed, 'ghi_chu');
+        END IF;
+    END IF;
+    
+    IF payload ? 'tien_mat' THEN
+        UPDATE hoa_don_pos SET tien_mat = (payload->>'tien_mat')::int WHERE ma_hd = v_ma_hd;
+        IF v_old_hd.tien_mat IS DISTINCT FROM (payload->>'tien_mat')::int THEN
+            v_fields_changed := array_append(v_fields_changed, 'tien_mat');
+            v_log_detail := v_log_detail || format(' tien_mat %s→%s', 
+                                                    v_old_hd.tien_mat, payload->>'tien_mat');
+        END IF;
+    END IF;
+    -- Tương tự cho chuyen_khoan, the
+    IF payload ? 'chuyen_khoan' THEN
+        UPDATE hoa_don_pos SET chuyen_khoan = (payload->>'chuyen_khoan')::int WHERE ma_hd = v_ma_hd;
+        IF v_old_hd.chuyen_khoan IS DISTINCT FROM (payload->>'chuyen_khoan')::int THEN
+            v_fields_changed := array_append(v_fields_changed, 'chuyen_khoan');
+        END IF;
+    END IF;
+    IF payload ? 'the' THEN
+        UPDATE hoa_don_pos SET the = (payload->>'the')::int WHERE ma_hd = v_ma_hd;
+        IF v_old_hd.the IS DISTINCT FROM (payload->>'the')::int THEN
+            v_fields_changed := array_append(v_fields_changed, 'the');
+        END IF;
+    END IF;
+    
+    -- 8. Update items (nếu cho phép)
+    IF payload ? 'items' AND NOT v_has_pdt THEN
+        v_new_items := payload->'items';
+        
+        -- Strategy: REPLACE all items (build từ payload, đảo kho cho mỗi change)
+        -- Bước 8a: Đảo kho cho items CŨ (cộng lại tất cả vì sẽ replace)
+        FOR v_old_item IN 
+            SELECT ma_hang, so_luong FROM hoa_don_pos_ct WHERE ma_hd = v_ma_hd
+        LOOP
+            IF NOT is_open_price_sql(v_old_item.ma_hang) THEN
+                UPDATE the_kho 
+                SET "Tồn cuối kì" = COALESCE("Tồn cuối kì", 0) + v_old_item.so_luong
+                WHERE "Mã hàng" = v_old_item.ma_hang AND "Chi nhánh" = v_chi_nhanh;
+            END IF;
+        END LOOP;
+        
+        -- Bước 8b: Delete tất cả items cũ
+        DELETE FROM hoa_don_pos_ct WHERE ma_hd = v_ma_hd;
+        
+        -- Bước 8c: Pre-validate stock cho items mới (atomic check trước khi insert)
+        FOR v_new_item IN SELECT * FROM jsonb_array_elements(v_new_items) LOOP
+            v_ma_hang := v_new_item->>'ma_hang';
+            v_new_sl := (v_new_item->>'so_luong')::int;
+            
+            IF v_new_sl <= 0 THEN
+                RAISE EXCEPTION 'Item %: so_luong phải > 0', v_ma_hang;
+            END IF;
+            
+            IF NOT is_open_price_sql(v_ma_hang) THEN
+                SELECT COALESCE(SUM("Tồn cuối kì"), 0) INTO v_ton_hien_tai
+                FROM the_kho
+                WHERE "Mã hàng" = v_ma_hang AND "Chi nhánh" = v_chi_nhanh;
+                
+                IF v_ton_hien_tai < v_new_sl THEN
+                    RAISE EXCEPTION 'Item % không đủ tồn (có %, cần %)', 
+                        v_ma_hang, v_ton_hien_tai, v_new_sl;
+                END IF;
+            END IF;
+        END LOOP;
+        
+        -- Bước 8d: Insert items mới + trừ kho
+        FOR v_new_item IN SELECT * FROM jsonb_array_elements(v_new_items) LOOP
+            v_ma_hang := v_new_item->>'ma_hang';
+            v_new_sl := (v_new_item->>'so_luong')::int;
+            v_new_dg := (v_new_item->>'don_gia')::int;
+            
+            INSERT INTO hoa_don_pos_ct 
+                (ma_hd, ma_hang, ten_hang, so_luong, don_gia, thanh_tien)
+            VALUES 
+                (v_ma_hd, v_ma_hang, v_new_item->>'ten_hang',
+                 v_new_sl, v_new_dg, v_new_sl * v_new_dg);
+            
+            IF NOT is_open_price_sql(v_ma_hang) THEN
+                UPDATE the_kho 
+                SET "Tồn cuối kì" = COALESCE("Tồn cuối kì", 0) - v_new_sl
+                WHERE "Mã hàng" = v_ma_hang AND "Chi nhánh" = v_chi_nhanh;
+            END IF;
+            
+            v_tong_tien_hang := v_tong_tien_hang + (v_new_sl * v_new_dg);
+        END LOOP;
+        
+        v_fields_changed := array_append(v_fields_changed, 'items');
+    ELSE
+        -- Items không đổi → giữ tong_tien_hang cũ
+        v_tong_tien_hang := v_old_hd.tong_tien_hang;
+    END IF;
+    
+    -- 9. Update giam_gia_don + recompute khach_can_tra
+    IF payload ? 'giam_gia_don' THEN
+        v_giam_gia := (payload->>'giam_gia_don')::int;
+        IF v_old_hd.giam_gia_don IS DISTINCT FROM v_giam_gia THEN
+            v_fields_changed := array_append(v_fields_changed, 'giam_gia_don');
+        END IF;
+    ELSE
+        v_giam_gia := v_old_hd.giam_gia_don;
+    END IF;
+    
+    UPDATE hoa_don_pos 
+    SET tong_tien_hang = v_tong_tien_hang,
+        giam_gia_don = v_giam_gia,
+        khach_can_tra = v_tong_tien_hang - v_giam_gia
+    WHERE ma_hd = v_ma_hd;
+    
+    -- 10. Build snapshot AFTER
+    DECLARE v_new_hd hoa_don_pos%ROWTYPE;
+    BEGIN
+        SELECT * INTO v_new_hd FROM hoa_don_pos WHERE ma_hd = v_ma_hd;
+        v_snapshot_after := jsonb_build_object(
+            'header', to_jsonb(v_new_hd),
+            'items', (SELECT jsonb_agg(to_jsonb(ct)) FROM hoa_don_pos_ct ct WHERE ma_hd = v_ma_hd)
+        );
+    END;
+    
+    -- 11. Insert vào admin_edit_history
+    IF array_length(v_fields_changed, 1) > 0 THEN
+        INSERT INTO admin_edit_history 
+            (table_name, record_id, snapshot_before, snapshot_after, 
+             fields_changed, edited_by_id, edited_by_name, edit_reason)
+        VALUES 
+            ('hoa_don_pos', v_ma_hd, v_snapshot_before, v_snapshot_after,
+             v_fields_changed, v_admin_id, v_admin_ho_ten, payload->>'edit_reason');
+        
+        -- 12. Audit log
+        INSERT INTO action_logs (username, ho_ten, chi_nhanh, action, detail, level)
+        VALUES (
+            v_admin_username, v_admin_ho_ten, v_chi_nhanh,
+            'ADMIN_HD_EDIT',
+            format('ma=%s changed=[%s]%s reason=%s',
+                v_ma_hd,
+                array_to_string(v_fields_changed, ','),
+                v_log_detail,
+                COALESCE(payload->>'edit_reason', '-')),
+            'warn'
+        );
+    ELSE
+        -- Không có gì thay đổi → không log
+        RETURN jsonb_build_object('ok', true, 'ma_hd', v_ma_hd, 
+                                   'message', 'Không có field nào thay đổi');
+    END IF;
+    
+    RETURN jsonb_build_object(
+        'ok', true,
+        'ma_hd', v_ma_hd,
+        'fields_changed', v_fields_changed,
+        'edit_history_id', currval('admin_edit_history_id_seq')
+    );
+END;
+$$;
+```
+
+### 3.3 Helper RPC: load HĐ với edit history
+
+Để UI hiển thị badge + history viewer:
+
+```sql
+CREATE OR REPLACE FUNCTION load_hd_pos_with_history(p_ma_hd text)
+RETURNS jsonb
+LANGUAGE sql STABLE
+AS $$
+    SELECT jsonb_build_object(
+        'header', to_jsonb(h),
+        'items', (SELECT jsonb_agg(to_jsonb(ct)) FROM hoa_don_pos_ct ct WHERE ma_hd = p_ma_hd),
+        'edit_count', (SELECT COUNT(*) FROM admin_edit_history 
+                        WHERE table_name = 'hoa_don_pos' AND record_id = p_ma_hd),
+        'edit_history', (SELECT jsonb_agg(jsonb_build_object(
+            'id', id,
+            'edited_at', edited_at,
+            'edited_by_name', edited_by_name,
+            'fields_changed', fields_changed,
+            'edit_reason', edit_reason
+        ) ORDER BY edited_at DESC) FROM admin_edit_history
+        WHERE table_name = 'hoa_don_pos' AND record_id = p_ma_hd)
+    )
+    FROM hoa_don_pos h
+    WHERE h.ma_hd = p_ma_hd;
+$$;
+```
+
+(Sau này B2b có thể generic hóa: `load_record_with_history(table_name, record_id)`.)
+
+### 3.4 Smoke tests
+
+Trước commit RPC, test các edge cases:
+
+```sql
+-- T1: Non-admin
+SELECT sua_hoa_don_pos_admin('{"admin_id": 5, "ma_hd": "AHD000001"}'::jsonb);
+-- Expected: ok=false, error="Permission denied"
+
+-- T2: HĐ không tồn tại
+SELECT sua_hoa_don_pos_admin('{"admin_id": 2, "ma_hd": "AHDXXXXXX"}'::jsonb);
+-- Expected: ok=false, error="HĐ không tồn tại"
+
+-- T3: HĐ đã hủy
+SELECT sua_hoa_don_pos_admin('{"admin_id": 2, "ma_hd": "<HĐ đã hủy>"}'::jsonb);
+-- Expected: ok=false, error="trang_thai = Đã hủy, chỉ sửa được Hoàn thành"
+
+-- T4: Sửa created_at (LOCK)
+SELECT sua_hoa_don_pos_admin('{"admin_id": 2, "ma_hd": "<HĐ valid>", "created_at": "2026-01-01"}'::jsonb);
+-- Expected: ok=false, error="created_at LOCKED"
+
+-- T5: Sửa chi_nhanh (LOCK)
+SELECT sua_hoa_don_pos_admin('{"admin_id": 2, "ma_hd": "<HĐ valid>", "chi_nhanh": "X"}'::jsonb);
+-- Expected: ok=false, error="chi_nhanh LOCKED"
+
+-- T6: Sửa items khi có PDT active
+SELECT sua_hoa_don_pos_admin('{"admin_id": 2, "ma_hd": "<HĐ có PDT>", "items": [...]}'::jsonb);
+-- Expected: ok=false, error="HĐ này có N phiếu đổi/trả active..."
+
+-- T7: Empty payload (không có field nào sửa)
+SELECT sua_hoa_don_pos_admin('{"admin_id": 2, "ma_hd": "<HĐ valid>"}'::jsonb);
+-- Expected: ok=true, message="Không có field nào thay đổi"
+
+-- T8: Happy path — đổi NV
+SELECT sua_hoa_don_pos_admin('{"admin_id": 2, "ma_hd": "<HĐ test>", 
+                              "nguoi_ban_id": 3, "edit_reason": "Smoke test"}'::jsonb);
+-- Expected: ok=true, fields_changed=["nguoi_ban"]
+-- Verify: hoa_don_pos.nguoi_ban_id = 3, admin_edit_history có row mới
+```
+
+Test thật sự (T8) chỉ chạy SAU khi setup test HĐ riêng — defer cho Phase 6.
+
+---
+
+## 4. PHASE 3 — PYTHON HELPER
+
+### 4.1 Extend `utils/db.py`
+
+```python
+def search_hd_pos_for_edit(
+    chi_nhanh: str | None = None,
+    ngay_tu: str | None = None,
+    ngay_den: str | None = None,
+    nguoi_ban_id: int | None = None,
+    ma_hd_search: str | None = None,
+    limit: int = 50
+) -> list[dict]:
+    """Tìm HĐ POS để admin chọn sửa. Chỉ trả về HĐ trang_thai='Hoàn thành'."""
+    query = (
+        supabase.table("hoa_don_pos")
+        .select("ma_hd, chi_nhanh, created_at, nguoi_ban, nguoi_ban_id, "
+                "khach_can_tra, ten_khach, trang_thai, is_admin_created")
+        .eq("trang_thai", "Hoàn thành")
+        .order("created_at", desc=True)
+        .limit(limit)
+    )
+    if chi_nhanh:
+        query = query.eq("chi_nhanh", chi_nhanh)
+    if ngay_tu:
+        query = query.gte("created_at", ngay_tu)
+    if ngay_den:
+        query = query.lte("created_at", ngay_den)
+    if nguoi_ban_id:
+        query = query.eq("nguoi_ban_id", nguoi_ban_id)
+    if ma_hd_search:
+        query = query.ilike("ma_hd", f"%{ma_hd_search}%")
+    
+    res = query.execute()
+    return res.data or []
+
+
+def load_hd_with_edit_history(ma_hd: str) -> dict:
+    """Load HĐ + items + edit history qua RPC."""
+    res = supabase.rpc("load_hd_pos_with_history", {"p_ma_hd": ma_hd}).execute()
+    return res.data or {}
+```
+
+### 4.2 Update `is_admin()` không cần sửa — reuse từ B1.
+
+---
+
+## 5. PHASE 4 — UI
+
+### 5.1 Thêm tab "✏️ Sửa HĐ POS" vào `modules/admin_pos.py`
+
+Mở rộng tabs hiện có (3 tabs B1) → 4 tabs (thêm tab sửa):
+
+```python
+def render():
+    require_admin()
+    st.title("🛡 Admin POS")
+    st.warning("⚠️ Mọi thao tác ở đây ghi vào audit log.")
+    
+    tab1, tab2, tab3, tab4 = st.tabs([
+        "🛒 Tạo HĐ POS",
+        "🔄 Tạo phiếu đổi/trả",
+        "🛠 Tạo phiếu sửa chữa",
+        "✏️ Sửa HĐ POS",      # ← TAB MỚI cho B2a
+    ])
+    
+    with tab1: render_tao_hd_pos()
+    with tab2: render_tao_phieu_doi_tra()
+    with tab3: render_tao_phieu_sua_chua()
+    with tab4: render_sua_hd_pos()  # ← B2a
+```
+
+### 5.2 Sub-tab `render_sua_hd_pos()` — UI structure
+
+Pattern: 2-step flow (Search → Edit)
+
+```python
+def render_sua_hd_pos():
+    """Sub-tab: Sửa HĐ POS admin."""
+    
+    # Step 1: Search/filter để chọn HĐ
+    if "admin_edit_selected_ma_hd" not in st.session_state:
+        st.session_state["admin_edit_selected_ma_hd"] = None
+    
+    if st.session_state["admin_edit_selected_ma_hd"] is None:
+        _render_search_hd_step()
+    else:
+        _render_edit_form_step(st.session_state["admin_edit_selected_ma_hd"])
+
+
+def _render_search_hd_step():
+    """Filter + list HĐ để chọn sửa."""
+    st.markdown("### 🔍 Tìm HĐ cần sửa")
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        chi_nhanh_filter = st.selectbox("Chi nhánh", 
+                                         ["Tất cả"] + CHI_NHANH_LIST, 
+                                         key="adm_edit_cn")
+    with col2:
+        ngay_tu = st.date_input("Từ ngày", value=date.today() - timedelta(days=7),
+                                 key="adm_edit_tu")
+    with col3:
+        ngay_den = st.date_input("Đến ngày", value=date.today(),
+                                  key="adm_edit_den")
+    
+    ma_hd_search = st.text_input("🔎 Mã HĐ (optional)", 
+                                  placeholder="vd AHD000050",
+                                  key="adm_edit_ma_search")
+    
+    # Search
+    results = search_hd_pos_for_edit(
+        chi_nhanh=None if chi_nhanh_filter == "Tất cả" else chi_nhanh_filter,
+        ngay_tu=ngay_tu.isoformat() if ngay_tu else None,
+        ngay_den=ngay_den.isoformat() if ngay_den else None,
+        ma_hd_search=ma_hd_search if ma_hd_search else None,
+    )
+    
+    st.caption(f"Tìm thấy {len(results)} HĐ")
+    
+    # List với button "Sửa"
+    for hd in results:
+        col_info, col_btn = st.columns([5, 1])
+        with col_info:
+            badge_admin = " 🛡" if hd.get("is_admin_created") else ""
+            st.markdown(
+                f"**{hd['ma_hd']}**{badge_admin} · {hd['chi_nhanh']} · "
+                f"{hd['created_at'][:10]} · {hd['nguoi_ban']} · "
+                f"{fmt_vnd(hd['khach_can_tra'])}"
+            )
+        with col_btn:
+            if st.button("✏️ Sửa", key=f"adm_edit_pick_{hd['ma_hd']}", 
+                          use_container_width=True):
+                st.session_state["admin_edit_selected_ma_hd"] = hd["ma_hd"]
+                st.rerun()
+
+
+def _render_edit_form_step(ma_hd: str):
+    """Form sửa cho 1 HĐ cụ thể."""
+    
+    # Back button
+    if st.button("← Quay lại danh sách"):
+        st.session_state["admin_edit_selected_ma_hd"] = None
+        st.session_state.pop("admin_edit_form_data", None)
+        st.rerun()
+    
+    # Load HĐ + history qua RPC
+    data = load_hd_with_edit_history(ma_hd)
+    if not data:
+        st.error(f"Không tìm thấy HĐ {ma_hd}")
+        return
+    
+    header = data["header"]
+    items = data.get("items", []) or []
+    edit_count = data.get("edit_count", 0)
+    history = data.get("edit_history", []) or []
+    
+    # Header info
+    st.markdown(f"## ✏️ Sửa {ma_hd}")
+    
+    badges = []
+    if header.get("is_admin_created"):
+        badges.append("🛡 ADMIN CREATED")
+    if edit_count > 0:
+        badges.append(f"✏️ ĐÃ CHỈNH SỬA ({edit_count} lần)")
+    if badges:
+        st.markdown(" · ".join([f"**{b}**" for b in badges]))
+    
+    # History viewer (collapsible)
+    if history:
+        with st.expander(f"📜 Lịch sử chỉnh sửa ({len(history)} lần)"):
+            for h in history:
+                st.markdown(
+                    f"**{h['edited_at'][:19]}** · {h['edited_by_name']} · "
+                    f"changed: `{', '.join(h['fields_changed'])}` · "
+                    f"reason: _{h.get('edit_reason') or 'không ghi'}_"
+                )
+    
+    # Check has active PDT
+    # (Backend tự check khi submit, nhưng UI cần thông báo trước)
+    has_pdt = _check_has_active_pdt(ma_hd)
+    if has_pdt:
+        st.warning("⚠️ HĐ này có phiếu đổi/trả active. Bạn chỉ sửa được header (NV, KH, PTTT). Items bị BLOCK.")
+    
+    st.markdown("---")
+    
+    # Form fields (LOCK fields display read-only)
+    st.markdown("**🔒 Read-only:**")
+    st.markdown(f"- Mã HĐ: `{header['ma_hd']}`")
+    st.markdown(f"- Ngày tạo: `{header['created_at']}`")
+    st.markdown(f"- Chi nhánh: `{header['chi_nhanh']}`")
+    st.markdown(f"- Trạng thái: `{header['trang_thai']}`")
+    
+    st.markdown("---")
+    st.markdown("**✏️ Editable:**")
+    
+    # NV
+    nv_list = load_all_nhan_vien(include_inactive=True)
+    nv_dict = {nv["id"]: nv for nv in nv_list}
+    nv_options = {f"{nv['ho_ten']} ({'active' if nv['active'] else 'NGHỈ'})": nv["id"]
+                  for nv in nv_list}
+    
+    current_nv_id = header.get("nguoi_ban_id")
+    current_nv_label = next(
+        (lbl for lbl, nv_id in nv_options.items() if nv_id == current_nv_id),
+        None
+    )
+    
+    new_nv_label = st.selectbox(
+        "Người bán",
+        options=list(nv_options.keys()),
+        index=list(nv_options.keys()).index(current_nv_label) if current_nv_label else 0,
+        key=f"adm_edit_nv_{ma_hd}"
+    )
+    new_nv_id = nv_options[new_nv_label]
+    
+    # KH
+    col_kh1, col_kh2 = st.columns(2)
+    with col_kh1:
+        new_ten_khach = st.text_input("Tên khách", 
+                                       value=header.get("ten_khach") or "",
+                                       key=f"adm_edit_kh_ten_{ma_hd}")
+    with col_kh2:
+        new_sdt_khach = st.text_input("SĐT khách",
+                                       value=header.get("sdt_khach") or "",
+                                       key=f"adm_edit_kh_sdt_{ma_hd}")
+    
+    # Items (chỉ render nếu KHÔNG có PDT active)
+    if not has_pdt:
+        st.markdown("**Items:**")
+        # ... reuse cart UI từ tab Tạo HĐ admin (có editable đơn giá, SL)
+        new_items = _render_editable_items(items, ma_hd_key=ma_hd)
+        new_tong_tien_hang = sum(i["so_luong"] * i["don_gia"] for i in new_items)
+    else:
+        st.markdown("**Items (READ-ONLY do có PDT active):**")
+        for it in items:
+            st.markdown(f"- {it['ma_hang']} × {it['so_luong']} @ {fmt_vnd(it['don_gia'])}")
+        new_items = None  # Không gửi items trong payload
+        new_tong_tien_hang = header.get("tong_tien_hang", 0)
+    
+    # Giảm giá
+    new_giam_gia = st.number_input(
+        "Giảm giá đơn", min_value=0, 
+        value=int(header.get("giam_gia_don") or 0),
+        step=10000, key=f"adm_edit_gg_{ma_hd}"
+    )
+    
+    new_khach_can_tra = new_tong_tien_hang - new_giam_gia
+    st.markdown(f"**Khách cần trả:** {fmt_vnd(new_khach_can_tra)}")
+    
+    # PTTT
+    col_pt1, col_pt2, col_pt3 = st.columns(3)
+    with col_pt1:
+        new_tien_mat = st.number_input("Tiền mặt", min_value=0,
+                                        value=int(header.get("tien_mat") or 0),
+                                        step=10000, key=f"adm_edit_tm_{ma_hd}")
+    with col_pt2:
+        new_chuyen_khoan = st.number_input("Chuyển khoản", min_value=0,
+                                            value=int(header.get("chuyen_khoan") or 0),
+                                            step=10000, key=f"adm_edit_ck_{ma_hd}")
+    with col_pt3:
+        new_the = st.number_input("Thẻ", min_value=0,
+                                   value=int(header.get("the") or 0),
+                                   step=10000, key=f"adm_edit_the_{ma_hd}")
+    
+    # Ghi chú
+    new_ghi_chu = st.text_area("Ghi chú",
+                                value=header.get("ghi_chu") or "",
+                                key=f"adm_edit_gc_{ma_hd}")
+    
+    # Edit reason
+    edit_reason = st.text_area(
+        "🔴 Lý do sửa (BẮT BUỘC)",
+        placeholder="vd: Sửa nhầm đơn giá kính sapphire 350k → 500k theo yêu cầu khách",
+        key=f"adm_edit_reason_{ma_hd}"
+    )
+    
+    # Detect changes for confirmation
+    changes = _detect_changes(header, items, {
+        "nguoi_ban_id": new_nv_id,
+        "ten_khach": new_ten_khach or None,
+        "sdt_khach": new_sdt_khach or None,
+        "items": new_items,
+        "giam_gia_don": new_giam_gia,
+        "tien_mat": new_tien_mat,
+        "chuyen_khoan": new_chuyen_khoan,
+        "the": new_the,
+        "ghi_chu": new_ghi_chu or None,
+    })
+    
+    if not changes:
+        st.info("Chưa có thay đổi nào.")
+        return
+    
+    if not edit_reason.strip():
+        st.error("⚠️ Phải nhập lý do sửa.")
+        return
+    
+    # Confirmation
+    st.markdown("---")
+    with st.expander(f"⚠️ Xác nhận sửa HĐ ({len(changes)} thay đổi)", expanded=True):
+        for field, (old_val, new_val) in changes.items():
+            st.markdown(f"- **{field}**: `{old_val}` → `{new_val}`")
+        
+        confirm_text = st.text_input("Gõ **XÁC NHẬN** để submit:",
+                                      key=f"adm_edit_confirm_{ma_hd}")
+        
+        disabled = confirm_text.strip().upper() != "XÁC NHẬN"
+        if st.button("✏️ Sửa HĐ Admin", disabled=disabled, type="primary",
+                      key=f"adm_edit_submit_{ma_hd}"):
+            payload = {
+                "admin_id": st.session_state["user"]["id"],
+                "ma_hd": ma_hd,
+                "edit_reason": edit_reason,
+                "nguoi_ban_id": new_nv_id,
+                "ten_khach": new_ten_khach or None,
+                "sdt_khach": new_sdt_khach or None,
+                "ghi_chu": new_ghi_chu or None,
+                "giam_gia_don": new_giam_gia,
+                "tien_mat": new_tien_mat,
+                "chuyen_khoan": new_chuyen_khoan,
+                "the": new_the,
+            }
+            if new_items is not None:
+                payload["items"] = new_items
+            
+            result = call_rpc("sua_hoa_don_pos_admin", {"payload": payload})
+            
+            if result.get("ok"):
+                st.success(f"✅ Đã sửa {ma_hd}. Fields changed: {result.get('fields_changed')}")
+                st.session_state["admin_edit_selected_ma_hd"] = None
+                st.rerun()
+            else:
+                st.error(f"❌ {result.get('error')}")
+
+
+def _detect_changes(old_header, old_items, new_data):
+    """Compare old vs new, return dict of changed fields."""
+    changes = {}
+    # ... compare logic
+    return changes
+
+
+def _check_has_active_pdt(ma_hd):
+    """Check HĐ có phiếu đổi/trả active không."""
+    res = (supabase.table("phieu_doi_tra_pos")
+           .select("ma_pdt", count="exact")
+           .eq("ma_hd_goc", ma_hd)
+           .neq("trang_thai", "Đã hủy")
+           .execute())
+    return (res.count or 0) > 0
+```
+
+(Helper `_render_editable_items` reuse pattern từ tab Tạo HĐ admin — Claude Code adapt khi build.)
+
+### 5.3 Visual marker badge
+
+Update `display_hd_admin_badge()` (đã có từ B1) hoặc tạo new helper:
+
+```python
+def display_hd_edit_badge(hd: dict, edit_count: int = 0):
+    """Hiển thị badge nếu HĐ đã được admin sửa."""
+    badges = []
+    if hd.get("is_admin_created"):
+        badges.append("🛡 HĐ Admin")
+    if edit_count > 0:
+        badges.append(f"✏️ ĐÃ CHỈNH SỬA ({edit_count} lần)")
+    if badges:
+        st.markdown(" · ".join([f"**{b}**" for b in badges]))
+```
+
+Wire vào chi tiết HĐ trong báo cáo (defer từ B1, làm ở B2a luôn vì cần thiết hơn).
+
+---
+
+## 6. PHASE 5 — BÁO CÁO IMPACT
+
+### 6.1 Toggle "Bao gồm HĐ đã sửa"?
+
+Câu hỏi: Báo cáo doanh thu có loại HĐ admin **đã sửa** không?
+
+→ **Recommend KHÔNG add toggle thêm.** Lý do:
+- HĐ sau sửa = số tiền thật (admin sửa để đúng số)
+- Toggle "Bao gồm HĐ admin" của B1 đã đủ (apply cho cả HĐ admin tạo + admin sửa)
+- HĐ admin sửa nhưng tạo bởi user thường → vẫn coi là HĐ thật, không filter
+
+→ Skip Phase 5 cho B2a.
+
+---
+
+## 7. PHASE 6 — TEST PLAN
+
+### 7.1 Smoke tests (RPC level — Phase 2 đã chạy ở 3.4)
+
+### 7.2 UI manual tests
+
+```
+Permission
+[ ] Login admin → tab "✏️ Sửa HĐ POS" hiện
+[ ] Login non-admin → tab admin KHÔNG hiện
+[ ] Direct access không có quyền → block
+
+Search step
+[ ] Filter chi nhánh + ngày → trả kết quả đúng
+[ ] Search ma_hd → match LIKE
+[ ] HĐ "Đã hủy" KHÔNG xuất hiện trong list
+[ ] HĐ admin tạo có badge 🛡
+
+Edit form load
+[ ] Click "Sửa" 1 HĐ → form load đúng data
+[ ] Read-only fields hiển thị nhưng disabled
+[ ] LOCK fields (created_at, chi_nhanh) không có input
+[ ] HĐ có PDT active → warning hiện + items disabled
+
+Edit happy path
+[ ] Đổi NV bán → save → verify hoa_don_pos.nguoi_ban_id mới
+[ ] Đổi tên khách → save → verify
+[ ] Đổi PTTT (tien_mat 100k→150k) → save
+[ ] Sửa items: tăng SL từ 1→2 → kho trừ thêm 1 → verify the_kho
+[ ] Sửa items: đổi mã hàng → kho cũ cộng + kho mới trừ
+[ ] Xóa item → kho cộng lại
+[ ] Thêm item mới → kho trừ + tong_tien_hang update
+[ ] Sửa giảm giá → khach_can_tra update đúng
+
+Edit edge cases
+[ ] HĐ có PDT active: cố tình submit items → backend reject
+[ ] Stock không đủ khi đổi mã hàng → reject + error rõ
+[ ] Empty edit_reason → block submit
+[ ] Sai "XÁC NHẬN" → button disabled
+[ ] Không có gì thay đổi → message "Không có field nào thay đổi", không log
+
+Audit trail
+[ ] Sau sửa → admin_edit_history có row mới với snapshot before/after đúng
+[ ] action_logs có row ADMIN_HD_EDIT với detail liệt kê changes
+[ ] History viewer trong UI hiển thị tất cả lần sửa
+
+Multi-edit
+[ ] Sửa HĐ X → reload → sửa lần 2 → admin_edit_history có 2 rows
+[ ] edit_count badge tăng đúng
+```
+
+### 7.3 Acceptance criteria
+
+- ✅ Toàn bộ scenarios pass
+- ✅ Kho consistency sau mọi loại edit
+- ✅ Snapshot before/after đầy đủ trong admin_edit_history
+- ✅ LOCK fields không sửa được dù bypass UI (test bằng RPC trực tiếp)
+
+---
+
+## 8. PHASE 7 — ROLLBACK
+
+### 8.1 Rollback toàn phần
+
+```sql
+BEGIN;
+DROP FUNCTION IF EXISTS sua_hoa_don_pos_admin(jsonb);
+DROP FUNCTION IF EXISTS load_hd_pos_with_history(text);
+DROP FUNCTION IF EXISTS _admin_check_can_edit_hd_pos(text);
+DROP TABLE IF EXISTS admin_edit_history;
+COMMIT;
+```
+
+### 8.2 Restore data nếu admin sửa nhầm
+
+Mỗi edit có snapshot trong `admin_edit_history` → restore manual:
+
+```sql
+-- Lấy snapshot trước edit lần X
+SELECT snapshot_before FROM admin_edit_history WHERE id = <edit_id>;
+
+-- Apply manually qua UPDATE statements (admin tự build từ JSONB)
+-- Hoặc Claude Code tự convert snapshot → UPDATE statements khi cần.
+```
+
+→ Snapshot cho phép restore từng field, từng lần edit. KHÔNG có "undo button" (Q9 defer).
+
+---
+
+## 9. CONSTRAINTS & NOTES
+
+### 9.1 PHẢI
+
+- ✅ LOCK fields enforce ở RPC level (server-side check, không tin client)
+- ✅ Pre-validate stock trước khi UPDATE items (avoid half-baked transaction)
+- ✅ `edit_reason` BẮT BUỘC (UI block, RPC không block — UI xử lý cho UX tốt)
+- ✅ Snapshot full HĐ + items mỗi lần edit
+- ✅ Append-only `admin_edit_history` — không bao giờ DELETE/UPDATE rows
+
+### 9.2 TRÁNH
+
+- ❌ KHÔNG cho sửa HĐ "Đã hủy"
+- ❌ KHÔNG sửa items khi có PDT active (block ở RPC + warn UI)
+- ❌ KHÔNG sửa created_at, chi_nhanh, ma_hd, trang_thai, nguoi_tao
+- ❌ KHÔNG cho non-admin truy cập feature
+
+### 9.3 File cần edit
+
+| File | Repo | Lý do |
+|---|---|---|
+| `utils/db.py` | DLW_APP | `search_hd_pos_for_edit`, `load_hd_with_edit_history` |
+| `modules/admin_pos.py` | DLW_APP | Thêm tab "✏️ Sửa HĐ POS" + 2 sub-functions |
+| (optional) `modules/bao_cao.py` | DLW_APP | Wire `display_hd_edit_badge` vào chi tiết HĐ |
+
+KHÔNG cần edit: 
+- `pos_app/*` (POS không đụng)
+- 4 RPC từ B1 (giữ nguyên)
+- Helpers từ B1 (`is_admin`, `require_admin`, `_admin_validate_request`) — reuse
+
+### 9.4 Time budget
+
+| Phase | Time |
+|---|---|
+| Pre-flight | 15 phút |
+| Phase 1 schema | 15 phút |
+| Phase 2 RPC + helper | 1.5-2 giờ (RPC sửa phức tạp hơn tạo) |
+| Phase 3 Python helper | 20 phút |
+| Phase 4 UI (search + edit form) | 2-2.5 giờ |
+| Phase 6 test | 1.5 giờ |
+| **TỔNG** | **~5.5-6 giờ** |
+
+Chia 2 buổi 3h hoặc 1 buổi nguyên ngày.
+
+---
+
+## 10. CHECKLIST THỰC HIỆN
+
+```
+PRE-FLIGHT
+[ ] Verify B1 stable >7 ngày (action_logs check, no errors)
+[ ] Backup hoa_don_pos, hoa_don_pos_ct, action_logs
+[ ] Claude Code đọc code DLW_APP để confirm reuse từ B1
+
+PHASE 1 — Schema
+[ ] CREATE TABLE admin_edit_history với 3 indexes
+[ ] Verify schema + FK active
+
+PHASE 2 — RPC
+[ ] _admin_check_can_edit_hd_pos
+[ ] sua_hoa_don_pos_admin
+[ ] load_hd_pos_with_history
+[ ] Smoke tests T1-T7 pass (T8 defer)
+
+PHASE 3 — Python helper
+[ ] search_hd_pos_for_edit
+[ ] load_hd_with_edit_history
+[ ] (reuse is_admin, require_admin, call_rpc, load_all_nhan_vien)
+
+PHASE 4 — UI
+[ ] Tab "✏️ Sửa HĐ POS" trong admin_pos.py
+[ ] Sub-flow Search step (filter + list)
+[ ] Sub-flow Edit form step (load + form + confirm)
+[ ] _detect_changes helper
+[ ] _check_has_active_pdt helper
+[ ] (optional) Wire display_hd_edit_badge vào báo cáo
+
+PHASE 6 — Test (manual)
+[ ] Permission tests
+[ ] Search step
+[ ] Edit form load
+[ ] Edit happy path (NV, KH, items, giảm giá, PTTT)
+[ ] Edit edge cases (PDT block, stock fail, lock fields)
+[ ] Audit trail (admin_edit_history + action_logs)
+[ ] Multi-edit (sửa 1 HĐ nhiều lần)
+
+DEPLOY
+[ ] Merge PR vào main
+[ ] Streamlit Cloud redeploy
+[ ] Smoke test trên app live
+[ ] Theo dõi action_logs + admin_edit_history 1 tuần
+
+POST
+[ ] Cleanup _backup_admin_b2a_* sau 1 tuần ổn
+[ ] Sau 2 tuần ổn → bắt đầu plan PLAN_ADMIN_B2b.md (sửa đổi/trả + sửa chữa)
+```
+
+---
+
+**END OF PLAN_ADMIN_B2a.md**

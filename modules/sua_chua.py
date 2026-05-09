@@ -239,6 +239,36 @@ def module_sua_chua():
                 }
                 rows.append(row)
         supabase.table("hoa_don").insert(rows).execute()
+
+        # Trừ kho atomic cho linh kiện thật (skip dịch vụ + items không có trong hang_hoa).
+        # RPC tru_kho_apsc tự skip items không phải Hàng hóa hoặc open-price.
+        try:
+            items_kho = []
+            if not ct.empty:
+                for _, r in ct.iterrows():
+                    ma = str(r.get("ma_hang") or "").strip()
+                    sl = int(r.get("so_luong") or 0)
+                    if ma and sl > 0:
+                        items_kho.append({"ma_hang": ma, "so_luong": sl})
+            if items_kho:
+                kho_res = supabase.rpc("tru_kho_apsc", {
+                    "p_ma_hd":     ma_hd,
+                    "p_chi_nhanh": phieu.get("chi_nhanh", ""),
+                    "p_items":     items_kho,
+                    "p_nguoi_ban": ho_ten,
+                }).execute()
+                kho_data = kho_res.data if isinstance(kho_res.data, dict) else (kho_res.data or {})
+                if not kho_data.get("ok"):
+                    st.warning(
+                        f"⚠️ HĐ {ma_hd} đã tạo nhưng kho linh kiện chưa trừ: "
+                        f"{kho_data.get('error', '?')}. Liên hệ admin xử lý thủ công."
+                    )
+        except Exception as e:
+            st.warning(
+                f"⚠️ HĐ {ma_hd} đã tạo nhưng RPC trừ kho lỗi: {e}. "
+                f"Liên hệ admin xử lý thủ công."
+            )
+
         return ma_hd
 
     TRANG_THAI_LIST = ["Đang sửa", "Chờ linh kiện", "Chờ giao khách"]

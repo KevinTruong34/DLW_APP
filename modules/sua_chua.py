@@ -172,6 +172,24 @@ def module_sua_chua():
             return df
         except Exception: return pd.DataFrame()
 
+    def _sc_match_ma(ma_phieu, query: str) -> bool:
+        """Match phiếu sửa chữa: substring (paste full / partial) OR numeric suffix
+        (digit-only query, vd '1' → SC000001 / '405' → SC000405).
+        """
+        ma_l = str(ma_phieu).strip().lower()
+        q = (query or "").strip().lower()
+        if not q:
+            return True
+        if q in ma_l:
+            return True
+        if q.isdigit() and ma_l.startswith("sc"):
+            try:
+                return str(int(str(ma_phieu)[2:])).endswith(q)
+            except (ValueError, TypeError):
+                pass
+        return False
+
+
     def _gen_ma_phieu() -> str:
         try:
             res = supabase.rpc("next_sc_seq", {}).execute()
@@ -403,10 +421,7 @@ def module_sua_chua():
                 df = df[df["trang_thai"] == tt_filter]
             if search.strip():
                 s = search.strip().lower()
-                def _match_ma(ma):
-                    try: return str(int(ma[2:])).endswith(s) if ma.startswith("SC") else s in ma.lower()
-                    except: return s in str(ma).lower()
-                mask = (df["ma_phieu"].apply(_match_ma) |
+                mask = (df["ma_phieu"].apply(lambda m: _sc_match_ma(m, s)) |
                         df["sdt_khach"].astype(str).str.lower().str.contains(s, na=False) |
                         df["ten_khach"].astype(str).str.lower().str.contains(s, na=False))
                 df = df[mask]
@@ -653,10 +668,7 @@ def module_sua_chua():
             df_filtered = df_chua_xong.copy()
             if search_dt.strip():
                 s = search_dt.strip().lower()
-                def _match_ma2(ma):
-                    try: return str(int(ma[2:])).endswith(s) if ma.startswith("SC") else s in ma.lower()
-                    except: return s in str(ma).lower()
-                mask = (df_filtered["ma_phieu"].apply(_match_ma2) |
+                mask = (df_filtered["ma_phieu"].apply(lambda m: _sc_match_ma(m, s)) |
                         df_filtered["sdt_khach"].astype(str).str.lower().str.contains(s, na=False) |
                         df_filtered["ten_khach"].astype(str).str.lower().str.contains(s, na=False))
                 df_filtered = df_filtered[mask]
@@ -939,7 +951,13 @@ def module_sua_chua():
                                            placeholder="VD: '900' tìm SC000900...")
             if search_hd.strip():
                 s_hd = search_hd.strip().lower()
-                opts_hd = [o for o in opts_hd if s_hd in o.lower()]
+                def _match_opt_hd(opt: str) -> bool:
+                    # opt format: "ma_phieu · ten_khach · ..." — match any field
+                    if s_hd in opt.lower():
+                        return True
+                    ma_part = opt.split(" · ", 1)[0] if " · " in opt else opt
+                    return _sc_match_ma(ma_part, s_hd)
+                opts_hd = [o for o in opts_hd if _match_opt_hd(o)]
                 if not opts_hd:
                     st.warning("Không tìm thấy phiếu phù hợp.")
                     st.stop()

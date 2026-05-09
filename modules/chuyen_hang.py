@@ -416,11 +416,32 @@ def _handle_action(action: str, ma_phieu: str, df_phieu: pd.DataFrame,
             st.rerun()
 
         elif action == "huy":
-            _update_trang_thai_phieu(ma_phieu, "Đã hủy")
+            user = get_user() or {}
+            huy_boi = user.get("ho_ten") or user.get("username") or "admin"
+            try:
+                res = supabase.rpc(
+                    "huy_phieu_chuyen_kho",
+                    {"p_ma_phieu": ma_phieu, "p_huy_boi": huy_boi},
+                ).execute()
+                result = res.data if isinstance(res.data, dict) else (res.data or {})
+            except Exception as e:
+                st.error(f"Lỗi RPC hủy phiếu: {e}")
+                return
+
+            if not result.get("ok"):
+                st.error(f"Không thể hủy: {result.get('error', 'Unknown error')}")
+                return
+
             st.cache_data.clear()
-            log_action("PHIEU_CANCEL", f"ma={ma_phieu} tu={tu_cn} toi={toi_cn}",
-                      level="warning")
-            st.success(f"✓ Đã hủy phiếu {ma_phieu}")
+            prev = result.get("prev_status", "?")
+            n_restored = result.get("items_restored", 0)
+            if prev == "Đang chuyển" and n_restored > 0:
+                st.success(
+                    f"✓ Đã hủy phiếu {ma_phieu} — kho CN nguồn đã được "
+                    f"hoàn lại {n_restored} mặt hàng."
+                )
+            else:
+                st.success(f"✓ Đã hủy phiếu {ma_phieu}")
             st.rerun()
 
         elif action == "sua":

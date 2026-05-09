@@ -14,6 +14,7 @@ from utils.db import (
     supabase, call_rpc, load_all_nhan_vien, load_hang_hoa,
     invalidate_hoa_don_cache,
     search_hd_pos_for_edit, load_hd_with_edit_history, has_active_pdt_for_hd,
+    search_pdt_for_edit, search_sc_for_edit, load_record_with_history,
     lookup_khach_hang, upsert_khach_hang_with_update,
 )
 from utils.config import ALL_BRANCHES
@@ -1406,6 +1407,911 @@ def _render_history_compact(history: list[dict]):
 
 
 # ════════════════════════════════════════════════════════════
+# B2b — SUB-TAB: SỬA PHIẾU ĐỔI/TRẢ
+# ════════════════════════════════════════════════════════════
+def _render_sua_doi_tra():
+    """Entry. 2-step flow: search → edit."""
+    st.markdown(
+        "Sửa nội dung phiếu đổi/trả đã tạo. "
+        "**LOCK**: ma_pdt, ngày tạo, chi nhánh, trạng thái, NV tạo, HĐ gốc. "
+        "**BLOCK items_tra** (hủy phiếu rồi tạo lại nếu cần đổi)."
+    )
+
+    if "admin_edit_pdt_selected_ma_pdt" not in st.session_state:
+        st.session_state["admin_edit_pdt_selected_ma_pdt"] = None
+
+    if st.session_state["admin_edit_pdt_selected_ma_pdt"] is None:
+        _render_search_pdt_step()
+    else:
+        _render_edit_pdt_form_step(
+            st.session_state["admin_edit_pdt_selected_ma_pdt"]
+        )
+
+
+def _clear_edit_pdt_form_state():
+    for k in list(st.session_state.keys()):
+        if k.startswith("adm_edit_pdt_form_") or k.startswith("adm_edit_pdt_items_"):
+            del st.session_state[k]
+
+
+def _render_search_pdt_step():
+    st.markdown("### 🔍 Tìm phiếu đổi/trả cần sửa")
+
+    col_d1, col_d2, col_cn = st.columns([1, 1, 1.4])
+    with col_d1:
+        ngay_tu = st.date_input(
+            "Từ ngày", value=date.today() - timedelta(days=7),
+            max_value=date.today(), key="adm_edit_pdt_tu",
+        )
+    with col_d2:
+        ngay_den = st.date_input(
+            "Đến ngày", value=date.today(),
+            max_value=date.today(), key="adm_edit_pdt_den",
+        )
+    with col_cn:
+        chi_nhanh_filter = st.selectbox(
+            "Chi nhánh", options=["Tất cả"] + ALL_BRANCHES,
+            key="adm_edit_pdt_cn",
+        )
+
+    ma_pdt_search = st.text_input(
+        "🔎 Mã phiếu (optional)", placeholder="VD: AHDD000004",
+        key="adm_edit_pdt_ma_search",
+    )
+
+    ngay_tu_iso = (
+        datetime.combine(ngay_tu, datetime.min.time()).isoformat()
+        if ngay_tu else None
+    )
+    ngay_den_iso = (
+        datetime.combine(ngay_den, datetime.max.time()).isoformat()
+        if ngay_den else None
+    )
+
+    results = search_pdt_for_edit(
+        chi_nhanh=None if chi_nhanh_filter == "Tất cả" else chi_nhanh_filter,
+        ngay_tu=ngay_tu_iso, ngay_den=ngay_den_iso,
+        ma_pdt_search=ma_pdt_search.strip() if ma_pdt_search.strip() else None,
+        limit=50,
+    )
+
+    st.caption(f"Tìm thấy {len(results)} phiếu")
+    if not results:
+        st.info("Không có phiếu Hoàn thành trong khoảng này.")
+        return
+
+    for pdt in results:
+        col_info, col_btn = st.columns([5, 1])
+        with col_info:
+            badge_admin = " 🛡" if pdt.get("is_admin_created") else ""
+            ngay = (pdt.get("created_at") or "")[:10]
+            cl = int(pdt.get("chenh_lech") or 0)
+            cl_str = (
+                f"+{fmt_vnd(cl)}" if cl > 0
+                else (f"−{fmt_vnd(-cl)}" if cl < 0 else "đổi ngang")
+            )
+            ten_kh = pdt.get("ten_khach") or "—"
+            st.markdown(
+                f"**{pdt['ma_pdt']}**{badge_admin} · từ {pdt.get('ma_hd_goc', '—')} · "
+                f"{pdt['chi_nhanh']} · {ngay} · {pdt.get('loai_phieu', '—')} · "
+                f"{cl_str} · KH: {ten_kh}"
+            )
+        with col_btn:
+            if st.button(
+                "✏️ Sửa",
+                key=f"adm_edit_pdt_pick_{_safe_key(pdt['ma_pdt'])}",
+                use_container_width=True,
+            ):
+                st.session_state["admin_edit_pdt_selected_ma_pdt"] = pdt["ma_pdt"]
+                _clear_edit_pdt_form_state()
+                st.rerun()
+
+
+def _render_edit_pdt_form_step(ma_pdt: str):
+    user = get_user()
+
+    if st.button("← Quay lại danh sách", key="adm_edit_pdt_back"):
+        st.session_state["admin_edit_pdt_selected_ma_pdt"] = None
+        _clear_edit_pdt_form_state()
+        st.rerun()
+
+    data = load_record_with_history("phieu_doi_tra_pos", ma_pdt)
+    if not data or not data.get("header"):
+        st.error(f"Không tìm thấy phiếu {ma_pdt}")
+        return
+
+    header = data["header"]
+    items_all = data.get("items") or []
+    items_tra = [it for it in items_all if it.get("kieu") == "tra"]
+    items_moi_old = [it for it in items_all if it.get("kieu") == "moi"]
+    edit_count = data.get("edit_count", 0)
+    history = data.get("edit_history") or []
+
+    st.markdown(f"### ✏️ Sửa {ma_pdt}")
+    badges = []
+    if header.get("is_admin_created"):
+        badges.append("🛡 ADMIN CREATED")
+    if edit_count > 0:
+        badges.append(f"✏️ ĐÃ CHỈNH SỬA ({edit_count} lần)")
+    if badges:
+        st.markdown(" · ".join([f"**{b}**" for b in badges]))
+
+    if history:
+        with st.expander(f"📜 Lịch sử chỉnh sửa ({len(history)} lần)"):
+            _render_history_compact(history)
+
+    st.markdown("---")
+    st.markdown("**🔒 Read-only (LOCKED):**")
+    st.markdown(f"- Mã phiếu: `{header['ma_pdt']}`")
+    st.markdown(f"- HĐ gốc: `{header.get('ma_hd_goc', '—')}`")
+    st.markdown(f"- Ngày tạo: `{(header.get('created_at') or '')[:19]}`")
+    st.markdown(f"- Chi nhánh: `{header['chi_nhanh']}`")
+    st.markdown(f"- Trạng thái: `{header['trang_thai']}`")
+    st.markdown(f"- Người tạo: `{header.get('nguoi_tao', '—')}`")
+    st.markdown(f"- Loại phiếu: `{header.get('loai_phieu', '—')}`")
+    st.markdown(
+        f"- **Tiền hàng trả: {fmt_vnd(header.get('tien_hang_tra', 0))}** "
+        f"(không sửa được — items_tra blocked)"
+    )
+
+    st.markdown("---")
+    st.markdown("**📦 Items trả (READ-ONLY):**")
+    if not items_tra:
+        st.caption("Không có items trả")
+    else:
+        for it in items_tra:
+            tt = it.get("thanh_tien") or (int(it["so_luong"]) * int(it["don_gia"]))
+            st.markdown(
+                f"- {it['ma_hang']} ({it.get('ten_hang') or it['ma_hang']}) "
+                f"× {it['so_luong']} @ {fmt_vnd(it['don_gia'])} = {fmt_vnd(tt)}"
+            )
+    st.caption(
+        "⚠️ items_tra BLOCKED. Cần đổi → hủy phiếu (POS) rồi tạo lại bằng tab 'Tạo'."
+    )
+
+    st.markdown("---")
+    st.markdown("**✏️ Editable:**")
+
+    new_ten_khach, new_sdt_khach, _, _ = _render_kh_lookup_input(
+        f"adm_edit_pdt_form_kh_{ma_pdt}",
+        default_ten=header.get("ten_khach") or "",
+        default_sdt=header.get("sdt_khach") or "",
+        label_sdt="SĐT khách",
+        label_ten="Tên khách",
+    )
+
+    new_ghi_chu = st.text_area(
+        "Ghi chú",
+        value=header.get("ghi_chu") or "",
+        key=f"adm_edit_pdt_form_gc_{ma_pdt}",
+    )
+
+    items_moi_state_key = f"adm_edit_pdt_items_moi_{ma_pdt}"
+    new_items_moi = _render_editable_items(
+        items_moi_old, items_moi_state_key, ma_pdt
+    )
+    new_tien_hang_moi = sum(
+        int(i["so_luong"]) * int(i["don_gia"]) for i in new_items_moi
+    )
+    st.markdown(f"**Tổng tiền hàng mới:** {fmt_vnd(new_tien_hang_moi)}")
+
+    tien_hang_tra = int(header.get("tien_hang_tra") or 0)
+    new_chenh_lech = new_tien_hang_moi - tien_hang_tra
+
+    if new_chenh_lech > 0:
+        st.markdown(f"**Chênh lệch:** +{fmt_vnd(new_chenh_lech)} (khách bù)")
+    elif new_chenh_lech < 0:
+        st.markdown(f"**Chênh lệch:** −{fmt_vnd(-new_chenh_lech)} (shop hoàn)")
+    else:
+        st.markdown("**Chênh lệch:** 0 (đổi ngang)")
+
+    st.markdown("---")
+    if new_chenh_lech > 0:
+        st.caption(f"Khách cần bù {fmt_vnd(new_chenh_lech)}")
+
+        tm_key = f"adm_edit_pdt_form_tm_{ma_pdt}"
+        ck_key = f"adm_edit_pdt_form_ck_{ma_pdt}"
+        the_key = f"adm_edit_pdt_form_the_{ma_pdt}"
+        if tm_key not in st.session_state:
+            st.session_state[tm_key] = int(header.get("tien_mat") or 0)
+        if ck_key not in st.session_state:
+            st.session_state[ck_key] = int(header.get("chuyen_khoan") or 0)
+        if the_key not in st.session_state:
+            st.session_state[the_key] = int(header.get("the") or 0)
+
+        col_q1, col_q2, col_q3 = st.columns(3)
+        with col_q1:
+            if st.button("💵 Toàn bộ Tiền mặt",
+                         key=f"adm_edit_pdt_qf_tm_{ma_pdt}",
+                         use_container_width=True):
+                st.session_state[tm_key] = int(new_chenh_lech)
+                st.session_state[ck_key] = 0
+                st.session_state[the_key] = 0
+                st.rerun()
+        with col_q2:
+            if st.button("🏦 Toàn bộ Chuyển khoản",
+                         key=f"adm_edit_pdt_qf_ck_{ma_pdt}",
+                         use_container_width=True):
+                st.session_state[tm_key] = 0
+                st.session_state[ck_key] = int(new_chenh_lech)
+                st.session_state[the_key] = 0
+                st.rerun()
+        with col_q3:
+            if st.button("💳 Toàn bộ Thẻ",
+                         key=f"adm_edit_pdt_qf_the_{ma_pdt}",
+                         use_container_width=True):
+                st.session_state[tm_key] = 0
+                st.session_state[ck_key] = 0
+                st.session_state[the_key] = int(new_chenh_lech)
+                st.rerun()
+
+        col_p1, col_p2, col_p3 = st.columns(3)
+        with col_p1:
+            new_tien_mat = st.number_input("Tiền mặt", min_value=0, step=1000, key=tm_key)
+        with col_p2:
+            new_chuyen_khoan = st.number_input("Chuyển khoản", min_value=0, step=1000, key=ck_key)
+        with col_p3:
+            new_the = st.number_input("Thẻ", min_value=0, step=1000, key=the_key)
+
+        tong_pttt = int(new_tien_mat) + int(new_chuyen_khoan) + int(new_the)
+        diff = tong_pttt - new_chenh_lech
+        if diff == 0:
+            st.success(f"✓ Tổng PTTT: {fmt_vnd(tong_pttt)} (khớp)")
+        elif diff > 0:
+            st.info(f"Tổng PTTT: {fmt_vnd(tong_pttt)} (thừa {fmt_vnd(diff)})")
+        else:
+            st.warning(f"Tổng PTTT: {fmt_vnd(tong_pttt)} (thiếu {fmt_vnd(-diff)})")
+    elif new_chenh_lech < 0:
+        st.caption(f"Shop hoàn {fmt_vnd(-new_chenh_lech)} — chỉ tiền mặt (số âm)")
+        new_tien_mat = new_chenh_lech
+        new_chuyen_khoan = 0
+        new_the = 0
+    else:
+        new_tien_mat = 0
+        new_chuyen_khoan = 0
+        new_the = 0
+
+    st.markdown("---")
+    edit_reason = st.text_area(
+        "🔴 Lý do sửa (BẮT BUỘC)",
+        placeholder="VD: Khách đổi sang đồng hồ giá cao hơn, cộng thêm chênh lệch",
+        key=f"adm_edit_pdt_form_reason_{ma_pdt}",
+    )
+
+    new_data = {
+        "ten_khach": (new_ten_khach or "").strip(),
+        "sdt_khach": (new_sdt_khach or "").strip(),
+        "ghi_chu": (new_ghi_chu or "").strip(),
+        "items_moi": new_items_moi,
+        "tien_mat": int(new_tien_mat),
+        "chuyen_khoan": int(new_chuyen_khoan),
+        "the": int(new_the),
+    }
+    changes = _detect_changes_pdt(header, items_moi_old, new_data)
+
+    if not changes:
+        st.info("Chưa có thay đổi nào — chỉnh sửa giá trị nào đó để bật submit.")
+        return
+
+    has_valid_reason = bool(edit_reason and edit_reason.strip())
+    if not has_valid_reason:
+        st.error("⚠️ Phải nhập lý do sửa (không được để trống).")
+
+    st.markdown("---")
+    with st.expander(f"⚠️ Xác nhận sửa phiếu ({len(changes)} thay đổi)", expanded=True):
+        for label, diff_text in changes.items():
+            st.markdown(f"- **{label}**: {diff_text}")
+
+        confirm_text = st.text_input(
+            "Gõ **XÁC NHẬN** để bật nút sửa:",
+            key=f"adm_edit_pdt_form_confirm_{ma_pdt}",
+        )
+        confirm_ok = confirm_text.strip().upper() == "XÁC NHẬN"
+        disabled = not (has_valid_reason and confirm_ok)
+
+        if st.button(
+            "✏️ Sửa Phiếu Đổi/Trả Admin",
+            disabled=disabled, type="primary",
+            key=f"adm_edit_pdt_form_submit_{ma_pdt}",
+            use_container_width=True,
+        ):
+            payload = {
+                "admin_id": user["id"],
+                "ma_pdt": ma_pdt,
+                "edit_reason": edit_reason.strip(),
+                "ten_khach": (new_ten_khach or "").strip() or None,
+                "sdt_khach": (new_sdt_khach or "").strip() or None,
+                "ghi_chu": (new_ghi_chu or "").strip() or None,
+                "tien_mat": int(new_tien_mat),
+                "chuyen_khoan": int(new_chuyen_khoan),
+                "the": int(new_the),
+                "items_moi": new_items_moi,
+            }
+            try:
+                result = call_rpc("sua_phieu_doi_tra_pos_admin", {"payload": payload})
+            except Exception as e:
+                st.error(f"❌ Lỗi RPC: {e}")
+                return
+
+            if result and result.get("ok"):
+                fc = result.get("fields_changed") or []
+                if fc:
+                    st.success(f"✅ Đã sửa {ma_pdt}. Fields changed: {', '.join(fc)}")
+                else:
+                    st.info(result.get("message", "Không có field nào thay đổi"))
+                if new_sdt_khach and new_ten_khach:
+                    upsert_khach_hang_with_update(
+                        new_ten_khach, new_sdt_khach, header.get("chi_nhanh", "")
+                    )
+                st.session_state["admin_edit_pdt_selected_ma_pdt"] = None
+                _clear_edit_pdt_form_state()
+                invalidate_hoa_don_cache()
+                st.rerun()
+            else:
+                err = result.get("error", "Unknown error") if result else "No response"
+                st.error(f"❌ {err}")
+
+
+def _detect_changes_pdt(old_header, old_items_moi, new_data):
+    """Detect changes for PDT edit. Items diff for items_moi only (items_tra blocked)."""
+    changes: dict[str, str] = {}
+
+    def _norm(v):
+        if v is None:
+            return ""
+        s = str(v).strip()
+        return "" if s.lower() == "nan" else s
+
+    for label, key in [
+        ("Tên khách", "ten_khach"),
+        ("SĐT khách", "sdt_khach"),
+        ("Ghi chú", "ghi_chu"),
+    ]:
+        old_v = _norm(old_header.get(key))
+        new_v = _norm(new_data.get(key))
+        if old_v != new_v:
+            changes[label] = f"`{old_v or '—'}` → `{new_v or '—'}`"
+
+    for label, key in [
+        ("Tiền mặt", "tien_mat"),
+        ("Chuyển khoản", "chuyen_khoan"),
+        ("Thẻ", "the"),
+    ]:
+        old_v = int(old_header.get(key) or 0)
+        new_v = int(new_data.get(key) or 0)
+        if old_v != new_v:
+            changes[label] = f"{fmt_vnd(old_v)} → {fmt_vnd(new_v)}"
+
+    if new_data.get("items_moi") is not None:
+        items_diffs = _diff_items(old_items_moi, new_data["items_moi"])
+        if items_diffs:
+            changes["Items mới"] = "  \n  " + "  \n  ".join(items_diffs)
+
+    return changes
+
+
+# ════════════════════════════════════════════════════════════
+# B2b — SUB-TAB: SỬA PHIẾU SỬA CHỮA
+# ════════════════════════════════════════════════════════════
+_SC_STATUS_OPTIONS_DB = ["Đang sửa", "Hoàn thành", "Chờ giao khách"]
+
+
+def _render_sua_sua_chua():
+    """Entry. 2-step flow: search → edit."""
+    st.markdown(
+        "Sửa nội dung phiếu sửa chữa. "
+        "**LOCK**: ma_phieu, ngày tạo, chi nhánh, NV tạo. "
+        "**Items READ-ONLY** nếu phiếu đã convert APSC."
+    )
+
+    if "admin_edit_sc_selected_ma_phieu" not in st.session_state:
+        st.session_state["admin_edit_sc_selected_ma_phieu"] = None
+
+    if st.session_state["admin_edit_sc_selected_ma_phieu"] is None:
+        _render_search_sc_step()
+    else:
+        _render_edit_sc_form_step(
+            st.session_state["admin_edit_sc_selected_ma_phieu"]
+        )
+
+
+def _clear_edit_sc_form_state():
+    for k in list(st.session_state.keys()):
+        if k.startswith("adm_edit_sc_form_") or k.startswith("adm_edit_sc_items_"):
+            del st.session_state[k]
+
+
+def _render_search_sc_step():
+    st.markdown("### 🔍 Tìm phiếu sửa chữa cần sửa")
+
+    col_d1, col_d2, col_cn, col_tt = st.columns([1, 1, 1.4, 1.5])
+    with col_d1:
+        ngay_tu = st.date_input(
+            "Từ ngày", value=date.today() - timedelta(days=7),
+            max_value=date.today(), key="adm_edit_sc_tu",
+        )
+    with col_d2:
+        ngay_den = st.date_input(
+            "Đến ngày", value=date.today(),
+            max_value=date.today(), key="adm_edit_sc_den",
+        )
+    with col_cn:
+        chi_nhanh_filter = st.selectbox(
+            "Chi nhánh", options=["Tất cả"] + ALL_BRANCHES,
+            key="adm_edit_sc_cn",
+        )
+    with col_tt:
+        status_filter = st.selectbox(
+            "Trạng thái",
+            options=["Tất cả (trừ Đã hủy)"] + _SC_STATUS_OPTIONS_DB,
+            key="adm_edit_sc_status",
+        )
+
+    ma_phieu_search = st.text_input(
+        "🔎 Mã phiếu (optional)", placeholder="VD: SC000019",
+        key="adm_edit_sc_ma_search",
+    )
+
+    ngay_tu_iso = (
+        datetime.combine(ngay_tu, datetime.min.time()).isoformat()
+        if ngay_tu else None
+    )
+    ngay_den_iso = (
+        datetime.combine(ngay_den, datetime.max.time()).isoformat()
+        if ngay_den else None
+    )
+
+    results = search_sc_for_edit(
+        chi_nhanh=None if chi_nhanh_filter == "Tất cả" else chi_nhanh_filter,
+        trang_thai=None if status_filter == "Tất cả (trừ Đã hủy)" else status_filter,
+        ngay_tu=ngay_tu_iso, ngay_den=ngay_den_iso,
+        ma_phieu_search=ma_phieu_search.strip() if ma_phieu_search.strip() else None,
+        limit=50,
+    )
+
+    st.caption(f"Tìm thấy {len(results)} phiếu")
+    if not results:
+        st.info("Không có phiếu trong khoảng này.")
+        return
+
+    for sc in results:
+        col_info, col_btn = st.columns([5, 1])
+        with col_info:
+            badge_admin = " 🛡" if sc.get("is_admin_created") else ""
+            ngay = (sc.get("created_at") or "")[:10]
+            ten_kh = sc.get("ten_khach") or "—"
+            hieu = sc.get("hieu_dong_ho") or ""
+            tt = sc.get("trang_thai") or "—"
+            st.markdown(
+                f"**{sc['ma_phieu']}**{badge_admin} · {sc['chi_nhanh']} · {ngay} · "
+                f"`{tt}` · KH: {ten_kh}"
+                + (f" · {hieu}" if hieu else "")
+            )
+        with col_btn:
+            if st.button(
+                "✏️ Sửa",
+                key=f"adm_edit_sc_pick_{_safe_key(sc['ma_phieu'])}",
+                use_container_width=True,
+            ):
+                st.session_state["admin_edit_sc_selected_ma_phieu"] = sc["ma_phieu"]
+                _clear_edit_sc_form_state()
+                st.rerun()
+
+
+def _render_edit_sc_form_step(ma_phieu: str):
+    user = get_user()
+
+    if st.button("← Quay lại danh sách", key="adm_edit_sc_back"):
+        st.session_state["admin_edit_sc_selected_ma_phieu"] = None
+        _clear_edit_sc_form_state()
+        st.rerun()
+
+    data = load_record_with_history("phieu_sua_chua", ma_phieu)
+    if not data or not data.get("header"):
+        st.error(f"Không tìm thấy phiếu {ma_phieu}")
+        return
+
+    header = data["header"]
+    items_old = data.get("items") or []
+    edit_count = data.get("edit_count", 0)
+    history = data.get("edit_history") or []
+
+    # Check has_apsc qua RPC helper
+    try:
+        check_result = call_rpc("_admin_check_can_edit_sc", {"p_ma_phieu": ma_phieu})
+        has_apsc = bool((check_result or {}).get("has_apsc"))
+        apsc_detail = (check_result or {}).get("apsc_detail") or ""
+    except Exception:
+        has_apsc = False
+        apsc_detail = ""
+
+    st.markdown(f"### ✏️ Sửa {ma_phieu}")
+    badges = []
+    if header.get("is_admin_created"):
+        badges.append("🛡 ADMIN CREATED")
+    if edit_count > 0:
+        badges.append(f"✏️ ĐÃ CHỈNH SỬA ({edit_count} lần)")
+    if badges:
+        st.markdown(" · ".join([f"**{b}**" for b in badges]))
+
+    if has_apsc:
+        st.warning(
+            "⚠️ Phiếu đã convert APSC. Items READ-ONLY, chỉ sửa header."
+            + (f"  \n_{apsc_detail[:120]}_" if apsc_detail else "")
+        )
+
+    if history:
+        with st.expander(f"📜 Lịch sử chỉnh sửa ({len(history)} lần)"):
+            _render_history_compact(history)
+
+    st.markdown("---")
+    st.markdown("**🔒 Read-only (LOCKED):**")
+    st.markdown(f"- Mã phiếu: `{header['ma_phieu']}`")
+    st.markdown(f"- Ngày tiếp nhận: `{(header.get('ngay_tiep_nhan') or '')[:19]}`")
+    st.markdown(f"- Chi nhánh: `{header['chi_nhanh']}`")
+    st.markdown(f"- Người tạo: `{header.get('created_by', '—')}`")
+
+    st.markdown("---")
+    st.markdown("**✏️ Editable:**")
+
+    # 2-cột layout
+    col_left, col_right = st.columns(2)
+
+    with col_left:
+        st.markdown("**👤 Khách + NV + Thời gian**")
+        new_ten_khach, new_sdt_khach, _, _ = _render_kh_lookup_input(
+            f"adm_edit_sc_form_kh_{ma_phieu}",
+            default_ten=header.get("ten_khach") or "",
+            default_sdt=header.get("sdt_khach") or "",
+            label_sdt="SĐT khách",
+            label_ten="Tên khách",
+        )
+
+        new_nguoi_tn = st.text_input(
+            "NV tiếp nhận",
+            value=header.get("nguoi_tiep_nhan") or "",
+            key=f"adm_edit_sc_form_nv_{ma_phieu}",
+        )
+
+        cur_hen = header.get("ngay_hen_tra")
+        try:
+            cur_hen_date = datetime.fromisoformat(cur_hen).date() if cur_hen else None
+        except Exception:
+            cur_hen_date = None
+        new_ngay_hen = st.date_input(
+            "Ngày hẹn trả (optional)",
+            value=cur_hen_date,
+            key=f"adm_edit_sc_form_hen_{ma_phieu}",
+        )
+
+        new_khach_tra_truoc = st.number_input(
+            "Khách trả trước",
+            min_value=0,
+            value=int(header.get("khach_tra_truoc") or 0),
+            step=1000,
+            key=f"adm_edit_sc_form_tra_truoc_{ma_phieu}",
+        )
+
+        all_status_options = _SC_STATUS_OPTIONS_DB + ["Đã hủy"]
+        cur_tt = header.get("trang_thai", "Đang sửa")
+        default_idx = (
+            all_status_options.index(cur_tt)
+            if cur_tt in all_status_options else 0
+        )
+        new_trang_thai = st.selectbox(
+            "Trạng thái",
+            options=all_status_options,
+            index=default_idx,
+            key=f"adm_edit_sc_form_tt_{ma_phieu}",
+            help="Lưu ý: 'Đã hủy' là one-way (sau đó không sửa được).",
+        )
+
+    with col_right:
+        st.markdown("**🔧 Chi tiết sửa chữa**")
+        loai_options = ["Sửa chữa", "Bảo hành", "Bảo dưỡng", "Khác"]
+        cur_loai = header.get("loai_yeu_cau", "Sửa chữa")
+        new_loai_yc = st.selectbox(
+            "Loại yêu cầu",
+            options=loai_options,
+            index=loai_options.index(cur_loai) if cur_loai in loai_options else 0,
+            key=f"adm_edit_sc_form_loai_{ma_phieu}",
+        )
+        new_hieu_dh = st.text_input(
+            "Hiệu đồng hồ",
+            value=header.get("hieu_dong_ho") or "",
+            key=f"adm_edit_sc_form_hieu_{ma_phieu}",
+        )
+        new_dac_diem = st.text_input(
+            "Đặc điểm",
+            value=header.get("dac_diem") or "",
+            key=f"adm_edit_sc_form_dac_{ma_phieu}",
+        )
+        new_mo_ta = st.text_area(
+            "Mô tả lỗi",
+            value=header.get("mo_ta_loi") or "",
+            key=f"adm_edit_sc_form_mota_{ma_phieu}",
+        )
+        new_ghi_chu_nb = st.text_area(
+            "Ghi chú nội bộ",
+            value=header.get("ghi_chu_noi_bo") or "",
+            key=f"adm_edit_sc_form_ghichu_{ma_phieu}",
+        )
+
+    # Items section (full width)
+    st.markdown("---")
+    if has_apsc:
+        st.markdown("**Dịch vụ / Linh kiện (READ-ONLY do có APSC):**")
+        if not items_old:
+            st.caption("Không có items")
+        else:
+            for it in items_old:
+                tt_val = int(it["so_luong"]) * int(it["don_gia"])
+                loai = it.get("loai_dong") or "Dịch vụ"
+                st.markdown(
+                    f"- [{loai}] {it.get('ten_hang', '—')} "
+                    f"× {it['so_luong']} @ {fmt_vnd(it['don_gia'])} = {fmt_vnd(tt_val)}"
+                )
+        new_items = None
+    else:
+        st.markdown("**Dịch vụ / Linh kiện (KHÔNG đụng kho):**")
+        items_state_key = f"adm_edit_sc_items_{ma_phieu}"
+        new_items = _render_editable_sc_items(items_old, items_state_key, ma_phieu)
+        if new_items:
+            tong_dv = sum(int(it["so_luong"]) * int(it["don_gia"]) for it in new_items)
+            st.markdown(f"**Tổng dịch vụ:** {fmt_vnd(tong_dv)}")
+
+    st.markdown("---")
+    edit_reason = st.text_area(
+        "🔴 Lý do sửa (BẮT BUỘC)",
+        placeholder="VD: Sửa nhầm hiệu đồng hồ — Casio thay vì Citizen",
+        key=f"adm_edit_sc_form_reason_{ma_phieu}",
+    )
+
+    new_data = {
+        "ten_khach": (new_ten_khach or "").strip(),
+        "sdt_khach": (new_sdt_khach or "").strip(),
+        "loai_yeu_cau": new_loai_yc,
+        "hieu_dong_ho": (new_hieu_dh or "").strip(),
+        "dac_diem": (new_dac_diem or "").strip(),
+        "mo_ta_loi": (new_mo_ta or "").strip(),
+        "ghi_chu_noi_bo": (new_ghi_chu_nb or "").strip(),
+        "nguoi_tiep_nhan": (new_nguoi_tn or "").strip(),
+        "trang_thai": new_trang_thai,
+        "khach_tra_truoc": int(new_khach_tra_truoc),
+        "ngay_hen_tra": new_ngay_hen.isoformat() if new_ngay_hen else "",
+        "items": new_items,
+    }
+    changes = _detect_changes_sc(header, items_old, new_data, items_locked=has_apsc)
+
+    if not changes:
+        st.info("Chưa có thay đổi nào — chỉnh sửa giá trị nào đó để bật submit.")
+        return
+
+    has_valid_reason = bool(edit_reason and edit_reason.strip())
+    if not has_valid_reason:
+        st.error("⚠️ Phải nhập lý do sửa (không được để trống).")
+
+    st.markdown("---")
+    with st.expander(f"⚠️ Xác nhận sửa phiếu ({len(changes)} thay đổi)", expanded=True):
+        for label, diff_text in changes.items():
+            st.markdown(f"- **{label}**: {diff_text}")
+
+        confirm_text = st.text_input(
+            "Gõ **XÁC NHẬN** để bật nút sửa:",
+            key=f"adm_edit_sc_form_confirm_{ma_phieu}",
+        )
+        confirm_ok = confirm_text.strip().upper() == "XÁC NHẬN"
+        disabled = not (has_valid_reason and confirm_ok)
+
+        if st.button(
+            "✏️ Sửa Phiếu Sửa Chữa Admin",
+            disabled=disabled, type="primary",
+            key=f"adm_edit_sc_form_submit_{ma_phieu}",
+            use_container_width=True,
+        ):
+            payload = {
+                "admin_id": user["id"],
+                "ma_phieu": ma_phieu,
+                "edit_reason": edit_reason.strip(),
+                "ten_khach": new_data["ten_khach"] or None,
+                "sdt_khach": new_data["sdt_khach"] or None,
+                "loai_yeu_cau": new_data["loai_yeu_cau"],
+                "hieu_dong_ho": new_data["hieu_dong_ho"] or None,
+                "dac_diem": new_data["dac_diem"] or None,
+                "mo_ta_loi": new_data["mo_ta_loi"] or None,
+                "ghi_chu_noi_bo": new_data["ghi_chu_noi_bo"] or None,
+                "nguoi_tiep_nhan": new_data["nguoi_tiep_nhan"] or None,
+                "trang_thai": new_data["trang_thai"],
+                "khach_tra_truoc": new_data["khach_tra_truoc"],
+                "ngay_hen_tra": new_data["ngay_hen_tra"],
+            }
+            if new_items is not None and not has_apsc:
+                payload["items"] = new_items
+
+            try:
+                result = call_rpc("sua_phieu_sua_chua_admin", {"payload": payload})
+            except Exception as e:
+                st.error(f"❌ Lỗi RPC: {e}")
+                return
+
+            if result and result.get("ok"):
+                fc = result.get("fields_changed") or []
+                if fc:
+                    st.success(f"✅ Đã sửa {ma_phieu}. Fields changed: {', '.join(fc)}")
+                else:
+                    st.info(result.get("message", "Không có field nào thay đổi"))
+                if new_sdt_khach and new_ten_khach:
+                    upsert_khach_hang_with_update(
+                        new_ten_khach, new_sdt_khach, header.get("chi_nhanh", "")
+                    )
+                st.session_state["admin_edit_sc_selected_ma_phieu"] = None
+                _clear_edit_sc_form_state()
+                st.rerun()
+            else:
+                err = result.get("error", "Unknown error") if result else "No response"
+                st.error(f"❌ {err}")
+
+
+def _render_editable_sc_items(items_old, state_key, ma_phieu):
+    """Items list editable cho phiếu sửa chữa (no stock).
+
+    Khác `_render_editable_items`: không search hang_hoa (sửa chữa items
+    thường là dịch vụ tự nhập). Manual form add.
+    """
+    if state_key not in st.session_state:
+        st.session_state[state_key] = [
+            {
+                "loai_dong": it.get("loai_dong") or "Dịch vụ",
+                "ma_hang": it.get("ma_hang"),
+                "ten_hang": it.get("ten_hang") or "",
+                "so_luong": int(it["so_luong"]),
+                "don_gia": int(it["don_gia"]),
+                "ghi_chu": it.get("ghi_chu") or "",
+            }
+            for it in items_old
+        ]
+    items = st.session_state[state_key]
+
+    with st.form(f"adm_edit_sc_add_item_{ma_phieu}", clear_on_submit=True, border=False):
+        c1, c2, c3, c4 = st.columns([2, 4, 1.4, 2])
+        with c1:
+            loai_dong = st.selectbox(
+                "Loại", options=["Dịch vụ", "Linh kiện"],
+                key=f"adm_edit_sc_add_loai_{ma_phieu}",
+            )
+        with c2:
+            ten = st.text_input("Tên", key=f"adm_edit_sc_add_ten_{ma_phieu}")
+        with c3:
+            sl = st.number_input(
+                "SL", min_value=1, value=1,
+                key=f"adm_edit_sc_add_sl_{ma_phieu}",
+            )
+        with c4:
+            dg = st.number_input(
+                "Đơn giá", min_value=0, value=0, step=1000,
+                key=f"adm_edit_sc_add_dg_{ma_phieu}",
+            )
+        if st.form_submit_button("➕ Thêm dòng", use_container_width=True):
+            if ten.strip():
+                items.append({
+                    "loai_dong": loai_dong,
+                    "ma_hang": None,
+                    "ten_hang": ten.strip(),
+                    "so_luong": int(sl),
+                    "don_gia": int(dg),
+                    "ghi_chu": "",
+                })
+                st.rerun()
+
+    delete_idx = None
+    for i, line in enumerate(items):
+        c1, c2, c3, c4 = st.columns([1.5, 4, 2.5, 0.6])
+        with c1:
+            st.caption(line.get("loai_dong") or "Dịch vụ")
+        with c2:
+            st.markdown(f"**{line['ten_hang']}**")
+        with c3:
+            tt_val = int(line["so_luong"]) * int(line["don_gia"])
+            st.caption(
+                f"SL={line['so_luong']} · {fmt_vnd(line['don_gia'])} = {fmt_vnd(tt_val)}"
+            )
+        with c4:
+            if st.button("✕", key=f"adm_edit_sc_del_{i}_{ma_phieu}"):
+                delete_idx = i
+    if delete_idx is not None:
+        items.pop(delete_idx)
+        st.rerun()
+
+    return items
+
+
+def _detect_changes_sc(old_header, old_items, new_data, items_locked: bool = False):
+    """Detect changes for phiếu sửa chữa edit."""
+    changes: dict[str, str] = {}
+
+    def _norm(v):
+        if v is None:
+            return ""
+        s = str(v).strip()
+        return "" if s.lower() == "nan" else s
+
+    text_field_labels = {
+        "ten_khach": "Tên khách",
+        "sdt_khach": "SĐT khách",
+        "loai_yeu_cau": "Loại yêu cầu",
+        "hieu_dong_ho": "Hiệu đồng hồ",
+        "dac_diem": "Đặc điểm",
+        "mo_ta_loi": "Mô tả lỗi",
+        "ghi_chu_noi_bo": "Ghi chú nội bộ",
+        "nguoi_tiep_nhan": "NV tiếp nhận",
+        "trang_thai": "Trạng thái",
+    }
+    for key, label in text_field_labels.items():
+        old_v = _norm(old_header.get(key))
+        new_v = _norm(new_data.get(key))
+        if old_v != new_v:
+            changes[label] = f"`{old_v or '—'}` → `{new_v or '—'}`"
+
+    old_ttt = int(old_header.get("khach_tra_truoc") or 0)
+    new_ttt = int(new_data.get("khach_tra_truoc") or 0)
+    if old_ttt != new_ttt:
+        changes["Khách trả trước"] = f"{fmt_vnd(old_ttt)} → {fmt_vnd(new_ttt)}"
+
+    old_hen = _norm(old_header.get("ngay_hen_tra"))[:10]
+    new_hen = _norm(new_data.get("ngay_hen_tra"))[:10]
+    if old_hen != new_hen:
+        changes["Ngày hẹn trả"] = f"`{old_hen or '—'}` → `{new_hen or '—'}`"
+
+    if not items_locked and new_data.get("items") is not None:
+        items_diffs = _diff_sc_items(old_items, new_data["items"])
+        if items_diffs:
+            changes["Items"] = "  \n  " + "  \n  ".join(items_diffs)
+
+    return changes
+
+
+def _diff_sc_items(old_items, new_items):
+    """Diff for SC items by ten_hang (no ma_hang for services)."""
+    diffs: list[str] = []
+
+    old_names = {(it.get("ten_hang") or "").strip(): it for it in old_items}
+    new_names = {(it.get("ten_hang") or "").strip(): it for it in new_items}
+
+    for ten in sorted(set(old_names.keys()) | set(new_names.keys())):
+        if not ten:
+            continue
+        old_it = old_names.get(ten)
+        new_it = new_names.get(ten)
+
+        if old_it and not new_it:
+            old_dg = int(old_it["don_gia"])
+            old_sl = int(old_it["so_luong"])
+            diffs.append(f"➖ {ten} × {old_sl} @ {fmt_vnd(old_dg)}")
+        elif not old_it and new_it:
+            new_dg = int(new_it["don_gia"])
+            new_sl = int(new_it["so_luong"])
+            diffs.append(f"➕ {ten} × {new_sl} @ {fmt_vnd(new_dg)}")
+        else:
+            old_sl = int(old_it["so_luong"])
+            new_sl = int(new_it["so_luong"])
+            old_dg = int(old_it["don_gia"])
+            new_dg = int(new_it["don_gia"])
+            sl_changed = old_sl != new_sl
+            dg_changed = old_dg != new_dg
+            if sl_changed and dg_changed:
+                diffs.append(
+                    f"✏️ {ten} SL {old_sl}→{new_sl}, "
+                    f"ĐG {fmt_vnd(old_dg)}→{fmt_vnd(new_dg)}"
+                )
+            elif sl_changed:
+                diffs.append(f"✏️ {ten} SL {old_sl}→{new_sl}")
+            elif dg_changed:
+                diffs.append(f"✏️ {ten} ĐG {fmt_vnd(old_dg)}→{fmt_vnd(new_dg)}")
+
+    return diffs
+
+
+# ════════════════════════════════════════════════════════════
 # ENTRY POINT
 # ════════════════════════════════════════════════════════════
 def module_admin_pos():
@@ -1417,14 +2323,20 @@ def module_admin_pos():
         "Tạo HĐ: backdate ≤90 ngày. Sửa HĐ: snapshot before/after."
     )
 
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "🛒 Tạo HĐ POS",
-        "🔄 Tạo phiếu đổi/trả",
-        "🛠 Tạo phiếu sửa chữa",
-        "✏️ Sửa HĐ POS",
-    ])
+    outer_tao, outer_sua = st.tabs(["🆕 Tạo", "✏️ Sửa"])
 
-    with tab1: _render_tao_hd_pos()
-    with tab2: _render_tao_doi_tra()
-    with tab3: _render_tao_sua_chua()
-    with tab4: _render_sua_hd_pos()
+    with outer_tao:
+        sub_tao_hd, sub_tao_dt, sub_tao_sc = st.tabs([
+            "🛒 HĐ POS", "🔄 Đổi/trả", "🛠 Sửa chữa",
+        ])
+        with sub_tao_hd: _render_tao_hd_pos()
+        with sub_tao_dt: _render_tao_doi_tra()
+        with sub_tao_sc: _render_tao_sua_chua()
+
+    with outer_sua:
+        sub_sua_hd, sub_sua_dt, sub_sua_sc = st.tabs([
+            "🛒 HĐ POS", "🔄 Đổi/trả", "🛠 Sửa chữa",
+        ])
+        with sub_sua_hd: _render_sua_hd_pos()
+        with sub_sua_dt: _render_sua_doi_tra()
+        with sub_sua_sc: _render_sua_sua_chua()

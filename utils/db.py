@@ -100,9 +100,92 @@ def search_hd_pos_for_edit(
 
 
 def load_hd_with_edit_history(ma_hd: str) -> dict:
-    """Load HĐ + items + edit_count + edit_history qua RPC load_hd_pos_with_history."""
-    res = supabase.rpc("load_hd_pos_with_history", {"p_ma_hd": ma_hd}).execute()
+    """Load HĐ + items + edit_count + edit_history qua RPC load_record_with_history.
+
+    Backward-compat wrapper (B2a interface). B2b chuyển backend từ
+    load_hd_pos_with_history → generic load_record_with_history(table_name, record_id).
+    Shape return không đổi — UI code không cần sửa.
+    """
+    return load_record_with_history("hoa_don_pos", ma_hd)
+
+
+def load_record_with_history(table_name: str, record_id: str) -> dict:
+    """Generic loader cho 3 loại phiếu (HĐ POS / đổi-trả / sửa chữa).
+
+    table_name: 'hoa_don_pos' | 'phieu_doi_tra_pos' | 'phieu_sua_chua'
+    Returns: {header, items, edit_count, edit_history} — shape thống nhất.
+    """
+    res = supabase.rpc("load_record_with_history", {
+        "p_table_name": table_name,
+        "p_record_id": record_id,
+    }).execute()
     return res.data or {}
+
+
+def search_pdt_for_edit(
+    chi_nhanh: str | None = None,
+    ngay_tu: str | None = None,
+    ngay_den: str | None = None,
+    ma_pdt_search: str | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    """Tìm phiếu đổi/trả Hoàn thành để admin chọn sửa."""
+    q = (
+        supabase.table("phieu_doi_tra_pos")
+        .select("ma_pdt, ma_hd_goc, chi_nhanh, created_at, nguoi_tao, nguoi_tao_id, "
+                "loai_phieu, tien_hang_tra, tien_hang_moi, chenh_lech, "
+                "ten_khach, sdt_khach, trang_thai, is_admin_created")
+        .eq("trang_thai", "Hoàn thành")
+        .order("created_at", desc=True)
+        .limit(limit)
+    )
+    if chi_nhanh:
+        q = q.eq("chi_nhanh", chi_nhanh)
+    if ngay_tu:
+        q = q.gte("created_at", ngay_tu)
+    if ngay_den:
+        q = q.lte("created_at", ngay_den)
+    if ma_pdt_search:
+        q = q.ilike("ma_pdt", f"%{ma_pdt_search}%")
+    res = q.execute()
+    return res.data or []
+
+
+def search_sc_for_edit(
+    chi_nhanh: str | None = None,
+    trang_thai: str | None = None,
+    ngay_tu: str | None = None,
+    ngay_den: str | None = None,
+    ma_phieu_search: str | None = None,
+    limit: int = 50,
+) -> list[dict]:
+    """Tìm phiếu sửa chữa để admin chọn sửa.
+
+    trang_thai=None → mọi trạng thái TRỪ 'Đã hủy' (default).
+    Pass cụ thể (vd 'Đang sửa') để filter chính xác.
+    """
+    q = (
+        supabase.table("phieu_sua_chua")
+        .select("ma_phieu, chi_nhanh, created_at, ten_khach, sdt_khach, "
+                "loai_yeu_cau, hieu_dong_ho, trang_thai, "
+                "ngay_hen_tra, nguoi_tiep_nhan, is_admin_created")
+        .order("created_at", desc=True)
+        .limit(limit)
+    )
+    if trang_thai:
+        q = q.eq("trang_thai", trang_thai)
+    else:
+        q = q.neq("trang_thai", "Đã hủy")
+    if chi_nhanh:
+        q = q.eq("chi_nhanh", chi_nhanh)
+    if ngay_tu:
+        q = q.gte("created_at", ngay_tu)
+    if ngay_den:
+        q = q.lte("created_at", ngay_den)
+    if ma_phieu_search:
+        q = q.ilike("ma_phieu", f"%{ma_phieu_search}%")
+    res = q.execute()
+    return res.data or []
 
 
 def has_active_pdt_for_hd(ma_hd: str) -> int:

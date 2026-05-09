@@ -1417,14 +1417,22 @@ def module_admin_pos():
         "Tạo HĐ: backdate ≤90 ngày. Sửa HĐ: snapshot before/after."
     )
 
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "🛒 Tạo HĐ POS",
-        "🔄 Tạo phiếu đổi/trả",
-        "🛠 Tạo phiếu sửa chữa",
-        "✏️ Sửa HĐ POS",
-    ])
+    outer_tao, outer_sua = st.tabs(["🆕 Tạo", "✏️ Sửa"])
 
-    with tab1: _render_tao_hd_pos()
-    with tab2: _render_tao_doi_tra()
-    with tab3: _render_tao_sua_chua()
-    with tab4: _render_sua_hd_pos()
+    with outer_tao:
+        sub_tao_hd, sub_tao_dt, sub_tao_sc = st.tabs([
+            "🛒 HĐ POS", "🔄 Đổi/trả", "🛠 Sửa chữa",
+        ])
+        with sub_tao_hd: _render_tao_hd_pos()
+        with sub_tao_dt: _render_tao_doi_tra()
+        with sub_tao_sc: _render_tao_sua_chua()
+
+    with outer_sua:
+        sub_sua_hd, sub_sua_dt, sub_sua_sc = st.tabs([
+            "🛒 HĐ POS", "🔄 Đổi/trả", "🛠 Sửa chữa",
+        ])
+        with sub_sua_hd: _render_sua_hd_pos()
+        with sub_sua_dt:
+            st.info("⚙️ Coming soon — Phase B2b: Sửa phiếu đổi/trả")
+        with sub_sua_sc:
+            st.info("⚙️ Coming soon — Phase B2b: Sửa phiếu sửa chữa")

@@ -1,21 +1,42 @@
+"""
+Module Chuyển hàng — Master-Detail single-page UX.
+
+Refactor v16.0:
+- Bỏ UX 2-tab (Danh sách / Tạo-Sửa) → single page với side drawer + modal.
+- Render qua custom Streamlit component (components/chuyen_hang_mvc/).
+- Backend behavior, RPC contract, logging, race-retry mã phiếu: GIỮ NGUYÊN.
+
+Event protocol (component → Python):
+- {action: 'create', payload, nonce}
+- {action: 'update', id, payload, nonce}
+- {action: 'confirm_transfer', id, nonce}
+- {action: 'receive', id, receiver, nonce}
+- {action: 'cancel', id, nonce}
+- {action: 'reload', nonce}
+"""
 import streamlit as st
 import pandas as pd
 import uuid
 from datetime import datetime, timedelta
-import numpy as np
 
-from utils.config import ALL_BRANCHES, CN_SHORT, IN_APP_MARKER, ARCHIVED_MARKER
-from utils.db import supabase, _logger, log_action, load_hoa_don, load_the_kho, load_hang_hoa, \
-    load_phieu_chuyen_kho, load_phieu_kiem_ke, get_gia_ban_map, load_stock_deltas, \
-    load_khach_hang_list, lookup_khach_hang, _upsert_khach_hang, get_archive_reminder
+from utils.config import ALL_BRANCHES, IN_APP_MARKER, ARCHIVED_MARKER
+from utils.db import supabase, _logger, log_action, load_the_kho, load_hang_hoa, \
+    load_phieu_chuyen_kho, get_gia_ban_map
 from utils.auth import get_user, is_admin, is_ke_toan_or_admin, \
     get_active_branch, get_accessible_branches
-from utils.helpers import _normalize, now_vn, now_vn_iso, today_vn
+from utils.helpers import now_vn_iso
 
-PHIEU_PER_PAGE = 20
-SUGGEST_LIMIT  = 5
+from components.chuyen_hang_mvc import chuyen_hang_component
+
+PHIEU_PER_PAGE = 20  # phân trang trong component
+
+
+# ════════════════════════════════════════════════════════════════
+# BACKEND HELPERS — race-retry mã phiếu + RPC wrappers (giữ nguyên hành vi)
+# ════════════════════════════════════════════════════════════════
 
 def _gen_ma_phieu() -> str:
+    """Sinh mã CH###### kế tiếp; fallback random nếu DB lỗi."""
     try:
         res = supabase.table("phieu_chuyen_kho") \
             .select("ma_phieu") \
@@ -36,19 +57,12 @@ def _gen_ma_phieu() -> str:
         return f"CH{datetime.now().strftime('%y%m%d')}{uuid.uuid4().hex[:4].upper()}"
 
 
-def _update_trang_thai_phieu(ma_phieu: str, trang_thai_moi: str, extra: dict = None):
-    payload = {"trang_thai": trang_thai_moi}
-    if extra:
-        payload.update(extra)
-    supabase.table("phieu_chuyen_kho").update(payload).eq("ma_phieu", ma_phieu).execute()
-
-
 def _delete_phieu_rows(ma_phieu: str):
     supabase.table("phieu_chuyen_kho").delete().eq("ma_phieu", ma_phieu).execute()
 
 
-def _nhan_hang(ma_phieu: str, nguoi_nhan: str = "") -> tuple[bool, str]:
-    """Gọi RPC nhan_hang — atomic, an toàn race condition."""
+def _nhan_hang_rpc(ma_phieu: str, nguoi_nhan: str = "") -> tuple[bool, str]:
+    """RPC nhan_hang — atomic, set status='Đã nhận' + qty nhận = qty chuyển."""
     try:
         res = supabase.rpc("nhan_hang", {
             "p_ma_phieu":   ma_phieu,
@@ -59,784 +73,389 @@ def _nhan_hang(ma_phieu: str, nguoi_nhan: str = "") -> tuple[bool, str]:
             result = result[0]
         if result.get("ok"):
             return True, ""
-        else:
-            return False, result.get("error", "Lỗi không xác định")
+        return False, result.get("error", "Lỗi không xác định")
     except Exception as e:
         return False, str(e)
 
 
-def _view_phieu_chuyen(df_all: pd.DataFrame):
-    active     = get_active_branch()
-    accessible = get_accessible_branches()
-
-    col_ky, col_cn = st.columns([2, 2])
-    with col_ky:
-        ky = st.selectbox("Kỳ:", ["Tháng này","Tháng trước","Tất cả"],
-            key="ck_ky", label_visibility="collapsed")
-    with col_cn:
-        if is_ke_toan_or_admin() and len(accessible) > 1:
-            cn_filter = st.selectbox("Chi nhánh:", ["Tất cả"] + accessible,
-                key="ck_cn", label_visibility="collapsed")
-        else:
-            cn_filter = active
-            st.caption(f"📍 {active}")
-
-    filter_sig = f"{ky}|{cn_filter}"
-    if st.session_state.get("_ck_last_filter") != filter_sig:
-        st.session_state["_ck_last_filter"] = filter_sig
-        st.session_state["ck_vpage"] = 0
-
-    if df_all.empty:
-        st.info("Chưa có dữ liệu chuyển hàng. Vào tab **Tạo phiếu** để tạo mới hoặc Quản trị → Upload.")
-        return
-
-    df = df_all.copy()
-    today       = datetime.now().date()
-    first_month = today.replace(day=1)
-    first_last  = (first_month - timedelta(days=1)).replace(day=1)
-
-    if ky == "Tháng này":
-        df = df[df["_date"] >= first_month]
-    elif ky == "Tháng trước":
-        last_end = first_month - timedelta(days=1)
-        df = df[(df["_date"] >= first_last) & (df["_date"] <= last_end)]
-
-    if cn_filter != "Tất cả":
-        df = df[(df["tu_chi_nhanh"] == cn_filter) | (df["toi_chi_nhanh"] == cn_filter)]
-
-    if df.empty:
-        st.info("Không có phiếu trong kỳ này.")
-        return
-
-    phieu_df = df.drop_duplicates(subset=["ma_phieu"], keep="first")
-    so_phieu = len(phieu_df)
-    st.metric("Số phiếu trong kỳ", str(so_phieu))
-
-    total_pages = max(1, (so_phieu + PHIEU_PER_PAGE - 1) // PHIEU_PER_PAGE)
-    page = int(st.session_state.get("ck_vpage", 0))
-    if page >= total_pages: page = total_pages - 1
-    if page < 0: page = 0
-
-    def _render_pager(pos: str):
-        if total_pages <= 1: return
-        c1, c2, c3 = st.columns([1, 2, 1])
-        with c1:
-            if st.button("← Trước", key=f"pg_prev_{pos}",
-                        disabled=(page == 0), use_container_width=True):
-                st.session_state["ck_vpage"] = page - 1
-                st.rerun()
-        with c2:
-            st.markdown(
-                f"<div style='text-align:center;padding-top:6px;font-size:0.85rem;color:#666;'>"
-                f"Trang <b>{page+1}</b>/{total_pages} · "
-                f"Hiển thị {page*PHIEU_PER_PAGE + 1}"
-                f"–{min((page+1)*PHIEU_PER_PAGE, so_phieu)} / {so_phieu} phiếu</div>",
-                unsafe_allow_html=True
-            )
-        with c3:
-            if st.button("Sau →", key=f"pg_next_{pos}",
-                        disabled=(page >= total_pages - 1), use_container_width=True):
-                st.session_state["ck_vpage"] = page + 1
-                st.rerun()
-
-    _render_pager("top")
-    st.markdown("---")
-
-    phieu_sorted  = phieu_df.sort_values("_ngay", ascending=False)
-    start         = page * PHIEU_PER_PAGE
-    end           = start + PHIEU_PER_PAGE
-    ma_phieu_page = phieu_sorted.iloc[start:end]["ma_phieu"].tolist()
-    df_page       = df[df["ma_phieu"].isin(ma_phieu_page)]
-    gia_ban_map   = get_gia_ban_map()
-
-    dates = sorted(df_page["_date"].dropna().unique(), reverse=True)
-    for dt in dates:
-        df_day   = df_page[df_page["_date"] == dt]
-        phieu_day = [m for m in ma_phieu_page if m in df_day["ma_phieu"].values]
-
-        today_dt = datetime.now().date()
-        yest     = today_dt - timedelta(days=1)
-        if dt == today_dt:   day_lbl = "HÔM NAY"
-        elif dt == yest:     day_lbl = "HÔM QUA"
-        else:
-            try:
-                weekday = ["THỨ HAI","THỨ BA","THỨ TƯ","THỨ NĂM",
-                           "THỨ SÁU","THỨ BẢY","CHỦ NHẬT"][dt.weekday()]
-                day_lbl = f"{weekday}, {dt.strftime('%d/%m/%Y')}"
-            except Exception:
-                day_lbl = dt.strftime("%d/%m/%Y")
-
-        st.markdown(
-            f"<div style='font-size:0.72rem;font-weight:700;color:#aaa;"
-            f"letter-spacing:1px;margin:12px 0 6px;'>{day_lbl}</div>",
-            unsafe_allow_html=True)
-
-        for ma_phieu in phieu_day:
-            df_phieu = df_day[df_day["ma_phieu"] == ma_phieu]
-            _render_phieu_card(df_phieu, ma_phieu, gia_ban_map)
-
-    st.markdown("---")
-    _render_pager("bottom")
-
-
-def _render_phieu_card(df_phieu: pd.DataFrame, ma_phieu: str, gia_ban_map: dict):
-    active = get_active_branch()
-    row_h  = df_phieu.iloc[0]
-
-    tu_cn   = row_h.get("tu_chi_nhanh","")
-    toi_cn  = row_h.get("toi_chi_nhanh","")
-    tt      = str(row_h.get("trang_thai","") or "").strip()
-    tsl     = int(row_h.get("tong_sl_chuyen", 0) or 0)
-    tmat    = int(row_h.get("tong_mat_hang", 0) or 0)
-
-    nguoi_tao      = str(row_h.get("nguoi_tao","") or "").strip()
-    nguoi_nhan     = str(row_h.get("nguoi_nhan","") or "").strip()
-    ghi_chu_chuyen = str(row_h.get("ghi_chu_chuyen","") or "").strip()
-    ghi_chu_nhan   = str(row_h.get("ghi_chu_nhan","") or "").strip()
-    for bad in ("nan", "None"):
-        if nguoi_tao.lower() == bad.lower(): nguoi_tao = ""
-        if nguoi_nhan.lower() == bad.lower(): nguoi_nhan = ""
-        if ghi_chu_chuyen.lower() == bad.lower(): ghi_chu_chuyen = ""
-        if ghi_chu_nhan.lower() == bad.lower(): ghi_chu_nhan = ""
-
-    ngay_str = ""
+def _xac_nhan_chuyen_rpc(ma_phieu: str) -> tuple[bool, str]:
+    """RPC xac_nhan_chuyen_hang — status Phiếu tạm → Đang chuyển + trừ kho nguồn."""
     try:
-        ts = pd.Timestamp(row_h["ngay_chuyen"])
-        if ts.tzinfo is None:
-            ts = ts.tz_localize("UTC")
-        ngay_str = ts.tz_convert("Asia/Ho_Chi_Minh").strftime("%d/%m %H:%M")
+        res = supabase.rpc("xac_nhan_chuyen_hang", {"p_ma_phieu": ma_phieu}).execute()
+        result = res.data
+        if isinstance(result, list):
+            result = result[0]
+        if result.get("ok"):
+            return True, ""
+        return False, result.get("error", "Lỗi không xác định")
+    except Exception as e:
+        return False, str(e)
+
+
+def _huy_phieu_rpc(ma_phieu: str, huy_boi: str) -> tuple[bool, dict, str]:
+    """RPC huy_phieu_chuyen_kho — set Đã hủy + restore kho nếu prev='Đang chuyển'."""
+    try:
+        res = supabase.rpc("huy_phieu_chuyen_kho", {
+            "p_ma_phieu": ma_phieu,
+            "p_huy_boi":  huy_boi,
+        }).execute()
+        result = res.data if isinstance(res.data, dict) else (res.data or {})
+        if not result.get("ok"):
+            return False, {}, result.get("error", "Lỗi không xác định")
+        return True, result, ""
+    except Exception as e:
+        return False, {}, str(e)
+
+
+def _insert_phieu_rows(records: list[dict]):
+    supabase.table("phieu_chuyen_kho").insert(records).execute()
+
+
+def _build_records(ma: str, tu_cn: str, toi_cn: str, nguoi_tao: str,
+                   ghi_chu: str, items: list[dict], now_iso: str) -> list[dict]:
+    """Build records để insert vào table phieu_chuyen_kho (1 row/item)."""
+    tong_sl   = sum(int(it["so_luong"]) for it in items)
+    tong_mat  = len(items)
+    tong_gtri = sum(int(it["so_luong"]) * int(it["gia_ban"]) for it in items)
+    return [{
+        "ma_phieu":          ma,
+        "loai_phieu":        IN_APP_MARKER,
+        "tu_chi_nhanh":      tu_cn,
+        "toi_chi_nhanh":     toi_cn,
+        "ngay_chuyen":       now_iso,
+        "ngay_nhan":         None,
+        "nguoi_tao":         nguoi_tao,
+        "ghi_chu_chuyen":    ghi_chu or None,
+        "ghi_chu_nhan":      None,
+        "tong_sl_chuyen":    tong_sl,
+        "tong_sl_nhan":      0,
+        "tong_gia_tri":      int(tong_gtri),
+        "tong_mat_hang":     tong_mat,
+        "trang_thai":        "Phiếu tạm",
+        "ma_hang":           str(it["ma_hang"]),
+        "ma_vach":           None,
+        "ten_hang":          str(it["ten_hang"]),
+        "thuong_hieu":       None,
+        "so_luong_chuyen":   int(it["so_luong"]),
+        "so_luong_nhan":     0,
+        "gia_chuyen":        int(it["gia_ban"]),
+        "thanh_tien_chuyen": int(it["so_luong"]) * int(it["gia_ban"]),
+        "thanh_tien_nhan":   0,
+    } for it in items]
+
+
+# ════════════════════════════════════════════════════════════════
+# DATA SHAPING — DataFrame → list dict cho component
+# ════════════════════════════════════════════════════════════════
+
+def _build_tickets(df_all: pd.DataFrame) -> list[dict]:
+    """Group rows theo ma_phieu, trả về list dict shape phù hợp với frontend."""
+    if df_all.empty:
+        return []
+    out: list[dict] = []
+    gia_map = get_gia_ban_map()
+    # Sort theo ngay_chuyen desc
+    df = df_all.sort_values("_ngay", ascending=False) if "_ngay" in df_all.columns else df_all
+    for ma, grp in df.groupby("ma_phieu", sort=False):
+        head = grp.iloc[0]
+        # Date/time formatting (VN tz)
+        try:
+            ts = pd.Timestamp(head["ngay_chuyen"])
+            if ts.tzinfo is None:
+                ts = ts.tz_localize("UTC")
+            ts_vn = ts.tz_convert("Asia/Ho_Chi_Minh")
+            date_str = ts_vn.strftime("%d/%m/%Y %H:%M")
+            iso_date = ts_vn.strftime("%Y-%m-%d")
+        except Exception:
+            date_str = ""
+            iso_date = ""
+
+        loai_phieu = str(head.get("loai_phieu", "") or "")
+        archived   = (loai_phieu == ARCHIVED_MARKER)
+
+        items = []
+        for _, r in grp.iterrows():
+            ma_h = str(r.get("ma_hang", "") or "")
+            gia  = int(r.get("gia_chuyen") or gia_map.get(ma_h, 0) or 0)
+            items.append({
+                "ma":   ma_h,
+                "name": str(r.get("ten_hang", "") or ""),
+                "qty":  int(r.get("so_luong_chuyen", 0) or 0),
+                "recv": int(r.get("so_luong_nhan", 0) or 0),
+                "gia":  gia,
+            })
+
+        def _clean(v):
+            s = str(v or "").strip()
+            return "" if s.lower() in ("nan", "none") else s
+
+        out.append({
+            "id":       ma,
+            "from":     str(head.get("tu_chi_nhanh", "") or ""),
+            "to":       str(head.get("toi_chi_nhanh", "") or ""),
+            "date":     date_str,
+            "_date":    iso_date,
+            "creator":  _clean(head.get("nguoi_tao")),
+            "receiver": _clean(head.get("nguoi_nhan")),
+            "status":   str(head.get("trang_thai", "") or "").strip(),
+            "note":     _clean(head.get("ghi_chu_chuyen")),
+            "noteRecv": _clean(head.get("ghi_chu_nhan")),
+            "source":   "archived" if archived else "app",
+            "archived": archived,
+            "items":    items,
+        })
+    return out
+
+
+def _build_hang_hoa(df: pd.DataFrame) -> list[dict]:
+    """Build list sản phẩm cho frontend suggestion."""
+    if df.empty:
+        return []
+    rows = []
+    for _, r in df.iterrows():
+        rows.append({
+            "ma":   str(r.get("ma_hang", "") or ""),
+            "name": str(r.get("ten_hang", "") or ""),
+            "gia":  int(r.get("gia_ban", 0) or 0),
+        })
+    return rows
+
+
+def _build_the_kho_by_branch(branches: list[str]) -> dict:
+    """Load tồn kho cho các chi nhánh — {branch: {ma: ton}}. 1 query duy nhất."""
+    out: dict[str, dict] = {b: {} for b in branches}
+    if not branches:
+        return out
+    try:
+        kho = load_the_kho(branches_key=tuple(branches))
+        if kho.empty or "Mã hàng" not in kho.columns or "Chi nhánh" not in kho.columns:
+            return out
+        for cn, grp in kho.groupby("Chi nhánh"):
+            out[str(cn)] = dict(zip(
+                grp["Mã hàng"].astype(str),
+                grp["Tồn cuối kì"].fillna(0).astype(int)
+            ))
     except Exception:
         pass
-
-    total_gia_ban = 0
-    for _, r in df_phieu.iterrows():
-        mh  = str(r.get("ma_hang",""))
-        slc = int(r.get("so_luong_chuyen", 0) or 0)
-        gb  = gia_ban_map.get(mh, 0)
-        total_gia_ban += slc * gb
-    gia_str = (f"{total_gia_ban/1_000_000:.2f} tr đ" if total_gia_ban >= 1_000_000
-               else f"{total_gia_ban:,} đ")
-
-    tt_colors = {
-        "Phiếu tạm":   ("#856404", "#fff8e0"),
-        "Đang chuyển": ("#0c5464", "#d1ecf1"),
-        "Đã nhận":     ("#1a7f37", "#f0faf4"),
-        "Đã hủy":      ("#721c24", "#f5d5d5"),
-    }
-    tt_color, tt_bg = tt_colors.get(tt, ("#555", "#f5f5f5"))
-
-    loai_phieu        = str(row_h.get("loai_phieu", "") or "")
-    is_app_phieu      = (loai_phieu == IN_APP_MARKER)
-    is_archived_phieu = (loai_phieu == ARCHIVED_MARKER)
-
-    hang_list = df_phieu[["ten_hang","so_luong_chuyen"]].dropna().head(3)
-    hang_str  = ", ".join(
-        f"{r['ten_hang']} <b>x{int(r['so_luong_chuyen'])}</b>"
-        for _, r in hang_list.iterrows()
-    )
-    if len(df_phieu) > 3:
-        hang_str += f" <span style='color:#aaa;'>+{len(df_phieu)-3} khác</span>"
-
-    title = f"[{tt}] {tmat} mặt hàng · SL: {tsl}   —   {gia_str}"
-
-    with st.expander(title, expanded=False):
-        col_info, col_status = st.columns([4, 1])
-        with col_info:
-            st.markdown(
-                f"<div style='font-size:0.88rem;'>"
-                f"Từ <span style='color:#2E86DE;font-weight:600;'>{tu_cn}</span>"
-                f" → Đến <span style='color:#27AE60;font-weight:600;'>{toi_cn}</span>"
-                f"</div>"
-                f"<div style='font-size:0.78rem;color:#888;margin-top:3px;'>"
-                f"{ngay_str} · {ma_phieu}</div>",
-                unsafe_allow_html=True)
-        with col_status:
-            badge_parts = [
-                f"<span style='background:{tt_bg};color:{tt_color};"
-                f"padding:3px 10px;border-radius:20px;font-size:0.75rem;"
-                f"font-weight:600;'>{tt}</span>"
-            ]
-            if is_app_phieu:
-                badge_parts.append(
-                    "<span style='background:#fff0f1;color:#e63946;"
-                    "padding:3px 8px;border-radius:20px;font-size:0.7rem;"
-                    "font-weight:600;margin-left:4px;'>📱 App</span>"
-                )
-            elif is_archived_phieu:
-                badge_parts.append(
-                    "<span style='background:#f0f0f0;color:#888;"
-                    "padding:3px 8px;border-radius:20px;font-size:0.7rem;"
-                    "font-weight:600;margin-left:4px;'>Kết sổ</span>"
-                )
-            st.markdown(
-                f"<div style='text-align:right;margin-top:4px;'>"
-                + "".join(badge_parts) + "</div>",
-                unsafe_allow_html=True)
-
-        info_parts = []
-        if nguoi_tao:
-            info_parts.append(
-                f"<div style='font-size:0.82rem;color:#444;margin-top:8px;'>"
-                f"👤 <b>Người gửi/tạo phiếu:</b> {nguoi_tao}</div>")
-        if nguoi_nhan:
-            info_parts.append(
-                f"<div style='font-size:0.82rem;color:#444;margin-top:4px;'>"
-                f"📥 <b>Người nhận:</b> {nguoi_nhan}</div>")
-        if ghi_chu_chuyen:
-            info_parts.append(
-                f"<div style='font-size:0.82rem;color:#444;margin-top:4px;'>"
-                f"📝 <b>Ghi chú chuyển:</b> <span style='color:#666;'>{ghi_chu_chuyen}</span></div>")
-        if ghi_chu_nhan:
-            info_parts.append(
-                f"<div style='font-size:0.82rem;color:#444;margin-top:4px;'>"
-                f"📥 <b>Ghi chú nhận:</b> <span style='color:#666;'>{ghi_chu_nhan}</span></div>")
-        if info_parts:
-            st.markdown("".join(info_parts), unsafe_allow_html=True)
-
-        st.markdown(
-            f"<div style='font-size:0.82rem;color:#444;margin:10px 0 4px;'>"
-            f"<b>Tóm tắt:</b> {hang_str}</div>",
-            unsafe_allow_html=True)
-
-        cols_detail = ["ten_hang","ma_hang","so_luong_chuyen","so_luong_nhan"]
-        cols_avail  = [c for c in cols_detail if c in df_phieu.columns]
-        dv = df_phieu[cols_avail].copy()
-        dv = dv.rename(columns={
-            "ten_hang":"Tên hàng","ma_hang":"Mã hàng",
-            "so_luong_chuyen":"SL chuyển","so_luong_nhan":"SL nhận"})
-        st.dataframe(dv, use_container_width=True, hide_index=True,
-                     height=min(200, 42 + len(dv)*35))
-
-        # ══════ ACTION BUTTONS ══════
-        st.markdown("<hr style='margin:10px 0;'>", unsafe_allow_html=True)
-        actions = []
-
-        if tt == "Phiếu tạm" and active == tu_cn:
-            actions.append(("sua", "✏ Sửa phiếu", "secondary"))
-            actions.append(("xac_nhan", "🚚 Xác nhận chuyển hàng", "primary"))
-
-        if tt == "Đang chuyển" and active == toi_cn:
-            actions.append(("nhan", "✓ Nhận hàng", "primary"))
-
-        if is_admin() and tt not in ("Đã nhận", "Đã hủy"):
-            actions.append(("huy", "🗑 Hủy phiếu", "secondary"))
-
-        if actions:
-            cols = st.columns(len(actions))
-            for i, (ac, label, btn_type) in enumerate(actions):
-                with cols[i]:
-                    if st.button(label, key=f"act_{ac}_{ma_phieu}",
-                                type=btn_type, use_container_width=True):
-                        _handle_action(ac, ma_phieu, df_phieu, tu_cn, toi_cn)
-
-            # Form nhập người nhận
-            if st.session_state.get(f"pending_nhan_{ma_phieu}"):
-                st.markdown("---")
-                default_nn = (get_user() or {}).get("ho_ten", "")
-                nn_key  = f"nn_input_{ma_phieu}"
-                chk_key = f"chk_nhan_{ma_phieu}"
-                if nn_key not in st.session_state:
-                    st.session_state[nn_key] = default_nn
-                st.text_input("Người nhận:", key=nn_key,
-                              placeholder="Tên người nhận hàng")
-
-                # ── FIX: checkbox phải tick trước khi bấm xác nhận ──
-                confirmed = st.checkbox(
-                    "Tôi xác nhận đã kiểm tra và nhận đủ hàng",
-                    key=chk_key
-                )
-
-                c_ok, c_cancel = st.columns([2, 1])
-                with c_ok:
-                    if st.button(
-                        "✓ Xác nhận nhận hàng",
-                        key=f"confirm_nhan_{ma_phieu}",
-                        type="primary",
-                        use_container_width=True,
-                        disabled=not confirmed,                      # ← FIX
-                        help=None if confirmed else "Tick ô xác nhận ở trên trước",
-                    ):
-                        nn = st.session_state.get(nn_key, "").strip()
-                        if not nn:
-                            st.error("Vui lòng nhập người nhận.")
-                        else:
-                            ok, err = _nhan_hang(ma_phieu, nguoi_nhan=nn)
-                            if ok:
-                                st.cache_data.clear()
-                                log_action("PHIEU_RECEIVE",
-                                          f"ma={ma_phieu} tu={tu_cn} toi={toi_cn} nguoi_nhan={nn}")
-                                st.session_state.pop(f"pending_nhan_{ma_phieu}", None)
-                                st.session_state.pop(nn_key, None)
-                                st.session_state.pop(chk_key, None)
-                                st.success(f"✓ Đã nhận hàng cho phiếu {ma_phieu}")
-                                st.rerun()
-                            else:
-                                st.error(f"Lỗi nhận hàng: {err}")
-                with c_cancel:
-                    if st.button("Hủy", key=f"cancel_nhan_{ma_phieu}",
-                                 use_container_width=True):
-                        st.session_state.pop(f"pending_nhan_{ma_phieu}", None)
-                        st.session_state.pop(nn_key, None)
-                        st.session_state.pop(chk_key, None)
-                        st.rerun()
-        else:
-            if tt == "Phiếu tạm" and active != tu_cn:
-                st.caption(f"ℹ Để sửa/chuyển phiếu này, đổi sang chi nhánh: **{tu_cn}**")
-            elif tt == "Đang chuyển" and active != toi_cn:
-                st.caption(f"ℹ Để nhận phiếu này, đổi sang chi nhánh: **{toi_cn}**")
-            elif tt == "Đã nhận":
-                st.caption("✓ Phiếu đã hoàn tất.")
-            elif tt == "Đã hủy":
-                st.caption("⊘ Phiếu đã hủy.")
+    return out
 
 
-def _handle_action(action: str, ma_phieu: str, df_phieu: pd.DataFrame,
-                   tu_cn: str, toi_cn: str):
-    try:
-        if action == "xac_nhan":
-            try:
-                res = supabase.rpc("xac_nhan_chuyen_hang", {
-                    "p_ma_phieu": ma_phieu,
-                }).execute()
-                result = res.data
-                if isinstance(result, list):
-                    result = result[0]
-                if result.get("ok"):
-                    st.cache_data.clear()
-                    log_action("PHIEU_CONFIRM", f"ma={ma_phieu} tu={tu_cn} toi={toi_cn}")
-                    st.success(f"✓ Đã xác nhận chuyển hàng cho phiếu {ma_phieu}")
-                    st.rerun()
-                else:
-                    st.error(f"Không thể xác nhận: {result.get('error', 'Lỗi không xác định')}")
-            except Exception as e:
-                st.error(f"Lỗi: {e}")
+# ════════════════════════════════════════════════════════════════
+# EVENT HANDLERS — gọi RPC + log_action + cache_data.clear()
+# ════════════════════════════════════════════════════════════════
 
-        elif action == "nhan":
-            st.session_state[f"pending_nhan_{ma_phieu}"] = True
-            st.rerun()
+def _handle_create(payload: dict):
+    """Tạo phiếu mới — race-retry mã phiếu, log PHIEU_CREATE."""
+    tu_cn   = payload["tu_chi_nhanh"]
+    toi_cn  = payload["toi_chi_nhanh"]
+    ng_tao  = payload["nguoi_tao"]
+    ghi_chu = payload.get("ghi_chu", "")
+    items   = payload["items"]
 
-        elif action == "huy":
-            user = get_user() or {}
-            huy_boi = user.get("ho_ten") or user.get("username") or "admin"
-            try:
-                res = supabase.rpc(
-                    "huy_phieu_chuyen_kho",
-                    {"p_ma_phieu": ma_phieu, "p_huy_boi": huy_boi},
-                ).execute()
-                result = res.data if isinstance(res.data, dict) else (res.data or {})
-            except Exception as e:
-                st.error(f"Lỗi RPC hủy phiếu: {e}")
-                return
-
-            if not result.get("ok"):
-                st.error(f"Không thể hủy: {result.get('error', 'Unknown error')}")
-                return
-
-            st.cache_data.clear()
-            prev = result.get("prev_status", "?")
-            n_restored = result.get("items_restored", 0)
-            if prev == "Đang chuyển" and n_restored > 0:
-                st.success(
-                    f"✓ Đã hủy phiếu {ma_phieu} — kho CN nguồn đã được "
-                    f"hoàn lại {n_restored} mặt hàng."
-                )
-            else:
-                st.success(f"✓ Đã hủy phiếu {ma_phieu}")
-            st.rerun()
-
-        elif action == "sua":
-            row_h = df_phieu.iloc[0]
-            items = []
-            gia_ban_map = get_gia_ban_map()
-            for _, r in df_phieu.iterrows():
-                mh = str(r.get("ma_hang",""))
-                gb = int(r.get("gia_chuyen") or gia_ban_map.get(mh, 0))
-                items.append({
-                    "ma_hang":  mh,
-                    "ten_hang": str(r.get("ten_hang","")),
-                    "so_luong": int(r.get("so_luong_chuyen", 0) or 0),
-                    "gia_ban":  gb,
-                    "ton_src":  0,
-                })
-            st.session_state["ck_editing"]   = ma_phieu
-            st.session_state["ck_items"]     = items
-            st.session_state["ck_edit_meta"] = {
-                "tu_cn":     tu_cn,
-                "toi_cn":    toi_cn,
-                "nguoi_tao": str(row_h.get("nguoi_tao","") or ""),
-                "ghi_chu":   str(row_h.get("ghi_chu_chuyen","") or ""),
-            }
-            st.info(f"🔄 Đã tải phiếu **{ma_phieu}** vào chế độ sửa. "
-                   "Vui lòng chuyển sang tab **➕ Tạo / Sửa phiếu** ở trên.")
-    except Exception as e:
-        st.error(f"Lỗi thao tác: {e}")
-
-
-def _tao_phieu_chuyen():
-    user   = get_user()
-    active = get_active_branch()
-
-    editing_ma = st.session_state.get("ck_editing")
-    edit_meta  = st.session_state.get("ck_edit_meta", {}) if editing_ma else {}
-
-    if editing_ma:
-        st.markdown(
-            f"<div style='background:#fff8e0;border:1px solid #f0c36d;"
-            f"border-radius:10px;padding:12px 14px;margin-bottom:10px;'>"
-            f"<b style='color:#856404;'>🔄 Đang sửa phiếu: {editing_ma}</b><br>"
-            f"<span style='font-size:0.82rem;color:#666;'>"
-            f"Nhấn 'Hủy sửa' để thoát, hoặc 'Cập nhật phiếu' để lưu thay đổi.</span>"
-            f"</div>",
-            unsafe_allow_html=True
-        )
-        if st.button("✕ Hủy sửa (quay về tạo mới)", key="ck_cancel_edit"):
-            st.session_state.pop("ck_editing", None)
-            st.session_state.pop("ck_edit_meta", None)
-            st.session_state["ck_items"] = []
-            st.rerun()
-    else:
-        st.markdown(
-            "<div style='font-size:0.95rem;font-weight:700;margin-bottom:6px;'>"
-            "Tạo phiếu chuyển hàng mới</div>",
-            unsafe_allow_html=True
-        )
-
-    hh = load_hang_hoa()
-    if hh.empty:
-        st.warning("Chưa có dữ liệu Hàng hóa master. Vui lòng upload trong Quản trị.")
+    if tu_cn == toi_cn:
+        st.error("Chi nhánh nguồn và đích phải khác nhau.")
+        return
+    if not items:
+        st.error("Vui lòng thêm ít nhất 1 mặt hàng.")
+        return
+    if not ng_tao.strip():
+        st.error("Vui lòng nhập tên người gửi.")
         return
 
-    col_tu, col_toi = st.columns(2)
-    with col_tu:
-        if is_admin() and not editing_ma:
-            tu_cn = st.selectbox("Từ chi nhánh:", ALL_BRANCHES,
-                index=ALL_BRANCHES.index(active) if active in ALL_BRANCHES else 0,
-                key="ck_tu_cn_sel")
-        elif editing_ma:
-            tu_cn = edit_meta.get("tu_cn", active)
-            st.markdown(
-                f"<div style='padding:4px 0;'>"
-                f"<div style='font-size:0.82rem;color:#555;margin-bottom:2px;'>Từ chi nhánh</div>"
-                f"<div style='background:#f4f6fa;border:1px solid #e0e0e0;"
-                f"border-radius:8px;padding:8px 12px;color:#888;'>🔒 {tu_cn}</div></div>",
-                unsafe_allow_html=True
-            )
-        else:
-            tu_cn = active
-            st.markdown(
-                f"<div style='padding:4px 0;'>"
-                f"<div style='font-size:0.82rem;color:#555;margin-bottom:2px;'>Từ chi nhánh</div>"
-                f"<div style='background:#f4f6fa;border:1px solid #e0e0e0;"
-                f"border-radius:8px;padding:8px 12px;color:#1a1a2e;font-weight:600;'>"
-                f"📍 {tu_cn}</div></div>",
-                unsafe_allow_html=True
-            )
-    with col_toi:
-        options_toi = [c for c in ALL_BRANCHES if c != tu_cn]
-        if editing_ma:
-            toi_cn = edit_meta.get("toi_cn", options_toi[0] if options_toi else "")
-            st.markdown(
-                f"<div style='padding:4px 0;'>"
-                f"<div style='font-size:0.82rem;color:#555;margin-bottom:2px;'>Đến chi nhánh</div>"
-                f"<div style='background:#f4f6fa;border:1px solid #e0e0e0;"
-                f"border-radius:8px;padding:8px 12px;color:#888;'>🔒 {toi_cn}</div></div>",
-                unsafe_allow_html=True
-            )
-        else:
-            stored_toi = st.session_state.get("ck_toi_cn")
-            if stored_toi and stored_toi not in options_toi:
-                st.session_state.pop("ck_toi_cn", None)
-            toi_cn = st.selectbox("Đến chi nhánh:", options_toi, key="ck_toi_cn") \
-                     if options_toi else ""
+    now_iso = now_vn_iso()
+    ma_phieu, last_err = None, None
+    for attempt in range(3):
+        try_ma = _gen_ma_phieu()
+        try:
+            _insert_phieu_rows(_build_records(try_ma, tu_cn, toi_cn,
+                                              ng_tao, ghi_chu, items, now_iso))
+            ma_phieu = try_ma
+            break
+        except Exception as e:
+            last_err = e
+            if "duplicate" in str(e).lower() or "unique" in str(e).lower():
+                _logger.warning(f"PHIEU_RETRY — attempt={attempt+1} ma={try_ma}")
+                continue
+            raise
+    if ma_phieu is None:
+        st.error(f"Không sinh được mã phiếu sau 3 lần thử: {last_err}")
+        return
 
-    col_ng, col_gc = st.columns([1, 2])
-    with col_ng:
-        default_ng = edit_meta.get("nguoi_tao", user.get("ho_ten","") if user else "")
-        nguoi_tao = st.text_input("Người gửi/tạo phiếu:", value=default_ng, key="ck_ng_tao")
-    with col_gc:
-        default_gc = edit_meta.get("ghi_chu", "")
-        ghi_chu = st.text_input("Ghi chú chuyển (tuỳ chọn):", value=default_gc,
-            placeholder="VD: Chuyển bổ sung hàng tuần...", key="ck_ghi_chu")
-
-    st.markdown("<hr style='margin:10px 0;'>", unsafe_allow_html=True)
-
-    if "ck_items" not in st.session_state:
-        st.session_state["ck_items"] = []
-
-    kho_src = load_the_kho(branches_key=(tu_cn,)) if tu_cn else pd.DataFrame()
-    ton_map = {}
-    if not kho_src.empty and "Mã hàng" in kho_src.columns:
-        ton_map = dict(zip(
-            kho_src["Mã hàng"].astype(str),
-            kho_src["Tồn cuối kì"].fillna(0).astype(int)
-        ))
-
-    for it in st.session_state["ck_items"]:
-        it["ton_src"] = int(ton_map.get(str(it["ma_hang"]), it.get("ton_src", 0)))
-
-    st.markdown(
-        "<div style='font-size:0.88rem;font-weight:600;margin-bottom:6px;'>"
-        f"🛒 Giỏ hàng ({len(st.session_state['ck_items'])} sản phẩm)</div>",
-        unsafe_allow_html=True
-    )
-
-    if st.session_state["ck_items"]:
-        total_sl = 0
-        total_gb = 0
-        has_overflow = False
-
-        n_items = len(st.session_state["ck_items"])
-        cart_container = st.container(height=240) if n_items > 3 else st.container()
-
-        with cart_container:
-            for idx, it in enumerate(st.session_state["ck_items"]):
-                ton_src = int(it.get("ton_src", 0))
-
-                c_tn, c_sl, c_del = st.columns([4, 2, 1])
-                with c_sl:
-                    new_sl = st.number_input(
-                        "SL", min_value=1, max_value=99999,
-                        value=int(it["so_luong"]),
-                        step=1, key=f"sl_{idx}", label_visibility="collapsed"
-                    )
-                    # Apply ngay để has_overflow tính đúng trong cùng lần render
-                    st.session_state["ck_items"][idx]["so_luong"] = int(new_sl)
-
-                # Tính over từ new_sl (giá trị widget hiện tại), không phải it["so_luong"] cũ
-                over = int(new_sl) > ton_src
-                if over: has_overflow = True
-
-                with c_tn:
-                    ton_color = "#cf4c2c" if over else "#888"
-                    ton_label = (f"Tồn nguồn: <b style='color:{ton_color};'>{ton_src}</b>"
-                                + (" ⚠ vượt tồn" if over else ""))
-                    st.markdown(
-                        f"<div style='padding-top:10px;font-size:0.85rem;'>"
-                        f"<b>{it['ten_hang']}</b><br>"
-                        f"<span style='font-family:monospace;font-size:0.72rem;color:#777;'>{it['ma_hang']}</span>"
-                        f" · <span style='font-size:0.72rem;color:{ton_color};'>{ton_label}</span>"
-                        f"</div>",
-                        unsafe_allow_html=True
-                    )
-                with c_del:
-                    st.markdown("<div style='padding-top:5px;'>", unsafe_allow_html=True)
-                    if st.button("🗑", key=f"del_{idx}", use_container_width=True):
-                        st.session_state["ck_items"].pop(idx)
-                        st.rerun()
-                    st.markdown("</div>", unsafe_allow_html=True)
-
-                total_sl += int(new_sl)
-                total_gb += int(new_sl) * it["gia_ban"]
-
-        if has_overflow:
-            st.warning(
-                "⚠ Một số sản phẩm có SL chuyển vượt tồn nguồn. "
-                "Không thể tạo phiếu cho đến khi sửa lại."
-            )
-
-        st.markdown(
-            f"<div style='background:#fff8f8;border:1px solid #ffd5d9;border-radius:10px;"
-            f"padding:10px 14px;margin-top:10px;'>"
-            f"<div style='display:flex;justify-content:space-between;font-size:0.88rem;'>"
-            f"<span>Tổng số lượng:</span><b>{total_sl:,}</b></div>"
-            f"<div style='display:flex;justify-content:space-between;font-size:0.88rem;margin-top:4px;'>"
-            f"<span>Tổng giá bán:</span><b style='color:#e63946;'>"
-            f"{(total_gb/1_000_000):.2f} tr đ</b></div>"
-            f"</div>",
-            unsafe_allow_html=True
-        )
-
-        col_clear, col_submit = st.columns([1, 2])
-        with col_clear:
-            if st.button("Xóa giỏ", use_container_width=True, key="ck_clear"):
-                st.session_state["ck_items"] = []
-                st.rerun()
-        with col_submit:
-            submit_label = "💾 Cập nhật phiếu" if editing_ma else "✓ Tạo phiếu chuyển"
-            if st.button(submit_label, use_container_width=True,
-                        type="primary", key="ck_submit",
-                        disabled=has_overflow,
-                        help="Sửa SL các mặt hàng vượt tồn trước khi tạo phiếu" if has_overflow else None):
-                if tu_cn == toi_cn:
-                    st.error("Chi nhánh nguồn và đích phải khác nhau.")
-                elif not nguoi_tao.strip():
-                    st.error("Vui lòng nhập tên người gửi.")
-                elif not toi_cn:
-                    st.error("Vui lòng chọn chi nhánh đến.")
-                else:
-                    _submit_phieu(tu_cn, toi_cn, nguoi_tao.strip(), ghi_chu.strip(),
-                                  st.session_state["ck_items"], editing_ma=editing_ma)
-    else:
-        st.caption("Giỏ hàng trống. Tìm và thêm sản phẩm ở danh sách bên dưới.")
-
-    st.markdown("<hr style='margin:14px 0 10px;'>", unsafe_allow_html=True)
-
-    st.markdown(
-        "<div style='font-size:0.88rem;font-weight:600;margin-bottom:6px;'>"
-        "🔍 Danh sách hàng chuyển</div>",
-        unsafe_allow_html=True
-    )
-
-    search_col, add_col = st.columns([3, 2])
-    with search_col:
-        kw = st.text_input("", placeholder="🔍 Tìm sản phẩm theo mã, tên...",
-                          key="ck_search", label_visibility="collapsed")
-    with add_col:
-        only_in_stock = st.checkbox("Chỉ hàng còn tồn ở nguồn",
-                                    value=True, key="ck_only_stock")
-
-    hh_list = hh.copy()
-    hh_list["_ton_src"] = hh_list["ma_hang"].astype(str).map(ton_map).fillna(0).astype(int)
-    if kw.strip():
-        kwn = _normalize(kw)
-        hh_list["_n_ma"]  = hh_list["ma_hang"].apply(_normalize)
-        hh_list["_n_ten"] = hh_list["ten_hang"].apply(_normalize)
-        hh_list = hh_list[
-            hh_list["_n_ma"].str.contains(kwn, na=False) |
-            hh_list["_n_ten"].str.contains(kwn, na=False)
-        ]
-    if only_in_stock:
-        hh_list = hh_list[hh_list["_ton_src"] > 0]
-    hh_list = hh_list.head(SUGGEST_LIMIT)
-
-    if not hh_list.empty:
-        for _, r in hh_list.iterrows():
-            mh     = str(r["ma_hang"])
-            tn     = str(r["ten_hang"])
-            gb     = int(r.get("gia_ban", 0) or 0)
-            tn_src = int(r.get("_ton_src", 0) or 0)
-            already = any(it["ma_hang"] == mh for it in st.session_state["ck_items"])
-
-            c_info, c_btn = st.columns([5, 1])
-            with c_info:
-                st.markdown(
-                    f"<div style='padding:6px 0;font-size:0.85rem;'>"
-                    f"<b>{tn}</b><br>"
-                    f"<span style='font-family:monospace;font-size:0.75rem;color:#777;'>{mh}</span>"
-                    f" · <span style='color:#888;font-size:0.78rem;'>Tồn: {tn_src}</span>"
-                    f" · <span style='color:#1a7f37;font-size:0.78rem;'>{gb:,}đ</span>"
-                    f"</div>",
-                    unsafe_allow_html=True
-                )
-            with c_btn:
-                if already:
-                    st.caption("✓ Đã thêm")
-                else:
-                    if st.button("➕", key=f"add_{mh}", use_container_width=True):
-                        st.session_state["ck_items"].append({
-                            "ma_hang":  mh,
-                            "ten_hang": tn,
-                            "so_luong": 1,
-                            "gia_ban":  gb,
-                            "ton_src":  tn_src,
-                        })
-                        st.rerun()
-
-        if len(hh) > SUGGEST_LIMIT and not kw.strip():
-            st.caption(f"ℹ Hiển thị {SUGGEST_LIMIT} sản phẩm — nhập từ khóa để tìm chính xác hơn.")
-    elif kw.strip():
-        st.caption("Không tìm thấy sản phẩm phù hợp.")
-    else:
-        st.caption("Gõ mã/tên sản phẩm để tìm kiếm.")
+    tong_sl   = sum(int(it["so_luong"]) for it in items)
+    tong_mat  = len(items)
+    tong_gtri = sum(int(it["so_luong"]) * int(it["gia_ban"]) for it in items)
+    log_action("PHIEU_CREATE",
+               f"ma={ma_phieu} tu={tu_cn} toi={toi_cn} sl={tong_sl} "
+               f"items={tong_mat} gtri={int(tong_gtri)}")
+    st.cache_data.clear()
+    st.toast(f"✓ Đã tạo phiếu {ma_phieu}")
 
 
-def _submit_phieu(tu_cn: str, toi_cn: str, nguoi_tao: str, ghi_chu: str,
-                  items: list, editing_ma: str = None):
-    """Insert phiếu tạm — validation tồn kho thật sự do RPC xac_nhan_chuyen_hang đảm nhiệm."""
+def _handle_update(ma_phieu: str, payload: dict):
+    """Sửa phiếu — DELETE rows + INSERT lại, giữ status='Phiếu tạm'. Log PHIEU_UPDATE."""
+    # Lấy meta gốc từ DB để giữ tu_cn/toi_cn (frontend disable nên không gửi)
     try:
-        with st.spinner("Đang xử lý..."):
-            now_iso   = now_vn_iso()
-            tong_sl   = sum(it["so_luong"] for it in items)
-            tong_mat  = len(items)
-            tong_gtri = sum(it["so_luong"] * it["gia_ban"] for it in items)
-
-            def _build_records(ma):
-                return [{
-                    "ma_phieu":          ma,
-                    "loai_phieu":        IN_APP_MARKER,
-                    "tu_chi_nhanh":      tu_cn,
-                    "toi_chi_nhanh":     toi_cn,
-                    "ngay_chuyen":       now_iso,
-                    "ngay_nhan":         None,
-                    "nguoi_tao":         nguoi_tao,
-                    "ghi_chu_chuyen":    ghi_chu or None,
-                    "ghi_chu_nhan":      None,
-                    "tong_sl_chuyen":    tong_sl,
-                    "tong_sl_nhan":      0,
-                    "tong_gia_tri":      int(tong_gtri),
-                    "tong_mat_hang":     tong_mat,
-                    "trang_thai":        "Phiếu tạm",
-                    "ma_hang":           str(it["ma_hang"]),
-                    "ma_vach":           None,
-                    "ten_hang":          str(it["ten_hang"]),
-                    "thuong_hieu":       None,
-                    "so_luong_chuyen":   int(it["so_luong"]),
-                    "so_luong_nhan":     0,
-                    "gia_chuyen":        int(it["gia_ban"]),
-                    "thanh_tien_chuyen": int(it["so_luong"] * it["gia_ban"]),
-                    "thanh_tien_nhan":   0,
-                } for it in items]
-
-            if editing_ma:
-                _delete_phieu_rows(editing_ma)
-                supabase.table("phieu_chuyen_kho").insert(_build_records(editing_ma)).execute()
-                ma_phieu = editing_ma
-                msg = f"💾 Đã cập nhật phiếu **{ma_phieu}**!"
-                log_action("PHIEU_UPDATE",
-                           f"ma={ma_phieu} tu={tu_cn} toi={toi_cn} sl={tong_sl} items={tong_mat}")
-            else:
-                ma_phieu = None
-                last_err = None
-                for attempt in range(3):
-                    try_ma = _gen_ma_phieu()
-                    try:
-                        supabase.table("phieu_chuyen_kho").insert(_build_records(try_ma)).execute()
-                        ma_phieu = try_ma
-                        break
-                    except Exception as e:
-                        last_err = e
-                        if "duplicate" in str(e).lower() or "unique" in str(e).lower():
-                            _logger.warning(f"PHIEU_RETRY — attempt={attempt+1} ma={try_ma}")
-                            continue
-                        raise
-                if ma_phieu is None:
-                    raise RuntimeError(f"Không sinh được mã phiếu sau 3 lần thử: {last_err}")
-                msg = f"✓ Tạo phiếu **{ma_phieu}** thành công!"
-                log_action("PHIEU_CREATE",
-                           f"ma={ma_phieu} tu={tu_cn} toi={toi_cn} sl={tong_sl} items={tong_mat} gtri={int(tong_gtri)}")
-
-            st.session_state["ck_items"] = []
-            st.session_state.pop("ck_editing", None)
-            st.session_state.pop("ck_edit_meta", None)
-            st.cache_data.clear()
-            st.success(msg)
-            if not editing_ma:
-                st.balloons()
-            import time
-            time.sleep(1.5)
-            st.rerun()
+        res = supabase.table("phieu_chuyen_kho").select("*").eq("ma_phieu", ma_phieu).execute()
+        if not res.data:
+            st.error(f"Phiếu {ma_phieu} không tồn tại.")
+            return
+        head = res.data[0]
+        tu_cn  = head["tu_chi_nhanh"]
+        toi_cn = head["toi_chi_nhanh"]
     except Exception as e:
-        st.error(f"Lỗi xử lý phiếu: {e}")
+        st.error(f"Lỗi đọc phiếu: {e}")
+        return
 
+    ng_tao  = payload["nguoi_tao"]
+    ghi_chu = payload.get("ghi_chu", "")
+    items   = payload["items"]
+    if not items:
+        st.error("Vui lòng thêm ít nhất 1 mặt hàng.")
+        return
+
+    now_iso = now_vn_iso()
+    try:
+        _delete_phieu_rows(ma_phieu)
+        _insert_phieu_rows(_build_records(ma_phieu, tu_cn, toi_cn,
+                                          ng_tao, ghi_chu, items, now_iso))
+    except Exception as e:
+        st.error(f"Lỗi cập nhật phiếu: {e}")
+        return
+
+    tong_sl  = sum(int(it["so_luong"]) for it in items)
+    tong_mat = len(items)
+    log_action("PHIEU_UPDATE",
+               f"ma={ma_phieu} tu={tu_cn} toi={toi_cn} sl={tong_sl} items={tong_mat}")
+    st.cache_data.clear()
+    st.toast(f"💾 Đã cập nhật phiếu {ma_phieu}")
+
+
+def _handle_confirm_transfer(ma_phieu: str):
+    """Xác nhận chuyển hàng — RPC + log PHIEU_CONFIRM."""
+    ok, err = _xac_nhan_chuyen_rpc(ma_phieu)
+    if not ok:
+        st.error(f"Không thể xác nhận: {err}")
+        return
+    # Lấy info để log
+    try:
+        res = supabase.table("phieu_chuyen_kho").select("tu_chi_nhanh,toi_chi_nhanh") \
+            .eq("ma_phieu", ma_phieu).limit(1).execute()
+        if res.data:
+            tu_cn  = res.data[0].get("tu_chi_nhanh", "")
+            toi_cn = res.data[0].get("toi_chi_nhanh", "")
+            log_action("PHIEU_CONFIRM", f"ma={ma_phieu} tu={tu_cn} toi={toi_cn}")
+    except Exception:
+        log_action("PHIEU_CONFIRM", f"ma={ma_phieu}")
+    st.cache_data.clear()
+    st.toast(f"✓ Đã xác nhận chuyển hàng cho phiếu {ma_phieu}")
+
+
+def _handle_receive(ma_phieu: str, receiver: str):
+    """Nhận hàng — RPC nhan_hang + log PHIEU_RECEIVE."""
+    if not receiver.strip():
+        st.error("Vui lòng nhập tên người nhận.")
+        return
+    ok, err = _nhan_hang_rpc(ma_phieu, nguoi_nhan=receiver.strip())
+    if not ok:
+        st.error(f"Lỗi nhận hàng: {err}")
+        return
+    try:
+        res = supabase.table("phieu_chuyen_kho").select("tu_chi_nhanh,toi_chi_nhanh") \
+            .eq("ma_phieu", ma_phieu).limit(1).execute()
+        if res.data:
+            tu_cn  = res.data[0].get("tu_chi_nhanh", "")
+            toi_cn = res.data[0].get("toi_chi_nhanh", "")
+            log_action("PHIEU_RECEIVE",
+                       f"ma={ma_phieu} tu={tu_cn} toi={toi_cn} nguoi_nhan={receiver}")
+    except Exception:
+        log_action("PHIEU_RECEIVE", f"ma={ma_phieu} nguoi_nhan={receiver}")
+    st.cache_data.clear()
+    st.toast(f"✓ Đã nhận hàng cho phiếu {ma_phieu}")
+
+
+def _handle_cancel(ma_phieu: str):
+    """Hủy phiếu — RPC huy_phieu_chuyen_kho (restore kho nếu cần)."""
+    user = get_user() or {}
+    huy_boi = user.get("ho_ten") or user.get("username") or "admin"
+    ok, result, err = _huy_phieu_rpc(ma_phieu, huy_boi)
+    if not ok:
+        st.error(f"Không thể hủy: {err}")
+        return
+    prev = result.get("prev_status", "?")
+    n_restored = result.get("items_restored", 0)
+    st.cache_data.clear()
+    if prev == "Đang chuyển" and n_restored > 0:
+        st.toast(f"✓ Đã hủy phiếu {ma_phieu} — kho CN nguồn hoàn lại {n_restored} mặt hàng.")
+    else:
+        st.toast(f"✓ Đã hủy phiếu {ma_phieu}")
+
+
+def _process_event(ev: dict) -> bool:
+    """Dispatch event. Return True nếu đã xử lý (cần rerun)."""
+    action = ev.get("action")
+    if action == "create":
+        _handle_create(ev.get("payload", {}))
+    elif action == "update":
+        _handle_update(ev["id"], ev.get("payload", {}))
+    elif action == "confirm_transfer":
+        _handle_confirm_transfer(ev["id"])
+    elif action == "receive":
+        _handle_receive(ev["id"], ev.get("receiver", ""))
+    elif action == "cancel":
+        _handle_cancel(ev["id"])
+    elif action == "reload":
+        st.cache_data.clear()
+    else:
+        return False
+    return True
+
+
+# ════════════════════════════════════════════════════════════════
+# MAIN ENTRY POINT
+# ════════════════════════════════════════════════════════════════
 
 def module_chuyen_hang():
     try:
-        active   = get_active_branch()
-        view_cns = tuple(get_accessible_branches()) if is_ke_toan_or_admin() else (active,)
-        df_all   = load_phieu_chuyen_kho(branches_key=view_cns)
+        user   = get_user() or {}
+        active = get_active_branch()
+        accessible = get_accessible_branches()
+        view_cns = tuple(accessible) if is_ke_toan_or_admin() else (active,)
 
-        editing = st.session_state.get("ck_editing")
-        create_tab_label = "➕ Tạo / Sửa phiếu" + (" 🔄" if editing else "")
+        df_all  = load_phieu_chuyen_kho(branches_key=view_cns)
+        hang_hoa_df = load_hang_hoa()
+        tickets = _build_tickets(df_all)
+        hang_hoa = _build_hang_hoa(hang_hoa_df)
+        the_kho_by_branch = _build_the_kho_by_branch(accessible)
 
-        # Khi đang edit mode: đặt tab Tạo/Sửa lên đầu để rerun không bị văng về tab Danh sách
-        if editing:
-            tab_create, tab_view = st.tabs([create_tab_label, "📋 Danh sách phiếu"])
-        else:
-            tab_view, tab_create = st.tabs(["📋 Danh sách phiếu", create_tab_label])
+        today = datetime.now().date()
+        first_month = today.replace(day=1)
+        first_last  = (first_month - timedelta(days=1)).replace(day=1)
 
-        with tab_view:
-            _view_phieu_chuyen(df_all)
-        with tab_create:
-            _tao_phieu_chuyen()
+        ev = chuyen_hang_component(
+            tickets=tickets,
+            branches=ALL_BRANCHES,
+            accessible_branches=accessible,
+            active_branch=active,
+            is_admin=is_admin(),
+            current_user=user.get("ho_ten", ""),
+            hang_hoa=hang_hoa,
+            the_kho_by_branch=the_kho_by_branch,
+            first_month_iso=first_month.isoformat(),
+            first_last_iso=first_last.isoformat(),
+            key="chuyen_hang_mvc_main",
+            height=900,
+        )
+
+        if ev and isinstance(ev, dict):
+            nonce = ev.get("nonce")
+            last_nonce = st.session_state.get("_ck_last_nonce")
+            if nonce and nonce != last_nonce:
+                st.session_state["_ck_last_nonce"] = nonce
+                handled = _process_event(ev)
+                if handled:
+                    st.rerun()
+
     except Exception as e:
         st.error(f"Lỗi tải Chuyển hàng: {e}")
+        import traceback
+        st.code(traceback.format_exc())

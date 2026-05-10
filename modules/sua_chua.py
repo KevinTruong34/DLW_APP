@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 import numpy as np
+import html as _html_esc
+from urllib.parse import quote as _url_quote
 
 from utils.helpers import _normalize, now_vn, now_vn_iso, today_vn, fmt_vn
 from utils.config import ALL_BRANCHES, CN_SHORT, IN_APP_MARKER, ARCHIVED_MARKER
@@ -27,100 +29,16 @@ def _is_open_price_row(row) -> bool:
 # ══════════════════════════════════════════════════════════
 _SC_CSS = """
 <style>
-.sc-card {
-    background: #fff;
-    border: 1px solid #e8e8e8;
-    border-radius: 12px;
-    padding: 16px 18px;
-    margin: 8px 0;
-}
-.sc-card-header {
-    font-size: 1.05rem;
-    font-weight: 700;
-    color: #1a1a2e;
-    margin-bottom: 4px;
-}
-.sc-card-sub {
-    font-size: 0.82rem;
-    color: #888;
-    margin-bottom: 10px;
-}
-.sc-info-row {
-    display: flex;
-    margin: 4px 0;
-    font-size: 0.9rem;
-}
-.sc-info-label {
-    color: #777;
-    min-width: 110px;
-}
-.sc-info-val {
-    color: #1a1a2e;
-    font-weight: 500;
-    flex: 1;
-}
-.sc-badge {
-    display: inline-block;
-    padding: 4px 12px;
-    border-radius: 20px;
-    font-size: 0.78rem;
-    font-weight: 600;
-    background: #fff7e0;
-    color: #b78103;
-    border: 1px solid #f3d984;
-}
-.sc-badge-green {
-    background: #e8f5e9;
-    color: #1a7f37;
-    border-color: #a8d4ad;
-}
-.sc-badge-red {
-    background: #ffebee;
-    color: #cf4c2c;
-    border-color: #f5b5a8;
-}
-.sc-section-title {
-    font-size: 0.92rem;
-    font-weight: 600;
-    color: #1a1a2e;
-    margin: 14px 0 8px;
-    padding-bottom: 6px;
-    border-bottom: 1px solid #ebebeb;
-}
-.sc-money-card {
-    background: #fff;
-    border: 1px solid #e8e8e8;
-    border-radius: 10px;
-    padding: 12px 14px;
-    text-align: center;
-}
-.sc-money-card-red {
-    border: 2px solid #e63946;
-    background: #fff8f8;
-}
-.sc-money-label {
-    font-size: 0.78rem;
-    color: #777;
-    margin-bottom: 4px;
-}
-.sc-money-value {
-    font-size: 1.2rem;
-    font-weight: 700;
-    color: #1a1a2e;
-}
-.sc-money-value-red {
-    color: #e63946;
-}
-
 /* ═══════════════════════════════════════════════════════════
-   PR1 redesign — design tokens + new components for Tab 1
-   (legacy classes above giữ nguyên cho Tab 2/3/4 đang chờ PR2-4)
+   SỬA CHỮA — design tokens + Streamlit overrides + components
+   Pixel-faithful port từ prototype "Sửa chữa - Danh sách phiếu.html"
+   (handoff README §"Design Tokens"). Tokens tại :root để cả global
+   selectors như [data-testid="stButton"] đều dùng được.
    ═══════════════════════════════════════════════════════════ */
 
 @import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
 
-/* Design tokens (apply scoped via .sc-root) */
-.sc-root {
+:root {
     --sc-bg: #faf9f6;
     --sc-surface: #ffffff;
     --sc-surface-2: #f5f3ee;
@@ -130,6 +48,7 @@ _SC_CSS = """
     --sc-line: #e8e5dd;
     --sc-line-2: #efece4;
     --sc-accent: oklch(0.56 0.11 165);
+    --sc-accent-hover: oklch(0.51 0.11 165);
     --sc-accent-soft: oklch(0.96 0.025 165);
     --sc-accent-line: oklch(0.85 0.06 165);
     --sc-emerald-ink: oklch(0.4 0.11 165);
@@ -142,19 +61,94 @@ _SC_CSS = """
     --sc-indigo: oklch(0.55 0.13 260);
     --sc-indigo-soft: oklch(0.96 0.025 260);
     --sc-indigo-ink: oklch(0.4 0.13 260);
-    font-family: 'Be Vietnam Pro', system-ui, -apple-system, sans-serif;
-    color: var(--sc-ink);
 }
-.sc-root .sc-mono { font-family: 'DM Mono', ui-monospace, monospace; font-feature-settings: 'tnum'; }
-.sc-root .sc-num  { font-variant-numeric: tabular-nums; }
 
-/* Header */
-.sc-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
-.sc-h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
-.sc-sub { font-size: 12.5px; color: var(--sc-ink-3); margin: 2px 0 0; }
-.sc-branch-badge { font-size: 12px; color: var(--sc-ink-3); }
+/* Body warm bg + font */
+.stApp { background: var(--sc-bg); }
+.stApp, .stApp * { font-family: 'Be Vietnam Pro', system-ui, -apple-system, sans-serif; }
+.sc-mono { font-family: 'DM Mono', ui-monospace, monospace; font-feature-settings: 'tnum'; }
+.sc-num  { font-variant-numeric: tabular-nums; }
 
-/* Status pills */
+/* ───── Streamlit BUTTON override (global — PR3 critical fix) ───── */
+[data-testid="stButton"] > button,
+[data-testid="baseButton-secondary"],
+[data-testid="baseButton-primary"] {
+    height: 34px !important;
+    padding: 0 14px !important;
+    border-radius: 8px !important;
+    border: 1px solid var(--sc-line) !important;
+    background: var(--sc-surface) !important;
+    color: var(--sc-ink) !important;
+    font-weight: 500 !important;
+    font-size: 13px !important;
+    transition: background .12s, border-color .12s, color .12s !important;
+    box-shadow: none !important;
+}
+[data-testid="stButton"] > button:hover,
+[data-testid="baseButton-secondary"]:hover {
+    background: var(--sc-surface-2) !important;
+    border-color: var(--sc-line) !important;
+    color: var(--sc-ink) !important;
+}
+[data-testid="stButton"] > button[kind="primary"],
+[data-testid="baseButton-primary"] {
+    background: var(--sc-accent) !important;
+    border-color: var(--sc-accent) !important;
+    color: #fff !important;
+}
+[data-testid="stButton"] > button[kind="primary"]:hover,
+[data-testid="baseButton-primary"]:hover {
+    background: var(--sc-accent-hover) !important;
+    border-color: var(--sc-accent-hover) !important;
+    color: #fff !important;
+}
+[data-testid="stButton"] > button:disabled {
+    opacity: 0.5 !important;
+    cursor: not-allowed !important;
+}
+
+/* ───── Streamlit INPUT / SELECTBOX overrides ───── */
+[data-testid="stTextInput"] input,
+[data-testid="stTextArea"] textarea,
+[data-testid="stNumberInput"] input,
+[data-testid="stDateInput"] input {
+    border-radius: 8px !important;
+    border: 1px solid var(--sc-line) !important;
+    background: var(--sc-surface) !important;
+    color: var(--sc-ink) !important;
+    font-size: 13px !important;
+}
+[data-testid="stTextInput"] input:focus,
+[data-testid="stTextArea"] textarea:focus,
+[data-testid="stNumberInput"] input:focus,
+[data-testid="stDateInput"] input:focus {
+    border-color: var(--sc-accent) !important;
+    box-shadow: 0 0 0 3px var(--sc-accent-soft) !important;
+}
+[data-testid="stSelectbox"] > div > div {
+    border-radius: 8px !important;
+    border-color: var(--sc-line) !important;
+    background: var(--sc-surface) !important;
+    min-height: 34px !important;
+}
+
+/* ───── Tabs (st.tabs) ───── */
+[data-testid="stTabs"] [data-baseweb="tab-list"] {
+    gap: 4px;
+    border-bottom: 1px solid var(--sc-line);
+}
+[data-testid="stTabs"] [data-baseweb="tab"] {
+    font-size: 12.5px;
+    font-weight: 500;
+    color: var(--sc-ink-3);
+    padding: 8px 14px;
+}
+[data-testid="stTabs"] [aria-selected="true"] {
+    color: var(--sc-accent) !important;
+    border-bottom-color: var(--sc-accent) !important;
+}
+
+/* ═══════════════ STATUS PILLS ═══════════════ */
 .sc-pill {
     display: inline-flex; align-items: center; gap: 6px;
     font-size: 11.5px; font-weight: 500;
@@ -174,17 +168,48 @@ _SC_CSS = """
 .sc-pill.cancelled { background: var(--sc-rose-soft); color: var(--sc-rose-ink); border-color: oklch(0.85 0.06 22); }
 .sc-pill.cancelled::before { background: var(--sc-rose); }
 
-/* Detail drawer card */
-.sc-drawer { background: var(--sc-surface); border: 1px solid var(--sc-line); border-radius: 10px;
-    padding: 0; overflow: hidden;
-    box-shadow: -8px 0 24px -12px rgba(20,18,15,0.12); }
-.sc-drawer-head { padding: 14px 16px; border-bottom: 1px solid var(--sc-line); }
+/* ═══════════════ TABLE CARD (custom HTML — replace st.dataframe) ═══════════════ */
+.sc-tablewrap { background: var(--sc-surface); border: 1px solid var(--sc-line); border-radius: 12px; overflow: hidden; margin-top: 8px; }
+.sc-tabletop { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--sc-line-2); }
+.sc-ttitle { font-size: 12.5px; color: var(--sc-ink-2); font-weight: 500; }
+.sc-tcount { color: var(--sc-ink-3); margin-left: 4px; }
+.sc-table { width: 100%; border-collapse: collapse; }
+.sc-table th { text-align: left; font-size: 11.5px; font-weight: 500; color: var(--sc-ink-3); padding: 10px 14px; background: var(--sc-surface-2); border-bottom: 1px solid var(--sc-line-2); white-space: nowrap; letter-spacing: 0.02em; }
+.sc-table td { padding: 0; border-bottom: 1px solid var(--sc-line-2); vertical-align: middle; }
+.sc-table tr:last-child td { border-bottom: none; }
+.sc-table tbody tr { transition: background .1s; position: relative; }
+.sc-table tbody tr:hover { background: var(--sc-surface-2); }
+.sc-table tbody tr.selected { background: var(--sc-accent-soft); }
+
+/* Each cell wraps content in <a> for full-cell click area */
+.sc-cell-link {
+    display: block; padding: 10px 14px;
+    color: inherit; text-decoration: none;
+    font-size: 13px;
+}
+.sc-cell-link:hover, .sc-cell-link:focus { color: inherit; text-decoration: none; }
+.sc-table tr.selected td:first-child .sc-cell-link { box-shadow: inset 3px 0 0 var(--sc-accent); }
+.sc-table td.mp .sc-cell-link { font-family: 'DM Mono', monospace; color: var(--sc-ink); font-size: 12.5px; }
+.sc-table td.tnum .sc-cell-link { font-variant-numeric: tabular-nums; }
+.sc-table td.kh .sc-cell-link { font-weight: 500; }
+.sc-table td.fade .sc-cell-link { color: var(--sc-ink-3); }
+.sc-table td.dim .sc-cell-link { color: var(--sc-ink-3); font-size: 12px; }
+.sc-table td.row-chev .sc-cell-link { color: transparent; transition: color .12s; text-align: right; padding-right: 18px; }
+.sc-table tbody tr:hover td.row-chev .sc-cell-link,
+.sc-table tbody tr.selected td.row-chev .sc-cell-link { color: var(--sc-ink-3); }
+
+/* Empty state */
+.sc-empty { padding: 48px 24px; text-align: center; color: var(--sc-ink-3); font-size: 13px;
+    background: var(--sc-surface); border: 1px solid var(--sc-line); border-radius: 12px; }
+.sc-empty-title { color: var(--sc-ink-2); font-weight: 500; margin-bottom: 4px; font-size: 14px; }
+
+/* ═══════════════ DRAWER CARDS (detail + create/edit) ═══════════════ */
+.sc-drawer-head { padding: 14px 16px; border-bottom: 1px solid var(--sc-line); background: var(--sc-surface); border-radius: 10px 10px 0 0; }
 .sc-drawer-head .small { font-size: 11px; color: var(--sc-ink-3); letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 4px; }
 .sc-drawer-head h2 { margin: 0; font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .sc-drawer-head h2 .id { font-family: 'DM Mono', monospace; font-size: 14px; color: var(--sc-ink-2); }
 .sc-drawer-head .meta { margin-top: 6px; font-size: 12.5px; color: var(--sc-ink-2); display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 
-.sc-drawer-body { padding: 14px 16px; }
 .sc-d-card { background: var(--sc-surface); border: 1px solid var(--sc-line); border-radius: 10px; padding: 12px 14px; }
 .sc-d-card + .sc-d-card { margin-top: 10px; }
 .sc-d-card-title { font-size: 11.5px; font-weight: 600; color: var(--sc-ink-2); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; display: flex; gap: 6px; align-items: center; }
@@ -223,13 +248,9 @@ _SC_CSS = """
 .sc-money-mini.success .mval { color: var(--sc-emerald-ink); }
 
 /* APSC card */
-.sc-apsc-card {
-    margin-top: 10px;
-    padding: 12px 14px;
-    border-radius: 10px;
+.sc-apsc-card { margin-top: 10px; padding: 12px 14px; border-radius: 10px;
     background: linear-gradient(135deg, var(--sc-accent-soft), var(--sc-surface));
-    border: 1px solid var(--sc-accent-line);
-}
+    border: 1px solid var(--sc-accent-line); }
 .sc-apsc-card.cancelled { background: var(--sc-rose-soft); border-color: oklch(0.85 0.06 22); }
 .sc-apsc-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
 .sc-apsc-info .apsc-lab { font-size: 11px; color: var(--sc-ink-3); margin-bottom: 2px; letter-spacing: 0.02em; text-transform: uppercase; }
@@ -237,12 +258,7 @@ _SC_CSS = """
 .sc-apsc-card.cancelled .sc-apsc-info .apsc-id { color: var(--sc-rose-ink); text-decoration: line-through; }
 .sc-apsc-info .apsc-meta { font-size: 11.5px; color: var(--sc-ink-2); margin-top: 2px; }
 
-/* Empty state */
-.sc-empty { padding: 40px 24px; text-align: center; color: var(--sc-ink-3); font-size: 13px;
-    background: var(--sc-surface); border: 1px dashed var(--sc-line); border-radius: 10px; }
-.sc-empty-title { color: var(--sc-ink-2); font-weight: 500; margin-bottom: 4px; font-size: 14px; }
-
-/* Empty items in card */
+/* Empty items state */
 .sc-empty-items { font-size: 12.5px; color: var(--sc-ink-3); padding: 12px 0; text-align: center; font-style: italic; }
 
 /* Form section title (PR2 — Create drawer) */
@@ -255,6 +271,29 @@ _SC_CSS = """
     border-bottom: 1px solid var(--sc-line-2);
     display: flex; align-items: center; gap: 6px;
 }
+
+/* ═══════════════ LEGACY classes — Tab 2/3/4 vẫn dùng cho tới PR4 cleanup ═══════════════ */
+.sc-card {
+    background: #fff;
+    border: 1px solid #e8e8e8;
+    border-radius: 12px;
+    padding: 16px 18px;
+    margin: 8px 0;
+}
+.sc-card-header { font-size: 1.05rem; font-weight: 700; color: #1a1a2e; margin-bottom: 4px; }
+.sc-card-sub { font-size: 0.82rem; color: #888; margin-bottom: 10px; }
+.sc-info-row { display: flex; margin: 4px 0; font-size: 0.9rem; }
+.sc-info-label { color: #777; min-width: 110px; }
+.sc-info-val { color: #1a1a2e; font-weight: 500; flex: 1; }
+.sc-badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 0.78rem; font-weight: 600; background: #fff7e0; color: #b78103; border: 1px solid #f3d984; }
+.sc-badge-green { background: #e8f5e9; color: #1a7f37; border-color: #a8d4ad; }
+.sc-badge-red { background: #ffebee; color: #cf4c2c; border-color: #f5b5a8; }
+.sc-section-title { font-size: 0.92rem; font-weight: 600; color: #1a1a2e; margin: 14px 0 8px; padding-bottom: 6px; border-bottom: 1px solid #ebebeb; }
+.sc-money-card { background: #fff; border: 1px solid #e8e8e8; border-radius: 10px; padding: 12px 14px; text-align: center; }
+.sc-money-card-red { border: 2px solid #e63946; background: #fff8f8; }
+.sc-money-label { font-size: 0.78rem; color: #777; margin-bottom: 4px; }
+.sc-money-value { font-size: 1.2rem; font-weight: 700; color: #1a1a2e; }
+.sc-money-value-red { color: #e63946; }
 </style>
 """
 
@@ -380,6 +419,28 @@ def module_sua_chua():
             return f"APSC{num:06d}"
         except Exception:
             return f"APSC{(now_vn()).strftime('%y%m%d%H%M')}"
+
+    def _preview_next_ma_apsc() -> str:
+        """Mã APSC dự kiến (max+1 từ hoa_don) — KHÔNG advance get_next_apsc_num
+        để tránh drift sequence khi user chỉ open dialog rồi đóng. Mã thực
+        sẽ lấy từ _gen_ma_apsc() khi submit."""
+        try:
+            res = (
+                supabase.table("hoa_don")
+                .select('"Mã hóa đơn"')
+                .like('"Mã hóa đơn"', "APSC______")
+                .order('"Mã hóa đơn"', desc=True)
+                .limit(1)
+                .execute()
+            )
+            if res.data:
+                last = res.data[0]["Mã hóa đơn"]
+                num = int(str(last)[4:]) + 1
+            else:
+                num = 1
+            return f"APSC{num:06d}"
+        except Exception:
+            return "APSC??????"
 
     def _tao_hoa_don_apsc(phieu: dict, ct: pd.DataFrame,
                            giam_gia: int, pttt: dict) -> str:
@@ -798,6 +859,372 @@ def module_sua_chua():
                     st.error(f"Lỗi tạo phiếu: {e}")
 
     # ══════════════════════════════════════════════════════════
+    # PR3b — Edit drawer (render trong col_drawer khi sc_form_mode=edit)
+    # Scope match existing tab_detail: update trang_thai + ngay_hen_tra
+    # + ghi_chu_noi_bo + add new items (giữ behavior hiện tại, không
+    # mở rộng edit sang khách hàng / đồng hồ để tránh đụng audit logic).
+    # ══════════════════════════════════════════════════════════
+    def _render_edit_drawer(t, ho_ten, fmt_money, close_drawer):
+        fcnt = st.session_state.setdefault("sc_drawer_form_count", 0)
+        ma_pick = t["ma_phieu"]
+        cur_tt = t.get("trang_thai", "Đang sửa")
+
+        # Map status → pill class (same as detail drawer)
+        PILL_CLASS = {
+            "Hoàn thành": "done", "Đang sửa": "fixing",
+            "Chờ linh kiện": "waiting", "Chờ giao khách": "handover",
+        }
+        pill_cls = PILL_CLASS.get(cur_tt, "")
+
+        # ── Header drawer ──
+        head_l, head_r = st.columns([5, 1])
+        with head_l:
+            st.markdown(
+                f'<div class="sc-drawer-head">'
+                f'<div class="small">CẬP NHẬT PHIẾU</div>'
+                f'<h2><span class="id sc-mono">{_html_esc.escape(ma_pick)}</span> '
+                f'· {_html_esc.escape(t.get("ten_khach", "") or "—")}</h2>'
+                f'<div class="meta">'
+                f'<span>📞 {_html_esc.escape(t.get("sdt_khach", "") or "—")}</span>'
+                f'<span class="sc-pill {pill_cls}">{_html_esc.escape(cur_tt)}</span>'
+                f'</div></div>',
+                unsafe_allow_html=True,
+            )
+        with head_r:
+            if st.button("✕", key=f"sc_drawer_edit_close_{fcnt}",
+                         help="Quay lại chi tiết (huỷ chỉnh sửa)",
+                         use_container_width=True):
+                # Chỉ pop form_mode để quay về detail view, KHÔNG đóng drawer
+                st.session_state.pop("sc_form_mode", None)
+                st.session_state["sc_drawer_form_count"] = \
+                    st.session_state.get("sc_drawer_form_count", 0) + 1
+                st.rerun()
+
+        # ── Section: Trạng thái ──
+        st.markdown(
+            '<div class="sc-form-section-title">📊 TRẠNG THÁI</div>',
+            unsafe_allow_html=True,
+        )
+        new_tt_idx = TRANG_THAI_LIST.index(cur_tt) if cur_tt in TRANG_THAI_LIST else 0
+        new_tt = st.radio(
+            "Trạng thái:", TRANG_THAI_LIST, index=new_tt_idx,
+            key=f"sc_drawer_edit_tt_{fcnt}",
+            label_visibility="collapsed", horizontal=True,
+        )
+        st.caption("'Hoàn thành' sẽ tự set khi tạo HĐ APSC ở phiếu Chờ giao khách.")
+
+        # ── Section: Hẹn trả + Ghi chú ──
+        st.markdown(
+            '<div class="sc-form-section-title">💬 GHI CHÚ & HẸN TRẢ</div>',
+            unsafe_allow_html=True,
+        )
+        c1, c2 = st.columns(2)
+        with c1:
+            cur_hen = t.get("ngay_hen_tra")
+            try:
+                hen_value = pd.to_datetime(cur_hen).date() if cur_hen else None
+            except Exception:
+                hen_value = None
+            new_hen = st.date_input(
+                "Ngày hẹn trả", value=hen_value,
+                key=f"sc_drawer_edit_hen_{fcnt}", format="DD/MM/YYYY",
+            )
+        with c2:
+            new_gc = st.text_area(
+                "Ghi chú nội bộ", value=t.get("ghi_chu_noi_bo") or "",
+                key=f"sc_drawer_edit_gc_{fcnt}", height=80,
+            )
+
+        # ── Section: Items hiện có (delete X) + Thêm mới ──
+        st.markdown(
+            '<div class="sc-form-section-title">'
+            '🔧 DỊCH VỤ / LINH KIỆN'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        ct = _load_chi_tiet(ma_pick)
+        if not ct.empty:
+            for _, row in ct.iterrows():
+                ci1, ci2, ci3, ci4, ci5 = st.columns([2, 4, 1, 2, 1])
+                with ci1:
+                    st.markdown(
+                        f"<span style='font-size:0.9rem'>"
+                        f"{_html_esc.escape(str(row.get('loai_dong','')))}</span>",
+                        unsafe_allow_html=True,
+                    )
+                with ci2:
+                    st.markdown(
+                        f"<span style='font-size:0.9rem'>"
+                        f"{_html_esc.escape(str(row.get('ten_hang','')))}</span>",
+                        unsafe_allow_html=True,
+                    )
+                with ci3:
+                    st.markdown(
+                        f"<span style='font-size:0.9rem'>"
+                        f"x{int(row.get('so_luong', 1) or 0)}</span>",
+                        unsafe_allow_html=True,
+                    )
+                with ci4:
+                    st.markdown(
+                        f"<span style='font-size:0.9rem'>"
+                        f"{fmt_money(row.get('don_gia', 0))}</span>",
+                        unsafe_allow_html=True,
+                    )
+                with ci5:
+                    if st.button("✕", key=f"sc_drawer_del_ct_{fcnt}_{row['id']}"):
+                        try:
+                            supabase.table("phieu_sua_chua_chi_tiet") \
+                                .delete().eq("id", int(row["id"])).execute()
+                            st.cache_data.clear()
+                            log_action("SC_DEL_ITEM",
+                                       f"ma={ma_pick} item={row.get('ten_hang','')}")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Lỗi xóa: {e}")
+        else:
+            st.caption("_(Phiếu chưa có dịch vụ / linh kiện nào)_")
+
+        # Thêm mới
+        st.markdown(
+            '<div style="font-size:11.5px;color:var(--sc-ink-3);'
+            'margin:10px 0 4px;">➕ Thêm dịch vụ / linh kiện</div>',
+            unsafe_allow_html=True,
+        )
+        new_items_key = f"sc_drawer_edit_items_{fcnt}"
+        st.session_state.setdefault(new_items_key, [])
+        _widget_them_dv(f"sc_drawer_edit_new_{fcnt}", new_items_key)
+        new_items = st.session_state.get(new_items_key, [])
+        if new_items:
+            _hien_thi_items(new_items_key)
+            tong_moi = sum(int(x.get("so_luong", 0)) * int(x.get("don_gia", 0))
+                           for x in new_items)
+            st.caption(f"Tổng dịch vụ mới thêm: **{fmt_money(tong_moi)}**")
+
+        # ── Footer: Hủy + Lưu cập nhật ──
+        st.markdown('<hr style="margin:14px 0 10px 0;border-color:#efece4">',
+                    unsafe_allow_html=True)
+        ft_l, ft_r = st.columns([1, 2])
+        with ft_l:
+            if st.button("Hủy bỏ", key=f"sc_drawer_edit_cancel_{fcnt}",
+                         use_container_width=True):
+                # Pop form_mode chỉ → quay về detail view (giữ drawer_ma)
+                st.session_state.pop("sc_form_mode", None)
+                st.session_state["sc_drawer_form_count"] = \
+                    st.session_state.get("sc_drawer_form_count", 0) + 1
+                st.rerun()
+        with ft_r:
+            if st.button(
+                "💾 Lưu cập nhật", key=f"sc_drawer_edit_submit_{fcnt}",
+                type="primary", use_container_width=True,
+            ):
+                try:
+                    supabase.table("phieu_sua_chua").update({
+                        "trang_thai":     new_tt,
+                        "ngay_hen_tra":   new_hen.isoformat() if new_hen else None,
+                        "ghi_chu_noi_bo": (new_gc or "").strip() or None,
+                        "updated_at":     now_vn_iso(),
+                    }).eq("ma_phieu", ma_pick).execute()
+
+                    if new_items:
+                        supabase.table("phieu_sua_chua_chi_tiet").insert(
+                            [{"ma_phieu": ma_pick, **item} for item in new_items]
+                        ).execute()
+                        st.session_state[new_items_key] = []
+
+                    st.cache_data.clear()
+                    log_action("SC_UPDATE",
+                               f"ma={ma_pick} trang_thai={new_tt}")
+                    # Save success → quay về detail view (giữ drawer_ma)
+                    st.session_state.pop("sc_form_mode", None)
+                    st.session_state["sc_drawer_form_count"] = \
+                        st.session_state.get("sc_drawer_form_count", 0) + 1
+                    st.toast("✓ Đã cập nhật phiếu", icon="✅")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Lỗi cập nhật: {e}")
+
+    # ══════════════════════════════════════════════════════════
+    # PR3c — Invoice modal (@st.dialog) — tạo HĐ APSC từ phiếu
+    # Chờ giao khách. Trigger từ CTA button trong detail drawer.
+    # Persistence: dùng sc_invoice_open flag để dialog re-render qua reruns.
+    # ══════════════════════════════════════════════════════════
+    @st.dialog("🧾 Tạo hóa đơn APSC", width="large")
+    def _invoice_dialog(phieu_dict, ct_df):
+        ma_phieu = phieu_dict.get("ma_phieu", "")
+        ma_apsc_preview = _preview_next_ma_apsc()
+
+        st.markdown(
+            f'<div style="font-size:12.5px;color:var(--sc-ink-3);margin-bottom:8px;">'
+            f'Mã dự kiến: <b class="sc-mono" style="color:var(--sc-emerald-ink);">'
+            f'{_html_esc.escape(ma_apsc_preview)}</b> · Cho phiếu '
+            f'<b class="sc-mono">{_html_esc.escape(ma_phieu)}</b></div>',
+            unsafe_allow_html=True,
+        )
+
+        # ── Section 1: Items table (read-only) ──
+        st.markdown(
+            '<div class="sc-form-section-title">📦 CHI TIẾT DỊCH VỤ / LINH KIỆN</div>',
+            unsafe_allow_html=True,
+        )
+        if ct_df.empty:
+            st.warning("Phiếu chưa có dịch vụ / linh kiện. Đóng modal, "
+                       "thêm items qua nút ✎ Edit, rồi tạo HĐ.")
+            tong_hang = 0
+        else:
+            _items_html = '<table class="sc-items"><thead><tr>' \
+                          '<th>Loại</th><th>Tên</th><th>Mã</th>' \
+                          '<th class="right">SL</th>' \
+                          '<th class="right">Đơn giá</th>' \
+                          '<th class="right">Thành tiền</th></tr></thead><tbody>'
+            tong_hang = 0
+            for _, _r in ct_df.iterrows():
+                _sl = int(_r.get("so_luong") or 0)
+                _dg = int(_r.get("don_gia") or 0)
+                _tt = _sl * _dg
+                tong_hang += _tt
+                _kind = (_r.get("loai_dong") or "").strip()
+                _kind_cls = "dv" if _kind == "Dịch vụ" else ""
+                _items_html += (
+                    '<tr>'
+                    f'<td><span class="sc-kind-tag {_kind_cls}">'
+                    f'{_html_esc.escape(_kind or "—")}</span></td>'
+                    f'<td>{_html_esc.escape(str(_r.get("ten_hang", "") or "—"))}</td>'
+                    f'<td class="ma">{_html_esc.escape(str(_r.get("ma_hang", "") or "—"))}</td>'
+                    f'<td class="right tnum">{_sl}</td>'
+                    f'<td class="right tnum">{_html_esc.escape(_fmt_money(_dg))}</td>'
+                    f'<td class="right tnum bold">{_html_esc.escape(_fmt_money(_tt))}</td>'
+                    '</tr>'
+                )
+            _items_html += '</tbody></table>'
+            st.markdown(_items_html, unsafe_allow_html=True)
+
+        # ── Section 2: Giảm giá + 3 money cards ──
+        st.markdown(
+            '<div class="sc-form-section-title">💰 THÔNG TIN HÓA ĐƠN</div>',
+            unsafe_allow_html=True,
+        )
+        giam_gia = st.number_input(
+            "Giảm giá (đ)", min_value=0, step=10000,
+            value=st.session_state.get("sc_inv_giam_gia", 0),
+            key="sc_inv_giam_gia",
+        )
+        tra_truoc = int(phieu_dict.get("khach_tra_truoc") or 0)
+        gg_int = int(giam_gia or 0)
+        khach_can_tra = max(0, tong_hang - gg_int - tra_truoc)
+        st.markdown(
+            '<div class="sc-money-grid">'
+            '<div class="sc-money-mini">'
+            '<div class="mlab">TỔNG DỊCH VỤ</div>'
+            f'<div class="mval">{_html_esc.escape(_fmt_money(tong_hang))}</div></div>'
+            '<div class="sc-money-mini">'
+            '<div class="mlab">GIẢM + TRẢ TRƯỚC</div>'
+            f'<div class="mval">−{_html_esc.escape(_fmt_money(gg_int + tra_truoc))}</div></div>'
+            '<div class="sc-money-mini danger">'
+            '<div class="mlab">KHÁCH CẦN TRẢ</div>'
+            f'<div class="mval">{_html_esc.escape(_fmt_money(khach_can_tra))}</div></div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+        # ── Section 3: Phương thức thanh toán ──
+        st.markdown(
+            '<div class="sc-form-section-title">💳 PHƯƠNG THỨC THANH TOÁN</div>',
+            unsafe_allow_html=True,
+        )
+        chia_nhieu = st.checkbox(
+            "Chia nhiều phương thức", key="sc_inv_chia_nhieu",
+        )
+        if chia_nhieu:
+            cm1, cm2, cm3 = st.columns(3)
+            with cm1:
+                tien_mat = st.number_input(
+                    "💵 Tiền mặt", min_value=0, step=10000,
+                    value=st.session_state.get("sc_inv_tm", 0),
+                    key="sc_inv_tm",
+                )
+            with cm2:
+                chuyen_khoan = st.number_input(
+                    "🏦 Chuyển khoản", min_value=0, step=10000,
+                    value=st.session_state.get("sc_inv_ck", 0),
+                    key="sc_inv_ck",
+                )
+            with cm3:
+                the = st.number_input(
+                    "💳 Thẻ", min_value=0, step=10000,
+                    value=st.session_state.get("sc_inv_the", 0),
+                    key="sc_inv_the",
+                )
+            sum_pttt = int(tien_mat) + int(chuyen_khoan) + int(the)
+            valid_pttt = (sum_pttt == khach_can_tra)
+            if not valid_pttt:
+                diff = khach_can_tra - sum_pttt
+                st.error(
+                    f"⚠️ Tổng PTTT {_fmt_money(sum_pttt)} ≠ Khách cần trả "
+                    f"{_fmt_money(khach_can_tra)} (chênh "
+                    f"{_fmt_money(abs(diff))})"
+                )
+            else:
+                st.success(f"✓ Khớp {_fmt_money(khach_can_tra)}")
+        else:
+            method = st.radio(
+                "PTTT:", ["💵 Tiền mặt", "🏦 Chuyển khoản", "💳 Thẻ"],
+                horizontal=True, key="sc_inv_method",
+                label_visibility="collapsed",
+            )
+            if method == "💵 Tiền mặt":
+                tien_mat, chuyen_khoan, the = khach_can_tra, 0, 0
+            elif method == "🏦 Chuyển khoản":
+                tien_mat, chuyen_khoan, the = 0, khach_can_tra, 0
+            else:
+                tien_mat, chuyen_khoan, the = 0, 0, khach_can_tra
+            valid_pttt = True
+
+        # ── Footer buttons ──
+        st.markdown('<hr style="margin:14px 0 10px 0;border-color:#efece4">',
+                    unsafe_allow_html=True)
+
+        def _close_invoice():
+            for _k in ("sc_invoice_open", "sc_inv_giam_gia",
+                       "sc_inv_chia_nhieu", "sc_inv_tm", "sc_inv_ck",
+                       "sc_inv_the", "sc_inv_method"):
+                st.session_state.pop(_k, None)
+
+        cf1, cf2 = st.columns([1, 2])
+        with cf1:
+            if st.button("Hủy", key="sc_inv_cancel", use_container_width=True):
+                _close_invoice()
+                st.rerun()
+        with cf2:
+            can_create = (not ct_df.empty) and valid_pttt
+            if st.button(
+                "✅ Tạo hóa đơn APSC", key="sc_inv_submit",
+                type="primary", use_container_width=True,
+                disabled=not can_create,
+            ):
+                try:
+                    pttt = {
+                        "tien_mat":     int(tien_mat),
+                        "chuyen_khoan": int(chuyen_khoan),
+                        "the":          int(the),
+                    }
+                    ma_hd = _tao_hoa_don_apsc(
+                        dict(phieu_dict), ct_df, gg_int, pttt,
+                    )
+                    # Update phieu trang_thai → Hoàn thành
+                    supabase.table("phieu_sua_chua").update({
+                        "trang_thai": "Hoàn thành",
+                        "updated_at": now_vn_iso(),
+                    }).eq("ma_phieu", ma_phieu).execute()
+                    st.cache_data.clear()
+                    log_action("SC_TAO_HD",
+                               f"ma_phieu={ma_phieu} ma_hd={ma_hd}")
+                    _close_invoice()
+                    st.toast(f"✓ Đã tạo HĐ {ma_hd}", icon="🧾")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Lỗi tạo HĐ: {e}")
+
+    # ══════════════════════════════════════════════════════════
     # TAB 1 — DANH SÁCH PHIẾU
     # ══════════════════════════════════════════════════════════
     with tab_list:
@@ -827,6 +1254,26 @@ def module_sua_chua():
         st.session_state.setdefault("sc_drawer_form_count", 0)
         drawer_ma = st.session_state.get("sc_drawer_ma")
         form_mode = st.session_state.get("sc_form_mode")  # None | "create" | "edit"
+
+        # ── Handle URL click (custom HTML table sets ?sc_pick=SC000010) ──
+        # Trigger flow: user click <a href="?sc_pick=...">cell content</a>
+        # → browser navigate → Streamlit rerun với query_params mới → đọc
+        # ở đây → set sc_drawer_ma + clear param + rerun (để URL sạch).
+        try:
+            _picked = st.query_params.get("sc_pick")
+        except Exception:
+            _picked = None
+        if _picked:
+            try:
+                del st.query_params["sc_pick"]
+            except Exception:
+                pass
+            if _picked != drawer_ma:
+                st.session_state["sc_drawer_ma"] = _picked
+                st.session_state.pop("sc_form_mode", None)
+                st.rerun()
+            else:
+                st.rerun()
 
         # ── Render print HTML sau khi vừa tạo phiếu (tab_list có thể đang
         #    không show drawer nữa, nhưng print iframe phải mở)
@@ -925,10 +1372,26 @@ def module_sua_chua():
             _close_drawer()
             drawer_ma = None
 
+        # ══════ Invoice modal (@st.dialog) — render khi flag set ══════
+        # Flag sc_invoice_open lưu ma_phieu; dialog sẽ hiện qua mọi rerun
+        # cho đến khi user click Hủy / Submit (cả 2 đều pop flag).
+        _inv_ma = st.session_state.get("sc_invoice_open")
+        if _inv_ma:
+            _inv_rows = df[df["ma_phieu"] == _inv_ma] if not df.empty else df
+            if _inv_rows is None or _inv_rows.empty:
+                # Phiếu không còn trong filter → cleanup flag
+                st.session_state.pop("sc_invoice_open", None)
+            else:
+                _inv_t = _inv_rows.iloc[0].to_dict()
+                _inv_ct = _load_chi_tiet(_inv_ma)
+                _invoice_dialog(_inv_t, _inv_ct)
+
         # ══════ 2-col split khi drawer mở (Option A) ══════
         # Create form rộng hơn (60%) vì có nhiều fields
         if form_mode == "create":
             col_main, col_drawer = st.columns([2, 3], gap="medium")
+        elif form_mode == "edit" and drawer_ma:
+            col_main, col_drawer = st.columns([3, 2], gap="medium")
         elif drawer_ma:
             col_main, col_drawer = st.columns([3, 2], gap="medium")
         else:
@@ -946,46 +1409,83 @@ def module_sua_chua():
                     unsafe_allow_html=True,
                 )
             else:
-                st.caption(f"📋 Danh sách **{len(df)}** phiếu")
-                view = pd.DataFrame({
-                    "Mã Phiếu":   df["ma_phieu"].astype(str),
-                    "Chi Nhánh":  df["chi_nhanh"].apply(
-                        lambda c: CN_SHORT.get(c, c) if isinstance(CN_SHORT, dict) else c),
-                    "Khách hàng": df["ten_khach"].fillna(""),
-                    "SĐT":        df["sdt_khach"].fillna("").astype(str),
-                    "Loại":       df["loai_yeu_cau"].fillna(""),
-                    "Hiệu ĐH":    df["hieu_dong_ho"].fillna(""),
-                    "Trạng Thái": df["trang_thai"].fillna(""),
-                    "Hẹn Trả":    df["ngay_hen_tra"].fillna("").astype(str),
-                    "Ngày TN":    df.get("Ngày TN", pd.Series([""] * len(df))),
-                    "NV":         df["nguoi_tiep_nhan"].fillna(""),
-                }).reset_index(drop=True)
+                # ── Custom HTML table (replace st.dataframe) ──
+                # Selection qua URL query param: mỗi cell là <a href="?sc_pick=SC...">.
+                # Click → browser navigate → Streamlit rerun → handler ở đầu
+                # tab_list đọc và set sc_drawer_ma. Render pill có màu trong cell
+                # (st.dataframe không hỗ trợ HTML cells).
+                _PILL_CLASS_MAP = {
+                    "Hoàn thành":     "done",
+                    "Đang sửa":       "fixing",
+                    "Chờ linh kiện":  "waiting",
+                    "Chờ giao khách": "handover",
+                    "Đã hủy":         "cancelled",
+                }
 
-                # Key động theo counter để close có thể clear selection
-                _table_key = f"sc_table_select_{st.session_state['sc_table_key_n']}"
-                event = st.dataframe(
-                    view,
-                    use_container_width=True,
-                    hide_index=True,
-                    height=540,
-                    on_select="rerun",
-                    selection_mode="single-row",
-                    key=_table_key,
+                _rows_html = []
+                for _, _r in df.iterrows():
+                    _ma = str(_r["ma_phieu"])
+                    _href = f"?sc_pick={_url_quote(_ma, safe='')}"
+                    _pill = _PILL_CLASS_MAP.get(_r.get("trang_thai", ""), "")
+                    _selected = "selected" if _ma == drawer_ma else ""
+                    _cn = _r.get("chi_nhanh", "")
+                    _cn_short = (CN_SHORT.get(_cn, _cn)
+                                 if isinstance(CN_SHORT, dict) else _cn)
+                    _hen = _r.get("ngay_hen_tra") or ""
+
+                    def _link(text, link_cls=""):
+                        return (f'<a href="{_href}" target="_self" '
+                                f'class="sc-cell-link {link_cls}">'
+                                f'{_html_esc.escape(str(text or ""))}</a>')
+
+                    def _cell(text, td_cls="", link_cls=""):
+                        return f'<td class="{td_cls}">{_link(text, link_cls)}</td>'
+
+                    _tt = str(_r.get("trang_thai", ""))
+                    _pill_cell = (
+                        f'<td><a href="{_href}" target="_self" '
+                        f'class="sc-cell-link"><span class="sc-pill {_pill}">'
+                        f'{_html_esc.escape(_tt)}</span></a></td>'
+                    )
+
+                    _rows_html.append(
+                        f'<tr class="{_selected}">'
+                        + _cell(_ma, "mp")
+                        + _cell(_cn_short, "dim")
+                        + _cell(_r.get("ten_khach", "") or "", "kh")
+                        + _cell(_r.get("sdt_khach", "") or "", "tnum")
+                        + _cell(_r.get("loai_yeu_cau", "") or "", "dim")
+                        + _cell(_r.get("hieu_dong_ho", "") or "", "")
+                        + _pill_cell
+                        + _cell(_hen or "—",
+                                "tnum" if _hen else "fade")
+                        + _cell(_r.get("Ngày TN", "") or "", "tnum dim")
+                        + _cell(_r.get("nguoi_tiep_nhan", "") or "", "dim")
+                        + f'<td class="row-chev"><a href="{_href}" '
+                          f'target="_self" class="sc-cell-link">›</a></td>'
+                        + '</tr>'
+                    )
+
+                _table_html = (
+                    '<div class="sc-tablewrap">'
+                    '<div class="sc-tabletop">'
+                    f'<div class="sc-ttitle">📋 Danh sách '
+                    f'<span class="sc-tcount">({len(df)} phiếu)</span></div>'
+                    '<div style="font-size:11.5px;color:var(--sc-ink-3);">'
+                    'Click hàng để xem chi tiết</div>'
+                    '</div>'
+                    '<table class="sc-table"><thead><tr>'
+                    '<th>Mã Phiếu</th><th>Chi Nhánh</th><th>Khách hàng</th>'
+                    '<th>SĐT</th><th>Loại</th><th>Hiệu ĐH</th>'
+                    '<th>Trạng Thái</th><th>Hẹn Trả</th>'
+                    '<th>Ngày TN</th><th>NV Tiếp Nhận</th><th></th>'
+                    '</tr></thead><tbody>'
+                    + ''.join(_rows_html)
+                    + '</tbody></table></div>'
                 )
+                st.markdown(_table_html, unsafe_allow_html=True)
 
-                try:
-                    sel_rows = event.selection.rows or []
-                except Exception:
-                    sel_rows = []
-                if sel_rows:
-                    clicked_ma = view.iloc[sel_rows[0]]["Mã Phiếu"]
-                    if clicked_ma != drawer_ma:
-                        # Switch to detail mode, đóng create form nếu đang mở
-                        st.session_state["sc_drawer_ma"] = clicked_ma
-                        st.session_state.pop("sc_form_mode", None)
-                        st.rerun()
-
-        # ══════ Drawer column: create | detail ══════
+        # ══════ Drawer column: create | edit | detail ══════
         if col_drawer and form_mode == "create":
             with col_drawer:
                 _render_create_drawer(
@@ -997,6 +1497,21 @@ def module_sua_chua():
                     fmt_money=_fmt_money,
                     close_drawer=_close_drawer,
                 )
+        elif col_drawer and form_mode == "edit" and drawer_ma:
+            with col_drawer:
+                _t_rows = df[df["ma_phieu"] == drawer_ma]
+                if _t_rows.empty:
+                    st.warning(f"Phiếu {drawer_ma} không còn trong filter.")
+                    if st.button("✕ Đóng", key="sc_drawer_edit_close_err"):
+                        _close_drawer()
+                        st.rerun()
+                else:
+                    _render_edit_drawer(
+                        t=_t_rows.iloc[0].to_dict(),
+                        ho_ten=ho_ten,
+                        fmt_money=_fmt_money,
+                        close_drawer=_close_drawer,
+                    )
         elif col_drawer:
             with col_drawer:
                 t_rows = df[df["ma_phieu"] == drawer_ma]
@@ -1039,11 +1554,17 @@ def module_sua_chua():
                         with bcol_edit:
                             edit_disabled = (tt_phieu == "Hoàn thành")
                             if st.button("✎", key="sc_drawer_edit",
-                                         help="Cập nhật phiếu (PR3)",
+                                         help=("Phiếu Hoàn thành không thể sửa"
+                                               if edit_disabled
+                                               else "Cập nhật phiếu"),
                                          disabled=edit_disabled,
                                          use_container_width=True):
-                                st.toast("PR3 sẽ thêm — tạm dùng tab 'Chi tiết / Cập nhật'",
-                                         icon="ℹ️")
+                                # Switch sang edit mode — drawer column
+                                # render _render_edit_drawer ở rerun tới
+                                st.session_state["sc_form_mode"] = "edit"
+                                st.session_state["sc_drawer_form_count"] = \
+                                    st.session_state.get("sc_drawer_form_count", 0) + 1
+                                st.rerun()
                         with bcol_close:
                             if st.button("✕", key="sc_drawer_close",
                                          help="Đóng",
@@ -1261,9 +1782,9 @@ def module_sua_chua():
                                      key=f"sc_make_apsc_{drawer_ma}",
                                      type="primary",
                                      use_container_width=True):
-                            st.toast("PR3 sẽ thêm modal tạo HĐ — "
-                                     "tạm dùng tab 'Tạo hóa đơn sửa'",
-                                     icon="ℹ️")
+                            # Mở @st.dialog modal — flag persist qua reruns
+                            st.session_state["sc_invoice_open"] = drawer_ma
+                            st.rerun()
                         st.caption("Phiếu đã sẵn sàng giao khách — tạo HĐ APSC để chốt thanh toán.")
 
                     # ── Footer: In phiếu A5 + Hủy/Xóa ──

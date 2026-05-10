@@ -420,6 +420,28 @@ def module_sua_chua():
         except Exception:
             return f"APSC{(now_vn()).strftime('%y%m%d%H%M')}"
 
+    def _preview_next_ma_apsc() -> str:
+        """Mã APSC dự kiến (max+1 từ hoa_don) — KHÔNG advance get_next_apsc_num
+        để tránh drift sequence khi user chỉ open dialog rồi đóng. Mã thực
+        sẽ lấy từ _gen_ma_apsc() khi submit."""
+        try:
+            res = (
+                supabase.table("hoa_don")
+                .select('"Mã hóa đơn"')
+                .like('"Mã hóa đơn"', "APSC______")
+                .order('"Mã hóa đơn"', desc=True)
+                .limit(1)
+                .execute()
+            )
+            if res.data:
+                last = res.data[0]["Mã hóa đơn"]
+                num = int(str(last)[4:]) + 1
+            else:
+                num = 1
+            return f"APSC{num:06d}"
+        except Exception:
+            return "APSC??????"
+
     def _tao_hoa_don_apsc(phieu: dict, ct: pd.DataFrame,
                            giam_gia: int, pttt: dict) -> str:
         ma_hd = _gen_ma_apsc()
@@ -1022,6 +1044,187 @@ def module_sua_chua():
                     st.error(f"Lỗi cập nhật: {e}")
 
     # ══════════════════════════════════════════════════════════
+    # PR3c — Invoice modal (@st.dialog) — tạo HĐ APSC từ phiếu
+    # Chờ giao khách. Trigger từ CTA button trong detail drawer.
+    # Persistence: dùng sc_invoice_open flag để dialog re-render qua reruns.
+    # ══════════════════════════════════════════════════════════
+    @st.dialog("🧾 Tạo hóa đơn APSC", width="large")
+    def _invoice_dialog(phieu_dict, ct_df):
+        ma_phieu = phieu_dict.get("ma_phieu", "")
+        ma_apsc_preview = _preview_next_ma_apsc()
+
+        st.markdown(
+            f'<div style="font-size:12.5px;color:var(--sc-ink-3);margin-bottom:8px;">'
+            f'Mã dự kiến: <b class="sc-mono" style="color:var(--sc-emerald-ink);">'
+            f'{_html_esc.escape(ma_apsc_preview)}</b> · Cho phiếu '
+            f'<b class="sc-mono">{_html_esc.escape(ma_phieu)}</b></div>',
+            unsafe_allow_html=True,
+        )
+
+        # ── Section 1: Items table (read-only) ──
+        st.markdown(
+            '<div class="sc-form-section-title">📦 CHI TIẾT DỊCH VỤ / LINH KIỆN</div>',
+            unsafe_allow_html=True,
+        )
+        if ct_df.empty:
+            st.warning("Phiếu chưa có dịch vụ / linh kiện. Đóng modal, "
+                       "thêm items qua nút ✎ Edit, rồi tạo HĐ.")
+            tong_hang = 0
+        else:
+            _items_html = '<table class="sc-items"><thead><tr>' \
+                          '<th>Loại</th><th>Tên</th><th>Mã</th>' \
+                          '<th class="right">SL</th>' \
+                          '<th class="right">Đơn giá</th>' \
+                          '<th class="right">Thành tiền</th></tr></thead><tbody>'
+            tong_hang = 0
+            for _, _r in ct_df.iterrows():
+                _sl = int(_r.get("so_luong") or 0)
+                _dg = int(_r.get("don_gia") or 0)
+                _tt = _sl * _dg
+                tong_hang += _tt
+                _kind = (_r.get("loai_dong") or "").strip()
+                _kind_cls = "dv" if _kind == "Dịch vụ" else ""
+                _items_html += (
+                    '<tr>'
+                    f'<td><span class="sc-kind-tag {_kind_cls}">'
+                    f'{_html_esc.escape(_kind or "—")}</span></td>'
+                    f'<td>{_html_esc.escape(str(_r.get("ten_hang", "") or "—"))}</td>'
+                    f'<td class="ma">{_html_esc.escape(str(_r.get("ma_hang", "") or "—"))}</td>'
+                    f'<td class="right tnum">{_sl}</td>'
+                    f'<td class="right tnum">{_html_esc.escape(_fmt_money(_dg))}</td>'
+                    f'<td class="right tnum bold">{_html_esc.escape(_fmt_money(_tt))}</td>'
+                    '</tr>'
+                )
+            _items_html += '</tbody></table>'
+            st.markdown(_items_html, unsafe_allow_html=True)
+
+        # ── Section 2: Giảm giá + 3 money cards ──
+        st.markdown(
+            '<div class="sc-form-section-title">💰 THÔNG TIN HÓA ĐƠN</div>',
+            unsafe_allow_html=True,
+        )
+        giam_gia = st.number_input(
+            "Giảm giá (đ)", min_value=0, step=10000,
+            value=st.session_state.get("sc_inv_giam_gia", 0),
+            key="sc_inv_giam_gia",
+        )
+        tra_truoc = int(phieu_dict.get("khach_tra_truoc") or 0)
+        gg_int = int(giam_gia or 0)
+        khach_can_tra = max(0, tong_hang - gg_int - tra_truoc)
+        st.markdown(
+            '<div class="sc-money-grid">'
+            '<div class="sc-money-mini">'
+            '<div class="mlab">TỔNG DỊCH VỤ</div>'
+            f'<div class="mval">{_html_esc.escape(_fmt_money(tong_hang))}</div></div>'
+            '<div class="sc-money-mini">'
+            '<div class="mlab">GIẢM + TRẢ TRƯỚC</div>'
+            f'<div class="mval">−{_html_esc.escape(_fmt_money(gg_int + tra_truoc))}</div></div>'
+            '<div class="sc-money-mini danger">'
+            '<div class="mlab">KHÁCH CẦN TRẢ</div>'
+            f'<div class="mval">{_html_esc.escape(_fmt_money(khach_can_tra))}</div></div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
+        # ── Section 3: Phương thức thanh toán ──
+        st.markdown(
+            '<div class="sc-form-section-title">💳 PHƯƠNG THỨC THANH TOÁN</div>',
+            unsafe_allow_html=True,
+        )
+        chia_nhieu = st.checkbox(
+            "Chia nhiều phương thức", key="sc_inv_chia_nhieu",
+        )
+        if chia_nhieu:
+            cm1, cm2, cm3 = st.columns(3)
+            with cm1:
+                tien_mat = st.number_input(
+                    "💵 Tiền mặt", min_value=0, step=10000,
+                    value=st.session_state.get("sc_inv_tm", 0),
+                    key="sc_inv_tm",
+                )
+            with cm2:
+                chuyen_khoan = st.number_input(
+                    "🏦 Chuyển khoản", min_value=0, step=10000,
+                    value=st.session_state.get("sc_inv_ck", 0),
+                    key="sc_inv_ck",
+                )
+            with cm3:
+                the = st.number_input(
+                    "💳 Thẻ", min_value=0, step=10000,
+                    value=st.session_state.get("sc_inv_the", 0),
+                    key="sc_inv_the",
+                )
+            sum_pttt = int(tien_mat) + int(chuyen_khoan) + int(the)
+            valid_pttt = (sum_pttt == khach_can_tra)
+            if not valid_pttt:
+                diff = khach_can_tra - sum_pttt
+                st.error(
+                    f"⚠️ Tổng PTTT {_fmt_money(sum_pttt)} ≠ Khách cần trả "
+                    f"{_fmt_money(khach_can_tra)} (chênh "
+                    f"{_fmt_money(abs(diff))})"
+                )
+            else:
+                st.success(f"✓ Khớp {_fmt_money(khach_can_tra)}")
+        else:
+            method = st.radio(
+                "PTTT:", ["💵 Tiền mặt", "🏦 Chuyển khoản", "💳 Thẻ"],
+                horizontal=True, key="sc_inv_method",
+                label_visibility="collapsed",
+            )
+            if method == "💵 Tiền mặt":
+                tien_mat, chuyen_khoan, the = khach_can_tra, 0, 0
+            elif method == "🏦 Chuyển khoản":
+                tien_mat, chuyen_khoan, the = 0, khach_can_tra, 0
+            else:
+                tien_mat, chuyen_khoan, the = 0, 0, khach_can_tra
+            valid_pttt = True
+
+        # ── Footer buttons ──
+        st.markdown('<hr style="margin:14px 0 10px 0;border-color:#efece4">',
+                    unsafe_allow_html=True)
+
+        def _close_invoice():
+            for _k in ("sc_invoice_open", "sc_inv_giam_gia",
+                       "sc_inv_chia_nhieu", "sc_inv_tm", "sc_inv_ck",
+                       "sc_inv_the", "sc_inv_method"):
+                st.session_state.pop(_k, None)
+
+        cf1, cf2 = st.columns([1, 2])
+        with cf1:
+            if st.button("Hủy", key="sc_inv_cancel", use_container_width=True):
+                _close_invoice()
+                st.rerun()
+        with cf2:
+            can_create = (not ct_df.empty) and valid_pttt
+            if st.button(
+                "✅ Tạo hóa đơn APSC", key="sc_inv_submit",
+                type="primary", use_container_width=True,
+                disabled=not can_create,
+            ):
+                try:
+                    pttt = {
+                        "tien_mat":     int(tien_mat),
+                        "chuyen_khoan": int(chuyen_khoan),
+                        "the":          int(the),
+                    }
+                    ma_hd = _tao_hoa_don_apsc(
+                        dict(phieu_dict), ct_df, gg_int, pttt,
+                    )
+                    # Update phieu trang_thai → Hoàn thành
+                    supabase.table("phieu_sua_chua").update({
+                        "trang_thai": "Hoàn thành",
+                        "updated_at": now_vn_iso(),
+                    }).eq("ma_phieu", ma_phieu).execute()
+                    st.cache_data.clear()
+                    log_action("SC_TAO_HD",
+                               f"ma_phieu={ma_phieu} ma_hd={ma_hd}")
+                    _close_invoice()
+                    st.toast(f"✓ Đã tạo HĐ {ma_hd}", icon="🧾")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Lỗi tạo HĐ: {e}")
+
+    # ══════════════════════════════════════════════════════════
     # TAB 1 — DANH SÁCH PHIẾU
     # ══════════════════════════════════════════════════════════
     with tab_list:
@@ -1168,6 +1371,20 @@ def module_sua_chua():
                 (df.empty or df[df["ma_phieu"] == drawer_ma].empty):
             _close_drawer()
             drawer_ma = None
+
+        # ══════ Invoice modal (@st.dialog) — render khi flag set ══════
+        # Flag sc_invoice_open lưu ma_phieu; dialog sẽ hiện qua mọi rerun
+        # cho đến khi user click Hủy / Submit (cả 2 đều pop flag).
+        _inv_ma = st.session_state.get("sc_invoice_open")
+        if _inv_ma:
+            _inv_rows = df[df["ma_phieu"] == _inv_ma] if not df.empty else df
+            if _inv_rows is None or _inv_rows.empty:
+                # Phiếu không còn trong filter → cleanup flag
+                st.session_state.pop("sc_invoice_open", None)
+            else:
+                _inv_t = _inv_rows.iloc[0].to_dict()
+                _inv_ct = _load_chi_tiet(_inv_ma)
+                _invoice_dialog(_inv_t, _inv_ct)
 
         # ══════ 2-col split khi drawer mở (Option A) ══════
         # Create form rộng hơn (60%) vì có nhiều fields
@@ -1565,9 +1782,9 @@ def module_sua_chua():
                                      key=f"sc_make_apsc_{drawer_ma}",
                                      type="primary",
                                      use_container_width=True):
-                            st.toast("PR3 sẽ thêm modal tạo HĐ — "
-                                     "tạm dùng tab 'Tạo hóa đơn sửa'",
-                                     icon="ℹ️")
+                            # Mở @st.dialog modal — flag persist qua reruns
+                            st.session_state["sc_invoice_open"] = drawer_ma
+                            st.rerun()
                         st.caption("Phiếu đã sẵn sàng giao khách — tạo HĐ APSC để chốt thanh toán.")
 
                     # ── Footer: In phiếu A5 + Hủy/Xóa ──

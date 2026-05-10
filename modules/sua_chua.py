@@ -277,6 +277,18 @@ def module_sua_chua():
                 rows.append(row)
         supabase.table("hoa_don").insert(rows).execute()
 
+        # === ENQUEUE PRINT (PATCH) ===
+        try:
+            from utils.print_queue_apsc import enqueue_apsc
+            pr = enqueue_apsc(ma_hd, ho_ten or "")
+            if pr.get("ok"):
+                st.toast("🖨 Đã gửi lệnh in HĐ APSC", icon="🖨")
+            else:
+                st.toast(f"⚠️ {pr.get('error', 'Lỗi in')}", icon="⚠️")
+        except Exception as e:
+            st.toast(f"⚠️ Lỗi in: {e}", icon="⚠️")
+        # === END PATCH ===
+
         # Trừ kho atomic cho linh kiện thật (skip dịch vụ + items không có trong hang_hoa).
         # RPC tru_kho_apsc tự skip items không phải Hàng hóa hoặc open-price.
         try:

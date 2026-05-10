@@ -1393,16 +1393,24 @@ def module_sua_chua():
         )
         with fc_clear:
             if has_filter:
-                if st.button("✕ Xóa lọc", key="sc_clear_filter",
-                             use_container_width=True):
-                    # Set explicit default values thay vì pop —
-                    # st.selectbox widget state không reset bằng pop alone.
+                # Streamlit raise StreamlitAPIException nếu set
+                # session_state[key] inline sau khi widget với key đó đã
+                # render. Phải dùng on_click callback — chỉ trong callback
+                # mới được phép modify widget state.
+                def _do_clear_filter():
                     st.session_state["sc_search"] = ""
                     st.session_state["sc_tt_filter"] = "Trạng thái: Tất cả"
-                    if show_branch_filter:
+                    if "sc_cn_filter" in st.session_state:
                         st.session_state["sc_cn_filter"] = "Chi nhánh: Tất cả"
-                    _close_drawer()
-                    st.rerun()
+                    # Close drawer + reset table selection
+                    st.session_state.pop("sc_drawer_ma", None)
+                    st.session_state.pop("sc_form_mode", None)
+                    st.session_state["sc_table_key_n"] = \
+                        st.session_state.get("sc_table_key_n", 0) + 1
+
+                st.button("✕ Xóa lọc", key="sc_clear_filter",
+                          on_click=_do_clear_filter,
+                          use_container_width=True)
 
         with fc_new:
             if st.button("＋ Tạo phiếu mới", key="sc_btn_create_new",

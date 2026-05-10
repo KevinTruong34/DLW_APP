@@ -566,7 +566,20 @@ def module_sua_chua():
             except Exception:
                 return "0đ"
 
+        def _close_drawer():
+            """Đóng drawer + reset st.dataframe selection state.
+
+            Tăng table_key_n để force fresh widget instance — cách duy
+            nhất clear selection của st.dataframe(on_select="rerun").
+            Nếu chỉ pop sc_drawer_ma → rerun → widget cũ vẫn giữ
+            selection → block xử lý sel_rows tự re-set drawer_ma.
+            """
+            st.session_state.pop("sc_drawer_ma", None)
+            st.session_state["sc_table_key_n"] = \
+                st.session_state.get("sc_table_key_n", 0) + 1
+
         # ── State ──
+        st.session_state.setdefault("sc_table_key_n", 0)
         drawer_ma = st.session_state.get("sc_drawer_ma")
 
         # ══════ Filter bar — single row ══════
@@ -613,7 +626,7 @@ def module_sua_chua():
                              use_container_width=True):
                     for k in ("sc_search", "sc_tt_filter", "sc_cn_filter"):
                         st.session_state.pop(k, None)
-                    st.session_state.pop("sc_drawer_ma", None)
+                    _close_drawer()
                     st.rerun()
 
         with fc_new:
@@ -642,7 +655,7 @@ def module_sua_chua():
 
         # Drawer state cleanup: nếu drawer_ma không còn trong filtered df → reset
         if drawer_ma and (df.empty or df[df["ma_phieu"] == drawer_ma].empty):
-            st.session_state.pop("sc_drawer_ma", None)
+            _close_drawer()
             drawer_ma = None
 
         # ══════ 2-col split khi drawer mở (Option A) ══════
@@ -678,6 +691,8 @@ def module_sua_chua():
                     "NV":         df["nguoi_tiep_nhan"].fillna(""),
                 }).reset_index(drop=True)
 
+                # Key động theo counter để close có thể clear selection
+                _table_key = f"sc_table_select_{st.session_state['sc_table_key_n']}"
                 event = st.dataframe(
                     view,
                     use_container_width=True,
@@ -685,7 +700,7 @@ def module_sua_chua():
                     height=540,
                     on_select="rerun",
                     selection_mode="single-row",
-                    key="sc_table_select",
+                    key=_table_key,
                 )
 
                 try:
@@ -707,7 +722,7 @@ def module_sua_chua():
                 if t is None:
                     st.warning(f"Không tìm thấy phiếu {drawer_ma}")
                     if st.button("✕ Đóng", key="sc_drawer_close_err"):
-                        st.session_state.pop("sc_drawer_ma", None)
+                        _close_drawer()
                         st.rerun()
                 else:
                     # Map status → pill class
@@ -750,7 +765,7 @@ def module_sua_chua():
                             if st.button("✕", key="sc_drawer_close",
                                          help="Đóng",
                                          use_container_width=True):
-                                st.session_state.pop("sc_drawer_ma", None)
+                                _close_drawer()
                                 st.rerun()
 
                     # ── Card 1: Thông tin tiếp nhận ──

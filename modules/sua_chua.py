@@ -499,7 +499,7 @@ def module_sua_chua():
             cls += " sc-badge-red"
         return f'<span class="{cls}">{tt}</span>'
 
-    def _widget_them_dv(key_prefix: str, items_key: str):
+    def _widget_them_dv(key_prefix: str, on_add):
         """Widget thêm hàng hóa / dịch vụ — redesign với bordered card per
         result để tách bạch rõ ràng:
         - Search box riêng 1 row.
@@ -507,6 +507,10 @@ def module_sua_chua():
           - Top: mã (mono dim) + tên (bold) | giá (emerald, right)
           - Bottom: SL input | (Giá input nếu open-price) | ➕ Thêm
         - Manual entry fallback: 1 bordered card riêng nếu search không match.
+
+        on_add: callable(item: dict) — gọi khi user click ➕ Thêm.
+                Caller quyết định behavior: append vào session_state list
+                (create flow) hoặc DB INSERT trực tiếp (edit flow).
         """
         hh = load_hang_hoa()
         ma_tim = st.text_input(
@@ -585,7 +589,7 @@ def module_sua_chua():
                             type="primary",
                             use_container_width=True,
                         ):
-                            st.session_state.setdefault(items_key, []).append({
+                            on_add({
                                 "loai_dong": "Dịch vụ",
                                 "ten_hang":  ten,
                                 "ma_hang":   ma,
@@ -624,7 +628,7 @@ def module_sua_chua():
                         type="primary",
                         use_container_width=True,
                     ):
-                        st.session_state.setdefault(items_key, []).append({
+                        on_add({
                             "loai_dong": "Dịch vụ",
                             "ten_hang": ten_tay.strip(),
                             "ma_hang": None,
@@ -792,7 +796,12 @@ def module_sua_chua():
                 'text-transform:uppercase;">🔍 tìm + thêm dịch vụ / linh kiện</div>',
                 unsafe_allow_html=True,
             )
-            _widget_them_dv(f"sc_drawer_new_{fcnt}", items_key)
+
+            # Create flow: append vào session_state list (chưa có ma_phieu)
+            def _add_create(_item):
+                st.session_state.setdefault(items_key, []).append(_item)
+
+            _widget_them_dv(f"sc_drawer_new_{fcnt}", on_add=_add_create)
 
             items = st.session_state.get(items_key, [])
             if items:
@@ -1043,7 +1052,11 @@ def module_sua_chua():
             else:
                 st.caption("_(Phiếu chưa có dịch vụ / linh kiện nào)_")
 
-        # ── Bordered container cho search + add (cùng cụm "GIỎ HÀNG") ──
+        # ── Bordered container cho search + add ──
+        # Edit flow: ➕ Thêm → DB INSERT trực tiếp + cache clear + rerun
+        # → item ngay lập tức xuất hiện ở box "ĐÃ CÓ TRONG PHIẾU" ở trên.
+        # Không còn "đã thêm chưa lưu" section vì không còn khái niệm
+        # pending state — items lưu ngay khi click.
         with st.container(border=True):
             st.markdown(
                 '<div style="font-size:11.5px;color:var(--sc-ink-3);'
@@ -1051,22 +1064,23 @@ def module_sua_chua():
                 'text-transform:uppercase;">🔍 thêm dịch vụ / linh kiện</div>',
                 unsafe_allow_html=True,
             )
-            new_items_key = f"sc_drawer_edit_items_{fcnt}"
-            st.session_state.setdefault(new_items_key, [])
-            _widget_them_dv(f"sc_drawer_edit_new_{fcnt}", new_items_key)
-            new_items = st.session_state.get(new_items_key, [])
-            if new_items:
-                st.markdown(
-                    '<div style="font-size:11.5px;color:var(--sc-ink-3);'
-                    'font-weight:500;letter-spacing:0.02em;margin-top:10px;'
-                    'margin-bottom:4px;text-transform:uppercase;">'
-                    'Đã thêm (chưa lưu)</div>',
-                    unsafe_allow_html=True,
-                )
-                _hien_thi_items(new_items_key)
-                tong_moi = sum(int(x.get("so_luong", 0)) * int(x.get("don_gia", 0))
-                               for x in new_items)
-                st.caption(f"Tổng dịch vụ mới thêm: **{fmt_money(tong_moi)}**")
+
+            def _add_edit(_item):
+                try:
+                    supabase.table("phieu_sua_chua_chi_tiet").insert({
+                        "ma_phieu": ma_pick, **_item,
+                    }).execute()
+                    st.cache_data.clear()
+                    log_action(
+                        "SC_ADD_ITEM",
+                        f"ma={ma_pick} item={_item.get('ten_hang','')} "
+                        f"sl={_item.get('so_luong')} dg={_item.get('don_gia')}",
+                    )
+                    st.toast("✓ Đã thêm vào giỏ hàng", icon="🛒")
+                except Exception as e:
+                    st.error(f"Lỗi thêm: {e}")
+
+            _widget_them_dv(f"sc_drawer_edit_new_{fcnt}", on_add=_add_edit)
 
         # ── Footer: Hủy + Lưu cập nhật ──
         st.markdown('<hr style="margin:14px 0 10px 0;border-color:#efece4">',
@@ -1093,11 +1107,9 @@ def module_sua_chua():
                         "updated_at":     now_vn_iso(),
                     }).eq("ma_phieu", ma_pick).execute()
 
-                    if new_items:
-                        supabase.table("phieu_sua_chua_chi_tiet").insert(
-                            [{"ma_phieu": ma_pick, **item} for item in new_items]
-                        ).execute()
-                        st.session_state[new_items_key] = []
+                    # Items không insert ở đây nữa — đã được DB INSERT
+                    # trực tiếp qua on_add callback ở giỏ hàng widget.
+                    # Lưu cập nhật chỉ touch 3 fields: trang_thai, hen, ghi_chu.
 
                     st.cache_data.clear()
                     log_action("SC_UPDATE",

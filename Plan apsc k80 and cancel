@@ -1,0 +1,874 @@
+# PLAN_APSC_K80_AND_CANCEL.md — Wire K80 cho HĐ APSC + RPC hủy + UI 2 nút
+
+> **Mục đích:** Plan đầy đủ để execute trong session Claude Code mới. Front-load mọi decisions.
+>
+> **Generated:** 2026-05-09
+> **Owner:** Kevin (DL Watch)
+> **Repo chính:** `KevinTruong34/DLW_APP` (web app — toàn bộ feature ở đây)
+> **Repo không đụng:** `KevinTruong34/dl-watch-pos` (POS app)
+> **DB:** Supabase (Postgres)
+
+---
+
+## 0. CONTEXT
+
+### 0.1 Mục đích
+
+3 gaps cần giải quyết:
+
+| # | Gap | Solution |
+|---|---|---|
+| 1 | HĐ APSC tạo trên DLW không in K80 | Wire `enqueue_apsc()` vào `_tao_hoa_don_apsc()` |
+| 2 | Không có RPC hủy HĐ APSC | Build `huy_hoa_don_apsc(p_ma_hd, p_cancelled_by)` |
+| 3 | Không có nút "In lại" + "Hủy" cho HĐ APSC | UI dialog với 2 nút trên **DLW** |
+
+→ Tất cả đặt trên **DLW_APP** (không đụng POS để tránh duplicate code).
+
+### 0.2 Decisions đã chốt
+
+| Decision | Value |
+|---|---|
+| Repo | DLW_APP only |
+| Table | `hoa_don` (mixed: APSC mới + KiotViet legacy + HDSC legacy) |
+| Distinguish APSC | `WHERE LEFT("Mã hóa đơn", 4) = 'APSC'` |
+| Cột "Trạng thái" | Track status, set 'Đã hủy' khi hủy |
+| Print queue source_app | `'dlw_app'` (distinguish với POS `'pos_app'`) |
+| In lại HĐ APSC | Đặt trên DLW (không POS) — tránh duplicate builder + loader |
+| Hủy HĐ APSC | Đặt trên DLW, admin-only |
+| Phạm vi | Chỉ APSC mới (KHÔNG đụng HDSC legacy KiotViet) |
+
+### 0.3 Phụ thuộc
+
+- ✅ Daemon production OK (raster bitmap mode, in tiếng Việt OK)
+- ✅ `print_queue` schema đầy đủ (đã verify)
+- ✅ Pattern `_insert_print_job` đã có ở POS (`pos_app/utils/print_queue.py`) — copy sang DLW
+- ✅ RPC `tru_kho_apsc` đã có (đảo lại khi hủy)
+- ✅ Function Python `_tao_hoa_don_apsc()` đã có trong `web_app/modules/sua_chua.py`
+
+### 0.4 Schema `hoa_don` quirks
+
+- Cột tên tiếng Việt có dấu + space → quote `"Mã hóa đơn"` mọi nơi
+- `"Thời gian"`, `"Thời gian tạo"` đều text (KiotViet format) — hiển thị thẳng, không parse
+- Mỗi item 1 row riêng, header info lặp → loader phải group
+- `"Trạng thái"` text — set 'Đã hủy' khi hủy
+
+---
+
+## 1. PRE-FLIGHT
+
+### 1.1 Backup
+
+```sql
+CREATE TABLE _backup_apsc_k80_<DATE>_hoa_don AS SELECT * FROM hoa_don WHERE LEFT("Mã hóa đơn", 4) = 'APSC';
+CREATE TABLE _backup_apsc_k80_<DATE>_action_logs AS SELECT * FROM action_logs;
+```
+
+(Backup chỉ APSC rows, không backup full `hoa_don` ~12k rows.)
+
+### 1.2 Investigate UI placement (CRITICAL)
+
+Claude Code grep + đọc code TRƯỚC khi build UI:
+
+```bash
+# 1. Tìm function tạo APSC trong DLW
+grep -rn "_tao_hoa_don_apsc\|hoa_don_apsc" web_app/modules/sua_chua.py | head -20
+
+# 2. Sau khi tạo APSC, có UI nào hiển thị HĐ vừa tạo không?
+grep -A 30 "_tao_hoa_don_apsc" web_app/modules/sua_chua.py | head -60
+
+# 3. Phiếu sửa chữa Hoàn thành — có dialog/expander chi tiết không?
+grep -rn "trang_thai.*Hoàn thành\|Hoàn thành.*trang_thai\|@st.dialog\|_dialog" web_app/modules/sua_chua.py
+
+# 4. Mã YCSC → có chỗ nào link phiếu sửa chữa với HĐ APSC không?
+grep -rn "Mã YCSC\|ma_ycsc\|hoa_don_apsc.*ma_phieu" web_app/modules/ --include="*.py"
+
+# 5. APSC history — có module nào hiển thị danh sách HĐ APSC chưa?
+grep -rn "load_apsc\|APSC.*history\|lich_su" web_app/modules/ --include="*.py"
+```
+
+**Output mong muốn:**
+- Phiếu sửa chữa Hoàn thành có UI chi tiết (dialog/expander) không?
+- Hiện tại có hiển thị HĐ APSC link với phiếu không?
+- Có module/tab nào hiển thị danh sách HĐ APSC không?
+
+### 1.3 Decide UI placement
+
+Dựa vào kết quả investigate:
+
+**Option A (RECOMMEND):** Trong dialog/expander chi tiết phiếu sửa chữa Hoàn thành
+- Hiện thông tin HĐ APSC linked (qua Mã YCSC)
+- 2 nút "🖨 In lại" + "❌ Hủy" (admin-only)
+- Pros: Workflow tự nhiên, UI hiện có
+- Cons: Phụ thuộc UI sẵn có support được không
+
+**Option B:** Tab mới "📋 Lịch sử HĐ APSC" trong `sua_chua.py`
+- Search/filter HĐ APSC (theo ngày, mã, tên khách)
+- Click row → dialog với 2 nút
+- Pros: Không phụ thuộc UI sẵn có, scale với nhiều HĐ
+- Cons: Tạo tab mới, cần build thêm UI search/filter
+
+→ Pre-flight investigate xong → Claude Code report → **decide A hoặc B trước khi Phase 5**.
+
+---
+
+## 2. PHASE 1 — VERIFY APSC PYTHON LOADER
+
+### 2.1 Đọc code `_tao_hoa_don_apsc()` hiện tại
+
+```bash
+grep -B 2 -A 80 "def _tao_hoa_don_apsc" web_app/modules/sua_chua.py
+```
+
+→ Mình cần biết:
+- Variables sẵn có (`ma_hd`, `phieu` dict, `ho_ten`, etc.)
+- Vị trí dòng INSERT thành công để patch
+- Cách build `rows` dict có cột tiếng Việt
+
+### 2.2 Verify `load_apsc_history` reference (POS)
+
+```bash
+grep -B 2 -A 50 "def load_apsc_history\|load_apsc" pos_app/utils/db.py
+```
+
+→ Pattern để build `_load_apsc_by_ma()` cho DLW.
+
+---
+
+## 3. PHASE 2 — RPC `huy_hoa_don_apsc`
+
+### 3.1 Logic
+
+1. Validate input (ma_hd start với 'APSC', cancelled_by không rỗng)
+2. Lookup HĐ — nếu không tồn tại / đã hủy → return error
+3. **Đảo kho atomic:** với mỗi item có `Mã hàng` không phải open-price → `UPDATE the_kho SET "Tồn cuối kì" += so_luong WHERE "Mã hàng" = ... AND "Chi nhánh" = ...`
+4. Set `"Trạng thái" = 'Đã hủy'` cho TẤT CẢ rows của HĐ
+5. Audit log `ADMIN_APSC_CANCEL` vào `action_logs`
+
+```sql
+CREATE OR REPLACE FUNCTION huy_hoa_don_apsc(
+    p_ma_hd text,
+    p_cancelled_by text
+)
+RETURNS jsonb
+LANGUAGE plpgsql
+AS $$
+DECLARE
+    v_chi_nhanh text;
+    v_trang_thai text;
+    v_item RECORD;
+    v_count_items int := 0;
+    v_count_kho int := 0;
+BEGIN
+    -- 1. Validate
+    IF p_ma_hd IS NULL OR p_ma_hd = '' OR LEFT(p_ma_hd, 4) != 'APSC' THEN
+        RETURN jsonb_build_object('ok', false, 'error', 'Mã HĐ APSC không hợp lệ');
+    END IF;
+    
+    IF p_cancelled_by IS NULL OR p_cancelled_by = '' THEN
+        RETURN jsonb_build_object('ok', false, 'error', 'Thiếu cancelled_by');
+    END IF;
+    
+    -- 2. Lookup (lấy chi_nhanh + trạng thái từ row đầu)
+    SELECT "Chi nhánh", "Trạng thái" INTO v_chi_nhanh, v_trang_thai
+    FROM hoa_don
+    WHERE "Mã hóa đơn" = p_ma_hd
+    LIMIT 1
+    FOR UPDATE;
+    
+    IF v_chi_nhanh IS NULL THEN
+        RETURN jsonb_build_object('ok', false, 'error', 'HĐ không tồn tại');
+    END IF;
+    
+    IF v_trang_thai = 'Đã hủy' THEN
+        RETURN jsonb_build_object('ok', false, 'error', 'HĐ đã bị hủy trước đó');
+    END IF;
+    
+    -- 3. Đảo kho atomic — bypass open-price
+    FOR v_item IN 
+        SELECT "Mã hàng", "Số lượng"
+        FROM hoa_don
+        WHERE "Mã hóa đơn" = p_ma_hd 
+          AND "Mã hàng" IS NOT NULL 
+          AND "Mã hàng" != ''
+    LOOP
+        v_count_items := v_count_items + 1;
+        
+        IF NOT is_open_price_sql(v_item."Mã hàng") THEN
+            UPDATE the_kho 
+            SET "Tồn cuối kì" = COALESCE("Tồn cuối kì", 0) + v_item."Số lượng"
+            WHERE "Mã hàng" = v_item."Mã hàng" 
+              AND "Chi nhánh" = v_chi_nhanh;
+            
+            IF FOUND THEN
+                v_count_kho := v_count_kho + 1;
+            ELSE
+                -- Insert dòng mới the_kho nếu chưa có
+                INSERT INTO the_kho ("Mã hàng", "Chi nhánh", "Tồn cuối kì")
+                VALUES (v_item."Mã hàng", v_chi_nhanh, v_item."Số lượng");
+                v_count_kho := v_count_kho + 1;
+            END IF;
+        END IF;
+    END LOOP;
+    
+    -- 4. Set trạng thái = 'Đã hủy' cho TẤT CẢ rows
+    UPDATE hoa_don
+    SET "Trạng thái" = 'Đã hủy',
+        "Ngày cập nhật" = to_char(now() AT TIME ZONE 'Asia/Ho_Chi_Minh', 'YYYY-MM-DD HH24:MI:SS')
+    WHERE "Mã hóa đơn" = p_ma_hd;
+    
+    -- 5. Audit log
+    INSERT INTO action_logs (username, ho_ten, chi_nhanh, action, detail, level)
+    VALUES (
+        p_cancelled_by,
+        p_cancelled_by,
+        v_chi_nhanh,
+        'ADMIN_APSC_CANCEL',
+        format('ma=%s items=%s kho_restored=%s', 
+               p_ma_hd, v_count_items, v_count_kho),
+        'warn'
+    );
+    
+    RETURN jsonb_build_object(
+        'ok', true,
+        'ma_hd', p_ma_hd,
+        'items_count', v_count_items,
+        'kho_restored', v_count_kho
+    );
+END;
+$$;
+```
+
+### 3.2 Smoke tests
+
+```sql
+-- T1: ma_hd invalid prefix
+SELECT huy_hoa_don_apsc('AHD000001', 'test');
+-- Expected: ok=false "Mã HĐ APSC không hợp lệ"
+
+-- T2: ma_hd không tồn tại
+SELECT huy_hoa_don_apsc('APSC999999', 'test');
+-- Expected: ok=false "HĐ không tồn tại"
+
+-- T3: HĐ đã hủy (cần test data riêng — defer Phase 6)
+
+-- T4: cancelled_by rỗng
+SELECT huy_hoa_don_apsc('APSC000001', '');
+-- Expected: ok=false "Thiếu cancelled_by"
+
+-- T5: Happy path (CHỈ test trên test HĐ — defer Phase 6)
+```
+
+---
+
+## 4. PHASE 3 — PRINT QUEUE HELPER
+
+### 4.1 File mới: `web_app/utils/print_queue_apsc.py`
+
+Copy + adapt từ `pos_app/utils/print_queue.py`. Khác biệt:
+- Loader query `hoa_don` table với cột tiếng Việt
+- Builder dùng template APSC (có Mã YCSC)
+- `source_app='dlw_app'` khi insert
+
+```python
+"""Print queue APSC — insert lệnh in HĐ APSC từ DLW vào print_queue.
+
+Daemon trên laptop CN 100 LQĐ poll print_queue qua RPC get_next_print_job → in.
+"""
+
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+from utils.db import supabase
+from utils.helpers import fmt_vnd  # hoặc adapt nếu DLW có helper riêng
+
+_TZ_VN = ZoneInfo("Asia/Ho_Chi_Minh")
+
+# ────────── CONSTANTS (copy từ POS) ──────────
+LINE_WIDTH = 42
+SEP_THIN  = "-" * LINE_WIDTH
+SEP_THICK = "=" * LINE_WIDTH
+
+PRINT_ENABLED_BRANCHES = {"100 Lê Quý Đôn"}
+
+_CN_ADDR_SHORT = {
+    "100 Lê Quý Đôn": "100 Lê Quý Đôn, Bà Rịa",
+    "Coop Vũng Tàu":  "Coop Vũng Tàu - 36 Nguyễn Thái Học",
+    "GO BÀ RỊA":      "Siêu thị GO, Bà Rịa",
+}
+
+
+# ────────── LAYOUT HELPERS (copy từ POS) ──────────
+def _center(s: str, width: int = LINE_WIDTH) -> str:
+    s = s.strip()
+    if len(s) >= width:
+        return s[:width]
+    pad = (width - len(s)) // 2
+    return " " * pad + s
+
+
+def _two_cols(left: str, right: str, width: int = LINE_WIDTH) -> str:
+    left = str(left)
+    right = str(right)
+    space = width - len(left) - len(right)
+    if space < 1:
+        left = left[: max(0, width - len(right) - 1)]
+        space = width - len(left) - len(right)
+    return left + " " * space + right
+
+
+def _wrap(text: str, width: int = LINE_WIDTH) -> list:
+    text = (text or "").strip()
+    if not text:
+        return [""]
+    out = []
+    line = ""
+    for word in text.split():
+        if not line:
+            line = word
+        elif len(line) + 1 + len(word) <= width:
+            line += " " + word
+        else:
+            out.append(line)
+            line = word
+    if line:
+        out.append(line)
+    final = []
+    for ln in out:
+        while len(ln) > width:
+            final.append(ln[:width])
+            ln = ln[width:]
+        final.append(ln)
+    return final or [""]
+
+
+def _header(chi_nhanh: str) -> list:
+    addr = _CN_ADDR_SHORT.get(chi_nhanh, chi_nhanh)
+    return [_center("DL Watch"), _center(addr)]
+
+
+# ────────── LOADER ──────────
+def _load_apsc_by_ma(ma_hd: str) -> dict | None:
+    """Load HĐ APSC từ table hoa_don. Group N rows thành 1 dict.
+    
+    Returns:
+        {
+            'ma_hd': str,
+            'chi_nhanh': str,
+            'created_at_text': str (Thời gian tạo gốc),
+            'nguoi_ban': str,
+            'ten_khach': str,
+            'sdt_khach': str,
+            'ma_ycsc': str,
+            'tong_tien_hang': int,
+            'giam_gia_don': int,
+            'khach_can_tra': int,
+            'tien_mat': int,
+            'chuyen_khoan': int,
+            'the': int,
+            'trang_thai': str,
+            'ghi_chu': str,
+            'items': [{ten_hang, ma_hang, so_luong, don_gia, thanh_tien, bao_hanh}, ...]
+        }
+    """
+    res = (
+        supabase.table("hoa_don")
+        .select(
+            '"Mã hóa đơn", "Chi nhánh", "Thời gian tạo", "Người bán", '
+            '"Tên khách hàng", "Điện thoại", "Mã YCSC", '
+            '"Tổng tiền hàng", "Giảm giá hóa đơn", "Khách cần trả", '
+            '"Tiền mặt", "Chuyển khoản", "Thẻ", "Trạng thái", "Ghi chú", '
+            '"Mã hàng", "Tên hàng", "Số lượng", "Đơn giá", "Thành tiền", "Bảo hành"'
+        )
+        .eq("Mã hóa đơn", ma_hd)
+        .execute()
+    )
+    
+    if not res.data:
+        return None
+    
+    rows = res.data
+    first = rows[0]
+    
+    # Header info from first row
+    apsc = {
+        "ma_hd": first["Mã hóa đơn"],
+        "chi_nhanh": first.get("Chi nhánh", ""),
+        "created_at_text": first.get("Thời gian tạo", ""),
+        "nguoi_ban": first.get("Người bán", "") or "—",
+        "ten_khach": first.get("Tên khách hàng", "") or "Khách lẻ",
+        "sdt_khach": first.get("Điện thoại", ""),
+        "ma_ycsc": first.get("Mã YCSC", "") or "",
+        "tong_tien_hang": int(first.get("Tổng tiền hàng") or 0),
+        "giam_gia_don": int(first.get("Giảm giá hóa đơn") or 0),
+        "khach_can_tra": int(first.get("Khách cần trả") or 0),
+        "tien_mat": int(first.get("Tiền mặt") or 0),
+        "chuyen_khoan": int(first.get("Chuyển khoản") or 0),
+        "the": int(first.get("Thẻ") or 0),
+        "trang_thai": first.get("Trạng thái", ""),
+        "ghi_chu": first.get("Ghi chú", "") or "",
+        "items": [],
+    }
+    
+    # Items from each row
+    for row in rows:
+        ten_hang = row.get("Tên hàng", "")
+        if not ten_hang:
+            continue
+        apsc["items"].append({
+            "ten_hang": ten_hang,
+            "ma_hang": row.get("Mã hàng", ""),
+            "so_luong": int(row.get("Số lượng") or 0),
+            "don_gia": int(row.get("Đơn giá") or 0),
+            "thanh_tien": int(row.get("Thành tiền") or 0),
+            "bao_hanh": row.get("Bảo hành", "") or "",
+        })
+    
+    return apsc
+
+
+# ────────── BUILDER ──────────
+def _build_text_apsc(apsc: dict) -> str:
+    """Build text 42 chars cho HĐ APSC."""
+    chi_nhanh = apsc.get("chi_nhanh", "")
+    items = apsc.get("items", [])
+    is_cancelled = apsc.get("trang_thai") == "Đã hủy"
+    
+    lines = []
+    lines.extend(_header(chi_nhanh))
+    lines.append(SEP_THICK)
+    
+    if is_cancelled:
+        lines.append(_center("*** HÓA ĐƠN ĐÃ HỦY ***"))
+        lines.append(SEP_THICK)
+    
+    lines.append("HÓA ĐƠN SỬA CHỮA")
+    lines.append(_two_cols("Mã HĐ:", apsc.get("ma_hd", "")))
+    lines.append(_two_cols("Ngày:", apsc.get("created_at_text", "")))
+    lines.append(_two_cols("NV:", apsc.get("nguoi_ban", "—")))
+    if apsc.get("ma_ycsc"):
+        lines.append(_two_cols("Phiếu SC:", apsc["ma_ycsc"]))
+    lines.append(SEP_THIN)
+    
+    lines.append(_two_cols("Khách:", apsc.get("ten_khach", "Khách lẻ")))
+    if apsc.get("sdt_khach"):
+        lines.append(_two_cols("SĐT:", apsc["sdt_khach"]))
+    
+    lines.append(SEP_THICK)
+    lines.append("Dịch vụ / Linh kiện:")
+    
+    for ct in items:
+        for w in _wrap(ct["ten_hang"]):
+            lines.append("- " + w if w == _wrap(ct["ten_hang"])[0] else "  " + w)
+        left = f"  {ct['so_luong']} x {fmt_vnd(ct['don_gia'])}"
+        lines.append(_two_cols(left, fmt_vnd(ct["thanh_tien"])))
+        if ct.get("bao_hanh"):
+            lines.append(f"  BH: {ct['bao_hanh']}")
+    
+    lines.append(SEP_THIN)
+    
+    tong_hang = apsc.get("tong_tien_hang", 0)
+    gg_don = apsc.get("giam_gia_don", 0)
+    can_tra = apsc.get("khach_can_tra", 0)
+    
+    lines.append(_two_cols("Tổng tiền hàng:", fmt_vnd(tong_hang)))
+    if gg_don > 0:
+        lines.append(_two_cols("Giảm giá:", "-" + fmt_vnd(gg_don)))
+    lines.append(_two_cols("Khách cần trả:", fmt_vnd(can_tra)))
+    
+    lines.append(SEP_THIN)
+    
+    tm = apsc.get("tien_mat", 0)
+    ck = apsc.get("chuyen_khoan", 0)
+    the = apsc.get("the", 0)
+    if tm > 0:
+        lines.append(_two_cols("Tiền mặt:", fmt_vnd(tm)))
+    if ck > 0:
+        lines.append(_two_cols("Chuyển khoản:", fmt_vnd(ck)))
+    if the > 0:
+        lines.append(_two_cols("Thẻ:", fmt_vnd(the)))
+    
+    lines.append(SEP_THICK)
+    if is_cancelled:
+        lines.append(_center("*** ĐÃ HỦY — CHỈ THAM KHẢO ***"))
+    else:
+        lines.append(_center("Cảm ơn quý khách!"))
+    
+    return "\n".join(lines)
+
+
+# ────────── INSERT JOB ──────────
+def _insert_print_job(doc_type: str, doc_id: str, chi_nhanh: str,
+                      text: str, data: dict, created_by: str = "") -> dict:
+    if not text or not text.strip():
+        return {"ok": False, "error": "Nội dung in rỗng"}
+    try:
+        payload = {
+            "text": text,
+            "title": doc_id,
+            "data": data or {},
+        }
+        row = {
+            "doc_type":     doc_type,
+            "doc_id":       doc_id,
+            "chi_nhanh":    chi_nhanh,
+            "payload_json": payload,
+            "created_by":   created_by or "",
+            "source_app":   "dlw_app",  # ← distinguish với POS
+        }
+        res = supabase.table("print_queue").insert(row).execute()
+        if res.data:
+            return {"ok": True, "id": res.data[0].get("id")}
+        return {"ok": False, "error": "Insert không trả về data"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+# ────────── PUBLIC API ──────────
+def enqueue_apsc(ma_hd: str, created_by: str = "") -> dict:
+    """Enqueue lệnh in HĐ APSC. Trả về {ok, id?, error?}."""
+    if not ma_hd:
+        return {"ok": False, "error": "Thiếu mã HĐ"}
+    if not ma_hd.startswith("APSC"):
+        return {"ok": False, "error": "Mã HĐ phải bắt đầu bằng APSC"}
+    
+    apsc = _load_apsc_by_ma(ma_hd)
+    if not apsc:
+        return {"ok": False, "error": f"Không tìm thấy HĐ {ma_hd}"}
+    
+    chi_nhanh = apsc.get("chi_nhanh", "")
+    if chi_nhanh not in PRINT_ENABLED_BRANCHES:
+        return {"ok": False, "error": "Chi nhánh chưa có máy in"}
+    
+    text = _build_text_apsc(apsc)
+    return _insert_print_job(
+        doc_type="hoa_don_sua_chua",
+        doc_id=ma_hd,
+        chi_nhanh=chi_nhanh,
+        text=text,
+        data={"ma_hd": ma_hd, "ma_ycsc": apsc.get("ma_ycsc", "")},
+        created_by=created_by,
+    )
+
+
+def call_huy_hoa_don_apsc(ma_hd: str, cancelled_by: str) -> dict:
+    """Gọi RPC huy_hoa_don_apsc từ Python. Trả về {ok, error?, items_count?, kho_restored?}."""
+    try:
+        res = supabase.rpc("huy_hoa_don_apsc", {
+            "p_ma_hd": ma_hd,
+            "p_cancelled_by": cancelled_by
+        }).execute()
+        return res.data or {"ok": False, "error": "RPC không trả về data"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+```
+
+---
+
+## 5. PHASE 4 — WIRE ENQUEUE VÀO `_tao_hoa_don_apsc()`
+
+### 5.1 Patch `web_app/modules/sua_chua.py`
+
+Trong function `_tao_hoa_don_apsc()`, sau dòng `supabase.table("hoa_don").insert(rows).execute()`:
+
+```python
+# (existing INSERT)
+supabase.table("hoa_don").insert(rows).execute()
+
+# === NEW PATCH ===
+try:
+    from utils.print_queue_apsc import enqueue_apsc
+    pr = enqueue_apsc(ma_hd, ho_ten or "")
+    if pr.get("ok"):
+        st.toast("🖨 Đã gửi lệnh in HĐ APSC", icon="🖨")
+    else:
+        # Fail silent — không block invoice creation
+        st.toast(f"⚠️ {pr.get('error', 'Lỗi in')}", icon="⚠️")
+except Exception as e:
+    st.toast(f"⚠️ Lỗi in: {e}", icon="⚠️")
+# === END PATCH ===
+```
+
+**Lưu ý:**
+- `ho_ten` trong scope — Claude Code verify variable name đúng (có thể là `nv_ho_ten`, `user["ho_ten"]`, etc.)
+- Toast pattern fail-silent giống POS — không block UX nếu daemon down
+
+### 5.2 Verify
+
+- Tạo HĐ APSC test trên DLW → toast "Đã gửi lệnh in"
+- Verify `print_queue` có row mới với `doc_type='hoa_don_sua_chua'`, `source_app='dlw_app'`
+
+---
+
+## 6. PHASE 5 — UI 2 NÚT (IN LẠI + HỦY)
+
+### 6.1 Decide placement (sau Pre-flight 1.2)
+
+**Nếu Option A khả thi (recommend):**
+
+Trong dialog/expander chi tiết phiếu sửa chữa "Hoàn thành":
+
+```python
+# Trong UI phiếu sửa chữa
+if phieu["trang_thai"] == "Hoàn thành" and phieu.get("ma_hd_apsc"):
+    with st.expander(f"🧾 HĐ APSC: {phieu['ma_hd_apsc']}", expanded=False):
+        # Hiển thị info HĐ APSC
+        apsc = load_apsc_by_ma(phieu["ma_hd_apsc"])
+        if apsc:
+            st.markdown(f"**Tổng:** {fmt_vnd(apsc['khach_can_tra'])}")
+            st.markdown(f"**Trạng thái:** {apsc['trang_thai'] or 'Hoàn thành'}")
+            if apsc.get("trang_thai") == "Đã hủy":
+                st.warning("⚠️ HĐ đã hủy")
+            
+            # 2 nút action
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("🖨 In lại", key=f"reprint_{apsc['ma_hd']}",
+                              use_container_width=True):
+                    pr = enqueue_apsc(apsc["ma_hd"], get_user()["ho_ten"])
+                    if pr.get("ok"):
+                        st.toast("Đã gửi lệnh in", icon="🖨")
+                    else:
+                        st.error(f"Lỗi: {pr.get('error')}")
+            with col2:
+                if is_admin() and apsc.get("trang_thai") != "Đã hủy":
+                    if st.button("❌ Hủy HĐ", key=f"cancel_{apsc['ma_hd']}",
+                                  use_container_width=True, type="secondary"):
+                        st.session_state["confirm_cancel_apsc"] = apsc["ma_hd"]
+            
+            # Confirm dialog
+            if st.session_state.get("confirm_cancel_apsc") == apsc["ma_hd"]:
+                _render_confirm_cancel_apsc(apsc)
+```
+
+**Nếu Option B (fallback):**
+
+Tạo tab mới "📋 Lịch sử HĐ APSC" trong `sua_chua.py`:
+- Filter: chi nhánh, ngày từ/đến, mã HĐ search
+- List rows
+- Click row → expander/dialog với 2 nút
+
+(Detail UI Option B — Claude Code adapt khi cần.)
+
+### 6.2 Confirm hủy dialog
+
+```python
+def _render_confirm_cancel_apsc(apsc: dict):
+    st.markdown(f"### ⚠️ Xác nhận hủy HĐ {apsc['ma_hd']}")
+    st.markdown(f"**Tổng tiền:** {fmt_vnd(apsc['khach_can_tra'])}")
+    st.markdown(f"**Số items:** {len(apsc['items'])}")
+    
+    has_real_items = any(
+        not is_open_price_check(it["ma_hang"]) 
+        for it in apsc["items"] if it.get("ma_hang")
+    )
+    if has_real_items:
+        st.warning("⚠️ HĐ có linh kiện thật — kho sẽ được CỘNG LẠI sau hủy.")
+    
+    confirm_text = st.text_input(
+        "Gõ **HỦY** để xác nhận:",
+        key=f"cancel_confirm_text_{apsc['ma_hd']}"
+    )
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("✅ Xác nhận hủy", 
+                      disabled=confirm_text.strip().upper() != "HỦY",
+                      type="primary",
+                      key=f"cancel_submit_{apsc['ma_hd']}"):
+            from utils.print_queue_apsc import call_huy_hoa_don_apsc
+            result = call_huy_hoa_don_apsc(apsc["ma_hd"], get_user()["ho_ten"])
+            if result.get("ok"):
+                st.success(f"✅ Đã hủy {apsc['ma_hd']} — kho cộng lại {result.get('kho_restored', 0)} items")
+                st.session_state.pop("confirm_cancel_apsc", None)
+                st.rerun()
+            else:
+                st.error(f"❌ {result.get('error')}")
+    with col2:
+        if st.button("Quay lại", key=f"cancel_back_{apsc['ma_hd']}"):
+            st.session_state.pop("confirm_cancel_apsc", None)
+            st.rerun()
+```
+
+### 6.3 Helper `is_open_price_check`
+
+UI cần check open-price để hiển thị warning đúng:
+
+```python
+def is_open_price_check(ma_hang: str) -> bool:
+    """Wrapper Python check open-price. Cache trong session."""
+    if not ma_hang:
+        return False
+    cache = st.session_state.setdefault("_open_price_cache", {})
+    if ma_hang in cache:
+        return cache[ma_hang]
+    res = supabase.table("hang_hoa").select("is_open_price").eq("ma_hang", ma_hang).limit(1).execute()
+    val = bool(res.data and res.data[0].get("is_open_price"))
+    cache[ma_hang] = val
+    return val
+```
+
+---
+
+## 7. PHASE 6 — TEST PLAN
+
+### 7.1 Test scenarios
+
+**Print K80 APSC:**
+```
+[ ] Tạo HĐ APSC test với 1 dịch vụ open-price (LAUDAU 250k) → toast in OK
+[ ] Verify print_queue có row mới: doc_type='hoa_don_sua_chua', source_app='dlw_app', status='pending'
+[ ] Verify daemon pick up → in ra giấy K80 đẹp tiếng Việt
+[ ] Tạo HĐ APSC với mix: dịch vụ open-price + linh kiện thật (Pin) → in OK
+[ ] Tạo HĐ APSC ở chi nhánh KHÔNG phải 100 LQĐ → toast warning, không lỗi
+[ ] Daemon down → INSERT thành công, không error UI
+
+In lại HĐ APSC
+[ ] Mở phiếu sửa chữa Hoàn thành có HĐ APSC linked → thấy expander
+[ ] Click "🖨 In lại" → toast OK → daemon pick up → in lại
+[ ] In lại HĐ APSC đã hủy → giấy in hiện badge "*** HÓA ĐƠN ĐÃ HỦY ***"
+
+Hủy HĐ APSC
+[ ] Login non-admin → KHÔNG thấy nút "❌ Hủy"
+[ ] Login admin → thấy nút
+[ ] Click hủy → confirm dialog hiện
+[ ] Type sai "HỦY" → button submit DISABLED
+[ ] Type đúng "HỦY" → button enabled → click → success
+[ ] Verify hoa_don."Trạng thái" = 'Đã hủy' cho TẤT CẢ rows của HĐ
+[ ] Verify the_kho cộng lại đúng cho linh kiện thật (open-price không cộng)
+[ ] Verify action_logs có ADMIN_APSC_CANCEL
+[ ] Hủy lần 2 cùng HĐ → reject "đã bị hủy trước đó"
+
+Edge cases
+[ ] Hủy HĐ APSC không tồn tại → reject
+[ ] Hủy HĐ với mã sai prefix (vd HD000001) → reject
+[ ] HĐ APSC không có linh kiện thật (chỉ dịch vụ) → kho không đụng, hủy OK
+```
+
+### 7.2 Acceptance criteria
+
+- ✅ Toàn bộ scenarios pass
+- ✅ Daemon in tiếng Việt OK cho APSC
+- ✅ Kho consistency sau hủy (cộng lại linh kiện thật, skip open-price)
+- ✅ Audit log đầy đủ
+- ✅ Permission check đúng (chỉ admin hủy được)
+
+---
+
+## 8. ROLLBACK
+
+```sql
+BEGIN;
+DROP FUNCTION IF EXISTS huy_hoa_don_apsc(text, text);
+COMMIT;
+```
+
+Code revert: git revert PR. Streamlit auto-redeploy.
+
+Nếu data hỏng (HĐ APSC bị set 'Đã hủy' nhầm):
+```sql
+-- Restore từ backup
+UPDATE hoa_don SET "Trạng thái" = NULL  -- hoặc giá trị gốc
+WHERE "Mã hóa đơn" IN (SELECT "Mã hóa đơn" FROM _backup_apsc_k80_<DATE>_hoa_don);
+```
+
+---
+
+## 9. CONSTRAINTS & NOTES
+
+### 9.1 PHẢI
+
+- ✅ Quote `"..."` mọi cột tiếng Việt khi query/update `hoa_don`
+- ✅ `source_app='dlw_app'` mọi insert print_queue từ DLW
+- ✅ Skip open-price khi đảo kho (consistent với pattern HĐ POS)
+- ✅ Whitelist chi nhánh `PRINT_ENABLED_BRANCHES = {"100 Lê Quý Đôn"}`
+- ✅ Admin-only cho nút Hủy
+
+### 9.2 TRÁNH
+
+- ❌ KHÔNG đụng HDSC legacy (110 rows KiotViet) — chỉ APSC
+- ❌ KHÔNG modify `_tao_hoa_don_apsc` ngoài việc thêm 1 try/except enqueue ở cuối
+- ❌ KHÔNG copy code từ POS repo sang DLW (2 repo riêng) — viết code mới trong DLW
+- ❌ KHÔNG block invoice creation nếu daemon down — fail silent toast
+
+### 9.3 File cần edit
+
+| File | Action | Lý do |
+|---|---|---|
+| `web_app/utils/print_queue_apsc.py` | **CREATE** | Loader + builder + enqueue + RPC wrapper |
+| `web_app/modules/sua_chua.py` | PATCH | Wire enqueue + UI 2 nút (Option A) |
+| sql migration | CREATE | RPC `huy_hoa_don_apsc` |
+
+KHÔNG cần edit:
+- `pos_app/*` — POS không đụng
+- Daemon code — daemon generic, không phân biệt doc_type
+
+### 9.4 Time budget
+
+| Phase | Time |
+|---|---|
+| Pre-flight | 30 phút (investigate UI placement) |
+| Phase 1 verify | 15 phút |
+| Phase 2 RPC hủy | 1 giờ |
+| Phase 3 print queue helper | 1.5 giờ (loader + builder + insert) |
+| Phase 4 wire enqueue | 15 phút |
+| Phase 5 UI 2 nút | 1.5-2 giờ |
+| Phase 6 test | 1 giờ |
+| **Tổng** | **~5-6 giờ** |
+
+---
+
+## 10. CHECKLIST THỰC HIỆN
+
+```
+PRE-FLIGHT
+[ ] Backup APSC rows + action_logs
+[ ] Investigate UI placement (Option A vs B) — Claude Code grep + report
+[ ] Decide placement → confirm với user
+
+PHASE 1 — Verify
+[ ] Đọc _tao_hoa_don_apsc trong sua_chua.py — biết variables
+[ ] Đọc load_apsc_history trong POS db.py — pattern reference
+
+PHASE 2 — RPC
+[ ] CREATE FUNCTION huy_hoa_don_apsc
+[ ] Smoke tests T1-T4 pass
+
+PHASE 3 — Print queue helper
+[ ] Tạo file web_app/utils/print_queue_apsc.py
+[ ] _load_apsc_by_ma()
+[ ] _build_text_apsc()
+[ ] _insert_print_job() với source_app='dlw_app'
+[ ] enqueue_apsc()
+[ ] call_huy_hoa_don_apsc() wrapper
+
+PHASE 4 — Wire enqueue
+[ ] Patch sua_chua.py _tao_hoa_don_apsc — try/except enqueue cuối
+[ ] Verify INSERT print_queue thành công
+
+PHASE 5 — UI
+[ ] (Option A) UI dialog/expander phiếu sửa chữa với 2 nút
+[ ] (Option B fallback) Tab "Lịch sử HĐ APSC" mới
+[ ] _render_confirm_cancel_apsc dialog
+[ ] is_open_price_check helper
+
+PHASE 6 — Test
+[ ] Print K80 happy path: tạo APSC → in OK
+[ ] In lại OK
+[ ] Hủy + đảo kho + audit log
+[ ] Edge cases (sai prefix, đã hủy, không tồn tại)
+[ ] Permission (admin vs non-admin)
+
+DEPLOY
+[ ] Merge PR vào main
+[ ] Streamlit redeploy
+[ ] Verify trên app live
+[ ] Theo dõi action_logs ADMIN_APSC_CANCEL 1 tuần
+
+POST
+[ ] Cleanup _backup_apsc_k80_* sau 1 tuần ổn
+[ ] Update internal docs về workflow APSC + K80
+```
+
+---
+
+**END OF PLAN_APSC_K80_AND_CANCEL.md**

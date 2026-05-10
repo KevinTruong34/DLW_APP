@@ -244,6 +244,17 @@ _SC_CSS = """
 
 /* Empty items in card */
 .sc-empty-items { font-size: 12.5px; color: var(--sc-ink-3); padding: 12px 0; text-align: center; font-style: italic; }
+
+/* Form section title (PR2 — Create drawer) */
+.sc-form-section-title {
+    font-size: 11.5px; font-weight: 600;
+    color: var(--sc-ink-2); text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin: 14px 0 6px;
+    padding-bottom: 5px;
+    border-bottom: 1px solid var(--sc-line-2);
+    display: flex; align-items: center; gap: 6px;
+}
 </style>
 """
 
@@ -556,6 +567,237 @@ def module_sua_chua():
                     st.session_state[items_key].pop(i); st.rerun()
 
     # ══════════════════════════════════════════════════════════
+    # PR2 — Create drawer (render trong col_drawer khi sc_form_mode=create)
+    # ══════════════════════════════════════════════════════════
+    def _render_create_drawer(cn_default, accessible, is_multi_branch,
+                              ho_ten, user, fmt_money, close_drawer):
+        """Form tạo phiếu sửa chữa mới — port từ tab_create vào drawer
+        column. Logic submit + log_action + cache clear giữ nguyên 100%
+        khớp tab_create để đảm bảo backward compat (tab_create vẫn
+        functional song song trong PR2).
+        """
+        fcnt = st.session_state.setdefault("sc_drawer_form_count", 0)
+        ma_du_kien = _preview_next_ma_phieu()
+
+        # ── Header drawer ──
+        head_l, head_r = st.columns([5, 1])
+        with head_l:
+            st.markdown(
+                f'<div class="sc-root"><div class="sc-drawer-head">'
+                f'<div class="small">PHIẾU SỬA CHỮA MỚI</div>'
+                f'<h2><span class="id sc-mono">{ma_du_kien}</span></h2>'
+                f'<div class="meta" style="font-size:11px;color:var(--sc-ink-3);">'
+                f'Mã thực sẽ cấp khi lưu</div>'
+                f'</div></div>',
+                unsafe_allow_html=True,
+            )
+        with head_r:
+            if st.button("✕", key=f"sc_drawer_create_close_{fcnt}",
+                         help="Đóng (huỷ form)",
+                         use_container_width=True):
+                close_drawer()
+                st.rerun()
+
+        # ── Section 1: Khách hàng ──
+        st.markdown(
+            '<div class="sc-root"><div class="sc-form-section-title">'
+            '👤 THÔNG TIN KHÁCH HÀNG</div></div>',
+            unsafe_allow_html=True,
+        )
+        sc1, sc2 = st.columns(2)
+        with sc1:
+            sdt_khach = st.text_input(
+                "Số điện thoại *", key=f"sc_drawer_sdt_{fcnt}",
+                placeholder="0xxx xxx xxx",
+            )
+            sdt_prev_key = f"sc_drawer_sdt_prev_{fcnt}"
+            ten_key      = f"sc_drawer_ten_{fcnt}"
+            kh_key       = f"sc_drawer_kh_found_{fcnt}"
+            if sdt_khach.strip() != st.session_state.get(sdt_prev_key, ""):
+                st.session_state[sdt_prev_key] = sdt_khach.strip()
+                kh_found = lookup_khach_hang(sdt_khach) if sdt_khach.strip() else None
+                st.session_state[kh_key] = kh_found
+                st.session_state[ten_key] = kh_found["ten_kh"] if kh_found else ""
+                st.rerun()
+            kh_found = st.session_state.get(kh_key)
+            if sdt_khach.strip() and not kh_found:
+                st.caption("⚠️ SĐT chưa có — khách mới sẽ được lưu tự động")
+            elif kh_found:
+                st.caption(f"✓ Khách cũ: **{kh_found['ten_kh']}**")
+        with sc2:
+            ten_khach = st.text_input("Tên khách hàng *", key=ten_key)
+
+        # Chi nhánh
+        if is_multi_branch:
+            cn_create = st.selectbox(
+                "Chi nhánh tiếp nhận", accessible,
+                index=accessible.index(cn_default) if cn_default in accessible else 0,
+                key=f"sc_drawer_cn_{fcnt}",
+            )
+        else:
+            cn_create = cn_default
+            st.caption(f"📍 Chi nhánh: **{cn_create}**")
+
+        # ── Section 2: Đồng hồ ──
+        st.markdown(
+            '<div class="sc-root"><div class="sc-form-section-title">'
+            '⌚ THÔNG TIN ĐỒNG HỒ</div></div>',
+            unsafe_allow_html=True,
+        )
+        dc1, dc2 = st.columns(2)
+        with dc1:
+            hieu_dh = st.text_input(
+                "Hiệu đồng hồ", key=f"sc_drawer_hieu_{fcnt}",
+                placeholder="Casio, Citizen, Seiko...",
+            )
+            loai_yc = st.selectbox(
+                "Loại yêu cầu", LOAI_YC_LIST, key=f"sc_drawer_loai_yc_{fcnt}",
+            )
+        with dc2:
+            dac_diem = st.text_input(
+                "Đặc điểm (IMEI / mô tả)", key=f"sc_drawer_dac_{fcnt}",
+                placeholder="Số serial, màu sắc, trầy xước...",
+            )
+            ngay_hen = st.date_input(
+                "Ngày hẹn trả", key=f"sc_drawer_hen_{fcnt}",
+                value=None, format="DD/MM/YYYY",
+            )
+        mo_ta = st.text_area(
+            "Mô tả lỗi / yêu cầu *", key=f"sc_drawer_mota_{fcnt}",
+            placeholder="Mô tả chi tiết tình trạng đồng hồ...",
+            height=80,
+        )
+
+        # ── Section 3: Thanh toán & Ghi chú ──
+        st.markdown(
+            '<div class="sc-root"><div class="sc-form-section-title">'
+            '💰 THANH TOÁN & GHI CHÚ</div></div>',
+            unsafe_allow_html=True,
+        )
+        tc1, tc2 = st.columns(2)
+        with tc1:
+            tra_truoc = st.number_input(
+                "Khách trả trước (đ)", min_value=0, step=10000,
+                key=f"sc_drawer_tra_{fcnt}", value=0,
+            )
+            if tra_truoc > 0:
+                st.caption(f"= {fmt_money(tra_truoc)}")
+        with tc2:
+            ghi_chu = st.text_area(
+                "Ghi chú nội bộ", key=f"sc_drawer_ghichu_{fcnt}",
+                placeholder="Thợ kỹ thuật ghi chú...", height=80,
+            )
+
+        # ── Section 4: Items ──
+        st.markdown(
+            '<div class="sc-root"><div class="sc-form-section-title">'
+            '🔧 DỊCH VỤ / LINH KIỆN DỰ KIẾN'
+            '<span style="font-weight:400;color:var(--sc-ink-3);font-size:10.5px;'
+            'text-transform:none;letter-spacing:0;margin-left:8px;">'
+            '(có thể bỏ trống — thêm sau khi thợ đánh giá)</span>'
+            '</div></div>',
+            unsafe_allow_html=True,
+        )
+        items_key = f"sc_drawer_items_{fcnt}"
+        st.session_state.setdefault(items_key, [])
+        with st.expander(f"Danh sách ({len(st.session_state[items_key])} mục)",
+                          expanded=len(st.session_state[items_key]) > 0):
+            _hien_thi_items(items_key)
+            st.markdown("---")
+            _widget_them_dv(f"sc_drawer_new_{fcnt}", items_key)
+
+        items = st.session_state.get(items_key, [])
+        if items:
+            tong_du = sum(int(x.get("so_luong", 0)) * int(x.get("don_gia", 0))
+                          for x in items)
+            st.markdown(
+                f'<div class="sc-root"><div class="sc-money-mini danger" '
+                f'style="margin-top:10px;">'
+                f'<div class="mlab">TỔNG DỰ KIẾN</div>'
+                f'<div class="mval">{fmt_money(tong_du)}</div>'
+                f'</div></div>',
+                unsafe_allow_html=True,
+            )
+
+        # ── Footer: Hủy bỏ + Tạo phiếu & In ──
+        st.markdown('<hr style="margin:14px 0 10px 0;border-color:#efece4">',
+                    unsafe_allow_html=True)
+        ft_l, ft_r = st.columns([1, 2])
+        with ft_l:
+            if st.button("Hủy bỏ", key=f"sc_drawer_cancel_{fcnt}",
+                         use_container_width=True):
+                close_drawer()
+                st.rerun()
+        with ft_r:
+            can_create = (
+                ten_khach.strip() and sdt_khach.strip() and mo_ta.strip()
+            )
+            if st.button(
+                "✅ Tạo phiếu & In", key=f"sc_drawer_submit_{fcnt}",
+                type="primary", use_container_width=True,
+                disabled=not can_create,
+            ):
+                try:
+                    ma = _gen_ma_phieu()
+                    supabase.table("phieu_sua_chua").insert({
+                        "ma_phieu": ma, "chi_nhanh": cn_create,
+                        "ten_khach": ten_khach.strip(),
+                        "sdt_khach": sdt_khach.strip(),
+                        "loai_yeu_cau": loai_yc,
+                        "hieu_dong_ho": hieu_dh.strip() or None,
+                        "dac_diem": dac_diem.strip() or None,
+                        "mo_ta_loi": mo_ta.strip(),
+                        "khach_tra_truoc": int(tra_truoc),
+                        "ghi_chu_noi_bo": ghi_chu.strip() or None,
+                        "trang_thai": "Đang sửa",
+                        "nguoi_tiep_nhan": ho_ten,
+                        "ngay_hen_tra": ngay_hen.isoformat() if ngay_hen else None,
+                        "created_by": user.get("username", ""),
+                        "created_at": now_vn_iso(),
+                        "updated_at": now_vn_iso(),
+                    }).execute()
+                    if items:
+                        supabase.table("phieu_sua_chua_chi_tiet").insert(
+                            [{"ma_phieu": ma, **item} for item in items]
+                        ).execute()
+
+                    _upsert_khach_hang(
+                        ten_khach.strip(), sdt_khach.strip(), cn_create,
+                    )
+
+                    # Build print HTML — render sau rerun
+                    ct_new = pd.DataFrame(items) if items else pd.DataFrame()
+                    if not ct_new.empty:
+                        for col in ["so_luong", "don_gia"]:
+                            ct_new[col] = pd.to_numeric(
+                                ct_new[col], errors="coerce"
+                            ).fillna(0).astype(int)
+                    phieu_data = {
+                        "ma_phieu": ma, "chi_nhanh": cn_create,
+                        "ten_khach": ten_khach.strip(),
+                        "sdt_khach": sdt_khach.strip(),
+                        "hieu_dong_ho": hieu_dh.strip(),
+                        "loai_yeu_cau": loai_yc, "dac_diem": dac_diem.strip(),
+                        "mo_ta_loi": mo_ta.strip(),
+                        "khach_tra_truoc": int(tra_truoc),
+                        "ngay_hen_tra": str(ngay_hen) if ngay_hen else None,
+                        "nguoi_tiep_nhan": ho_ten,
+                        "Ngày TN": now_vn().strftime("%d/%m/%Y %H:%M"),
+                    }
+                    st.session_state["sc_pending_print_html"] = \
+                        _build_phieu_html(phieu_data, ct_new)
+                    st.session_state["sc_just_created_ma"] = ma
+
+                    # Đóng drawer + cleanup state + reload data
+                    close_drawer()
+                    st.cache_data.clear()
+                    log_action("SC_CREATE",
+                               f"ma={ma} kh={ten_khach} cn={cn_create}")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Lỗi tạo phiếu: {e}")
+
+    # ══════════════════════════════════════════════════════════
     # TAB 1 — DANH SÁCH PHIẾU
     # ══════════════════════════════════════════════════════════
     with tab_list:
@@ -567,20 +809,36 @@ def module_sua_chua():
                 return "0đ"
 
         def _close_drawer():
-            """Đóng drawer + reset st.dataframe selection state.
+            """Đóng drawer (detail | create | edit) + reset selection.
 
             Tăng table_key_n để force fresh widget instance — cách duy
             nhất clear selection của st.dataframe(on_select="rerun").
-            Nếu chỉ pop sc_drawer_ma → rerun → widget cũ vẫn giữ
-            selection → block xử lý sel_rows tự re-set drawer_ma.
+            Cũng tăng form_count để form keys bị reset khi mở lại lần sau.
             """
             st.session_state.pop("sc_drawer_ma", None)
+            st.session_state.pop("sc_form_mode", None)
             st.session_state["sc_table_key_n"] = \
                 st.session_state.get("sc_table_key_n", 0) + 1
+            st.session_state["sc_drawer_form_count"] = \
+                st.session_state.get("sc_drawer_form_count", 0) + 1
 
         # ── State ──
         st.session_state.setdefault("sc_table_key_n", 0)
+        st.session_state.setdefault("sc_drawer_form_count", 0)
         drawer_ma = st.session_state.get("sc_drawer_ma")
+        form_mode = st.session_state.get("sc_form_mode")  # None | "create" | "edit"
+
+        # ── Render print HTML sau khi vừa tạo phiếu (tab_list có thể đang
+        #    không show drawer nữa, nhưng print iframe phải mở)
+        if st.session_state.get("sc_pending_print_html"):
+            _in_phieu_sc(
+                st.session_state.pop("sc_pending_print_html"),
+                key="sc_print_drawer_create",
+            )
+            ma_just = st.session_state.pop("sc_just_created_ma", "")
+            st.success(
+                f"✓ Đã tạo phiếu **{ma_just}** — cửa sổ in đang mở"
+            )
 
         # ══════ Filter bar — single row ══════
         show_branch_filter = is_ke_toan_or_admin() and len(accessible) > 1
@@ -632,8 +890,15 @@ def module_sua_chua():
         with fc_new:
             if st.button("＋ Tạo phiếu mới", key="sc_btn_create_new",
                          type="primary", use_container_width=True):
-                st.toast("PR2 sẽ thêm form drawer — tạm dùng tab 'Tạo phiếu mới'",
-                         icon="ℹ️")
+                # Mở create drawer + clear detail drawer + reset selection
+                # + bump form_count để form fresh (clear data từ lần mở trước)
+                st.session_state["sc_form_mode"] = "create"
+                st.session_state.pop("sc_drawer_ma", None)
+                st.session_state["sc_table_key_n"] = \
+                    st.session_state.get("sc_table_key_n", 0) + 1
+                st.session_state["sc_drawer_form_count"] = \
+                    st.session_state.get("sc_drawer_form_count", 0) + 1
+                st.rerun()
 
         # Resolve branches từ filter
         if show_branch_filter:
@@ -654,12 +919,17 @@ def module_sua_chua():
                 df = df[mask]
 
         # Drawer state cleanup: nếu drawer_ma không còn trong filtered df → reset
-        if drawer_ma and (df.empty or df[df["ma_phieu"] == drawer_ma].empty):
+        # (chỉ áp dụng cho detail mode, KHÔNG đóng create drawer khi đổi filter)
+        if drawer_ma and not form_mode and \
+                (df.empty or df[df["ma_phieu"] == drawer_ma].empty):
             _close_drawer()
             drawer_ma = None
 
         # ══════ 2-col split khi drawer mở (Option A) ══════
-        if drawer_ma:
+        # Create form rộng hơn (60%) vì có nhiều fields
+        if form_mode == "create":
+            col_main, col_drawer = st.columns([2, 3], gap="medium")
+        elif drawer_ma:
             col_main, col_drawer = st.columns([3, 2], gap="medium")
         else:
             col_main = st.container()
@@ -710,11 +980,24 @@ def module_sua_chua():
                 if sel_rows:
                     clicked_ma = view.iloc[sel_rows[0]]["Mã Phiếu"]
                     if clicked_ma != drawer_ma:
+                        # Switch to detail mode, đóng create form nếu đang mở
                         st.session_state["sc_drawer_ma"] = clicked_ma
+                        st.session_state.pop("sc_form_mode", None)
                         st.rerun()
 
-        # ══════ Drawer column: detail ══════
-        if col_drawer:
+        # ══════ Drawer column: create | detail ══════
+        if col_drawer and form_mode == "create":
+            with col_drawer:
+                _render_create_drawer(
+                    cn_default=active,
+                    accessible=accessible,
+                    is_multi_branch=is_ke_toan_or_admin() and len(accessible) > 1,
+                    ho_ten=ho_ten,
+                    user=user,
+                    fmt_money=_fmt_money,
+                    close_drawer=_close_drawer,
+                )
+        elif col_drawer:
             with col_drawer:
                 t_rows = df[df["ma_phieu"] == drawer_ma]
                 t = t_rows.iloc[0].to_dict() if not t_rows.empty else None

@@ -111,6 +111,139 @@ _SC_CSS = """
 .sc-money-value-red {
     color: #e63946;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   PR1 redesign — design tokens + new components for Tab 1
+   (legacy classes above giữ nguyên cho Tab 2/3/4 đang chờ PR2-4)
+   ═══════════════════════════════════════════════════════════ */
+
+@import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
+
+/* Design tokens (apply scoped via .sc-root) */
+.sc-root {
+    --sc-bg: #faf9f6;
+    --sc-surface: #ffffff;
+    --sc-surface-2: #f5f3ee;
+    --sc-ink: #1a1815;
+    --sc-ink-2: #4a463e;
+    --sc-ink-3: #8a8478;
+    --sc-line: #e8e5dd;
+    --sc-line-2: #efece4;
+    --sc-accent: oklch(0.56 0.11 165);
+    --sc-accent-soft: oklch(0.96 0.025 165);
+    --sc-accent-line: oklch(0.85 0.06 165);
+    --sc-emerald-ink: oklch(0.4 0.11 165);
+    --sc-amber: oklch(0.7 0.13 75);
+    --sc-amber-soft: oklch(0.96 0.04 80);
+    --sc-amber-ink: oklch(0.45 0.13 75);
+    --sc-rose: oklch(0.62 0.16 22);
+    --sc-rose-soft: oklch(0.97 0.03 22);
+    --sc-rose-ink: oklch(0.5 0.16 22);
+    --sc-indigo: oklch(0.55 0.13 260);
+    --sc-indigo-soft: oklch(0.96 0.025 260);
+    --sc-indigo-ink: oklch(0.4 0.13 260);
+    font-family: 'Be Vietnam Pro', system-ui, -apple-system, sans-serif;
+    color: var(--sc-ink);
+}
+.sc-root .sc-mono { font-family: 'DM Mono', ui-monospace, monospace; font-feature-settings: 'tnum'; }
+.sc-root .sc-num  { font-variant-numeric: tabular-nums; }
+
+/* Header */
+.sc-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+.sc-h1 { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
+.sc-sub { font-size: 12.5px; color: var(--sc-ink-3); margin: 2px 0 0; }
+.sc-branch-badge { font-size: 12px; color: var(--sc-ink-3); }
+
+/* Status pills */
+.sc-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 11.5px; font-weight: 500;
+    padding: 3px 9px; border-radius: 999px;
+    background: var(--sc-surface-2); color: var(--sc-ink-2);
+    border: 1px solid var(--sc-line);
+}
+.sc-pill::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--sc-ink-3); }
+.sc-pill.done { background: var(--sc-accent-soft); color: var(--sc-emerald-ink); border-color: var(--sc-accent-line); }
+.sc-pill.done::before { background: var(--sc-accent); }
+.sc-pill.fixing { background: var(--sc-amber-soft); color: var(--sc-amber-ink); border-color: oklch(0.85 0.06 80); }
+.sc-pill.fixing::before { background: var(--sc-amber); }
+.sc-pill.waiting { background: var(--sc-indigo-soft); color: var(--sc-indigo-ink); border-color: oklch(0.85 0.06 260); }
+.sc-pill.waiting::before { background: var(--sc-indigo); }
+.sc-pill.handover { background: var(--sc-amber-soft); color: var(--sc-amber-ink); border-color: oklch(0.85 0.06 80); }
+.sc-pill.handover::before { background: var(--sc-amber); }
+.sc-pill.cancelled { background: var(--sc-rose-soft); color: var(--sc-rose-ink); border-color: oklch(0.85 0.06 22); }
+.sc-pill.cancelled::before { background: var(--sc-rose); }
+
+/* Detail drawer card */
+.sc-drawer { background: var(--sc-surface); border: 1px solid var(--sc-line); border-radius: 10px;
+    padding: 0; overflow: hidden;
+    box-shadow: -8px 0 24px -12px rgba(20,18,15,0.12); }
+.sc-drawer-head { padding: 14px 16px; border-bottom: 1px solid var(--sc-line); }
+.sc-drawer-head .small { font-size: 11px; color: var(--sc-ink-3); letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 4px; }
+.sc-drawer-head h2 { margin: 0; font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sc-drawer-head h2 .id { font-family: 'DM Mono', monospace; font-size: 14px; color: var(--sc-ink-2); }
+.sc-drawer-head .meta { margin-top: 6px; font-size: 12.5px; color: var(--sc-ink-2); display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+
+.sc-drawer-body { padding: 14px 16px; }
+.sc-d-card { background: var(--sc-surface); border: 1px solid var(--sc-line); border-radius: 10px; padding: 12px 14px; }
+.sc-d-card + .sc-d-card { margin-top: 10px; }
+.sc-d-card-title { font-size: 11.5px; font-weight: 600; color: var(--sc-ink-2); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; display: flex; gap: 6px; align-items: center; }
+
+.sc-info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; }
+.sc-info-grid .full { grid-column: 1 / -1; }
+.sc-info-row { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sc-info-row .lab { font-size: 11px; color: var(--sc-ink-3); letter-spacing: 0.02em; }
+.sc-info-row .val { font-size: 13px; color: var(--sc-ink); font-weight: 500; word-break: break-word; }
+.sc-info-row .val.dim { color: var(--sc-ink-3); font-weight: 400; }
+
+.sc-desc-block { font-size: 13px; color: var(--sc-ink); line-height: 1.55; white-space: pre-wrap; }
+.sc-desc-note { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--sc-line); font-size: 12.5px; color: var(--sc-ink-2); }
+.sc-desc-note .lab { font-size: 11px; color: var(--sc-ink-3); margin-bottom: 2px; letter-spacing: 0.02em; }
+
+/* Items mini-table */
+.sc-items { width: 100%; border-collapse: collapse; }
+.sc-items th { background: transparent; padding: 6px 8px; font-size: 10.5px; color: var(--sc-ink-3); font-weight: 500; text-align: left; letter-spacing: 0.02em; }
+.sc-items th.right, .sc-items td.right { text-align: right; }
+.sc-items td { padding: 7px 8px; font-size: 12.5px; border-bottom: 1px solid var(--sc-line-2); vertical-align: top; }
+.sc-items tr:last-child td { border-bottom: none; }
+.sc-items td.tnum { font-variant-numeric: tabular-nums; }
+.sc-items td.bold { font-weight: 600; }
+.sc-items .ma { font-family: 'DM Mono', monospace; color: var(--sc-ink-3); font-size: 11.5px; }
+.sc-kind-tag { display: inline-block; padding: 1px 7px; border-radius: 4px; font-size: 10.5px; background: var(--sc-surface-2); color: var(--sc-ink-3); border: 1px solid var(--sc-line); }
+.sc-kind-tag.dv { background: var(--sc-accent-soft); color: var(--sc-emerald-ink); border-color: var(--sc-accent-line); }
+
+/* Money cards */
+.sc-money-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 10px; }
+.sc-money-mini { padding: 10px 12px; border-radius: 8px; background: var(--sc-surface-2); border: 1px solid var(--sc-line); text-align: center; }
+.sc-money-mini .mlab { font-size: 10.5px; color: var(--sc-ink-3); margin-bottom: 3px; letter-spacing: 0.02em; text-transform: uppercase; }
+.sc-money-mini .mval { font-size: 15px; font-weight: 600; color: var(--sc-ink); font-variant-numeric: tabular-nums; }
+.sc-money-mini.danger { background: var(--sc-rose-soft); border-color: oklch(0.85 0.06 22); }
+.sc-money-mini.danger .mval { color: var(--sc-rose-ink); }
+.sc-money-mini.success { background: var(--sc-accent-soft); border-color: var(--sc-accent-line); }
+.sc-money-mini.success .mval { color: var(--sc-emerald-ink); }
+
+/* APSC card */
+.sc-apsc-card {
+    margin-top: 10px;
+    padding: 12px 14px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, var(--sc-accent-soft), var(--sc-surface));
+    border: 1px solid var(--sc-accent-line);
+}
+.sc-apsc-card.cancelled { background: var(--sc-rose-soft); border-color: oklch(0.85 0.06 22); }
+.sc-apsc-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.sc-apsc-info .apsc-lab { font-size: 11px; color: var(--sc-ink-3); margin-bottom: 2px; letter-spacing: 0.02em; text-transform: uppercase; }
+.sc-apsc-info .apsc-id { font-family: 'DM Mono', monospace; font-size: 14px; font-weight: 600; color: var(--sc-emerald-ink); }
+.sc-apsc-card.cancelled .sc-apsc-info .apsc-id { color: var(--sc-rose-ink); text-decoration: line-through; }
+.sc-apsc-info .apsc-meta { font-size: 11.5px; color: var(--sc-ink-2); margin-top: 2px; }
+
+/* Empty state */
+.sc-empty { padding: 40px 24px; text-align: center; color: var(--sc-ink-3); font-size: 13px;
+    background: var(--sc-surface); border: 1px dashed var(--sc-line); border-radius: 10px; }
+.sc-empty-title { color: var(--sc-ink-2); font-weight: 500; margin-bottom: 4px; font-size: 14px; }
+
+/* Empty items in card */
+.sc-empty-items { font-size: 12.5px; color: var(--sc-ink-3); padding: 12px 0; text-align: center; font-style: italic; }
 </style>
 """
 
@@ -426,157 +559,444 @@ def module_sua_chua():
     # TAB 1 — DANH SÁCH PHIẾU
     # ══════════════════════════════════════════════════════════
     with tab_list:
-        # ── Filter bar trong card ──
-        with st.container():
-            st.markdown('<div class="sc-section-title">🔍 Bộ lọc</div>', unsafe_allow_html=True)
-            col_f1, col_f2 = st.columns(2)
-            with col_f1:
-                cn_filter = active
-                if is_ke_toan_or_admin() and len(accessible) > 1:
-                    cn_filter = st.selectbox("Chi nhánh:", ["Tất cả"] + accessible, key="sc_cn_filter")
-                else:
-                    st.caption(f"📍 Chi nhánh: **{active}**")
-                branches = accessible if cn_filter == "Tất cả" else [cn_filter]
-            with col_f2:
-                tt_filter = st.selectbox("Trạng thái:",
-                    ["Tất cả"] + TRANG_THAI_LIST + ["Hoàn thành"], key="sc_tt_filter")
+        # ── Helper money formatter (inline — Streamlit số đẹp) ──
+        def _fmt_money(n):
+            try:
+                return f"{int(n or 0):,}đ".replace(",", ".")
+            except Exception:
+                return "0đ"
 
-            search = st.text_input("Tìm SĐT / Mã phiếu / Tên khách:", key="sc_search",
-                                    placeholder="VD: '900' tìm SC000900...")
+        # ── State ──
+        drawer_ma = st.session_state.get("sc_drawer_ma")
 
-        df = _load_phieu(tuple(branches))
-        if df.empty:
-            st.info("Chưa có phiếu sửa chữa.")
+        # ══════ Filter bar — single row ══════
+        show_branch_filter = is_ke_toan_or_admin() and len(accessible) > 1
+        if show_branch_filter:
+            fc_search, fc_tt, fc_cn, fc_clear, _, fc_new = \
+                st.columns([3, 1.4, 1.4, 1, 0.3, 1.6])
         else:
-            if tt_filter != "Tất cả":
+            fc_search, fc_tt, fc_clear, _, fc_new = \
+                st.columns([3, 1.4, 1, 0.3, 1.6])
+
+        with fc_search:
+            search = st.text_input(
+                "Tìm:", key="sc_search",
+                placeholder="🔍 SĐT / Mã phiếu / Tên khách (vd: '900' → SC000900)",
+                label_visibility="collapsed",
+            )
+
+        TT_OPTS_FULL = ["Trạng thái: Tất cả", "Đang sửa", "Chờ linh kiện",
+                        "Chờ giao khách", "Hoàn thành"]
+        with fc_tt:
+            tt_filter = st.selectbox(
+                "Trạng thái:", TT_OPTS_FULL,
+                key="sc_tt_filter", label_visibility="collapsed",
+            )
+
+        if show_branch_filter:
+            with fc_cn:
+                cn_filter = st.selectbox(
+                    "Chi nhánh:", ["Chi nhánh: Tất cả"] + accessible,
+                    key="sc_cn_filter", label_visibility="collapsed",
+                )
+        else:
+            cn_filter = active
+
+        has_filter = (
+            (search or "").strip() != "" or
+            (tt_filter and tt_filter != "Trạng thái: Tất cả") or
+            (show_branch_filter and cn_filter != "Chi nhánh: Tất cả")
+        )
+        with fc_clear:
+            if has_filter:
+                if st.button("✕ Xóa lọc", key="sc_clear_filter",
+                             use_container_width=True):
+                    for k in ("sc_search", "sc_tt_filter", "sc_cn_filter"):
+                        st.session_state.pop(k, None)
+                    st.session_state.pop("sc_drawer_ma", None)
+                    st.rerun()
+
+        with fc_new:
+            if st.button("＋ Tạo phiếu mới", key="sc_btn_create_new",
+                         type="primary", use_container_width=True):
+                st.toast("PR2 sẽ thêm form drawer — tạm dùng tab 'Tạo phiếu mới'",
+                         icon="ℹ️")
+
+        # Resolve branches từ filter
+        if show_branch_filter:
+            branches = accessible if cn_filter == "Chi nhánh: Tất cả" else [cn_filter]
+        else:
+            branches = [active]
+
+        # ══════ Load + filter data ══════
+        df = _load_phieu(tuple(branches))
+        if not df.empty:
+            if tt_filter and tt_filter != "Trạng thái: Tất cả":
                 df = df[df["trang_thai"] == tt_filter]
-            if search.strip():
+            if search and search.strip():
                 s = search.strip().lower()
                 mask = (df["ma_phieu"].apply(lambda m: _sc_match_ma(m, s)) |
                         df["sdt_khach"].astype(str).str.lower().str.contains(s, na=False) |
                         df["ten_khach"].astype(str).str.lower().str.contains(s, na=False))
                 df = df[mask]
 
+        # Drawer state cleanup: nếu drawer_ma không còn trong filtered df → reset
+        if drawer_ma and (df.empty or df[df["ma_phieu"] == drawer_ma].empty):
+            st.session_state.pop("sc_drawer_ma", None)
+            drawer_ma = None
+
+        # ══════ 2-col split khi drawer mở (Option A) ══════
+        if drawer_ma:
+            col_main, col_drawer = st.columns([3, 2], gap="medium")
+        else:
+            col_main = st.container()
+            col_drawer = None
+
+        # ══════ Main column: table ══════
+        with col_main:
             if df.empty:
-                st.info("Không tìm thấy phiếu phù hợp.")
+                st.markdown(
+                    '<div class="sc-root"><div class="sc-empty">'
+                    '<div class="sc-empty-title">Chưa có phiếu nào phù hợp</div>'
+                    '<div>Hãy điều chỉnh bộ lọc hoặc tạo phiếu mới</div>'
+                    '</div></div>',
+                    unsafe_allow_html=True,
+                )
             else:
-                st.markdown(
-                    f'<div class="sc-section-title">📋 Danh sách ({len(df)} phiếu)</div>',
-                    unsafe_allow_html=True
-                )
-                view = df.rename(columns={
-                    "ma_phieu": "Mã Phiếu", "chi_nhanh": "Chi Nhánh",
-                    "ten_khach": "Khách hàng", "sdt_khach": "SĐT",
-                    "loai_yeu_cau": "Loại", "hieu_dong_ho": "Hiệu ĐH",
-                    "trang_thai": "Trạng Thái", "ngay_hen_tra": "Hẹn Trả",
-                    "nguoi_tiep_nhan": "NV Tiếp Nhận"
-                })
-                cols = ["Mã Phiếu", "Chi Nhánh", "Khách hàng", "SĐT", "Loại",
-                        "Hiệu ĐH", "Trạng Thái", "Hẹn Trả", "Ngày TN", "NV Tiếp Nhận"]
-                cols = [c for c in cols if c in view.columns]
-                st.dataframe(view[cols], use_container_width=True, hide_index=True, height=380)
+                st.caption(f"📋 Danh sách **{len(df)}** phiếu")
+                view = pd.DataFrame({
+                    "Mã Phiếu":   df["ma_phieu"].astype(str),
+                    "Chi Nhánh":  df["chi_nhanh"].apply(
+                        lambda c: CN_SHORT.get(c, c) if isinstance(CN_SHORT, dict) else c),
+                    "Khách hàng": df["ten_khach"].fillna(""),
+                    "SĐT":        df["sdt_khach"].fillna("").astype(str),
+                    "Loại":       df["loai_yeu_cau"].fillna(""),
+                    "Hiệu ĐH":    df["hieu_dong_ho"].fillna(""),
+                    "Trạng Thái": df["trang_thai"].fillna(""),
+                    "Hẹn Trả":    df["ngay_hen_tra"].fillna("").astype(str),
+                    "Ngày TN":    df.get("Ngày TN", pd.Series([""] * len(df))),
+                    "NV":         df["nguoi_tiep_nhan"].fillna(""),
+                }).reset_index(drop=True)
 
-                # ── Section Xem chi tiết ──
-                st.markdown(
-                    '<div class="sc-section-title" style="margin-top:18px;">'
-                    '📄 Xem chi tiết dịch vụ / linh kiện</div>',
-                    unsafe_allow_html=True
+                event = st.dataframe(
+                    view,
+                    use_container_width=True,
+                    hide_index=True,
+                    height=540,
+                    on_select="rerun",
+                    selection_mode="single-row",
+                    key="sc_table_select",
                 )
-                ma_opts = view["Mã Phiếu"].tolist() if "Mã Phiếu" in view.columns else []
-                picked_list = st.selectbox("Chọn phiếu:", ["-- Chọn --"] + ma_opts,
-                    key="sc_list_pick", label_visibility="collapsed")
-                if picked_list != "-- Chọn --":
-                    ct_list = _load_chi_tiet(picked_list)
-                    if ct_list.empty:
-                        st.info("Phiếu này chưa có dịch vụ.")
+
+                try:
+                    sel_rows = event.selection.rows or []
+                except Exception:
+                    sel_rows = []
+                if sel_rows:
+                    clicked_ma = view.iloc[sel_rows[0]]["Mã Phiếu"]
+                    if clicked_ma != drawer_ma:
+                        st.session_state["sc_drawer_ma"] = clicked_ma
+                        st.rerun()
+
+        # ══════ Drawer column: detail ══════
+        if col_drawer:
+            with col_drawer:
+                t_rows = df[df["ma_phieu"] == drawer_ma]
+                t = t_rows.iloc[0].to_dict() if not t_rows.empty else None
+
+                if t is None:
+                    st.warning(f"Không tìm thấy phiếu {drawer_ma}")
+                    if st.button("✕ Đóng", key="sc_drawer_close_err"):
+                        st.session_state.pop("sc_drawer_ma", None)
+                        st.rerun()
+                else:
+                    # Map status → pill class
+                    PILL_CLASS = {
+                        "Hoàn thành":     "done",
+                        "Đang sửa":       "fixing",
+                        "Chờ linh kiện":  "waiting",
+                        "Chờ giao khách": "handover",
+                    }
+                    tt_phieu = t.get("trang_thai", "") or ""
+                    pill_cls = PILL_CLASS.get(tt_phieu, "")
+
+                    # ── Header ──
+                    head_l, head_r = st.columns([5, 1.2])
+                    with head_l:
+                        st.markdown(
+                            f'<div class="sc-root"><div class="sc-drawer-head">'
+                            f'<div class="small">PHIẾU SỬA CHỮA</div>'
+                            f'<h2><span class="id sc-mono">{t.get("ma_phieu","")}</span>'
+                            f'· {t.get("ten_khach","") or "—"}</h2>'
+                            f'<div class="meta">'
+                            f'<span>📞 {t.get("sdt_khach","") or "—"}</span>'
+                            f'<span class="sc-pill {pill_cls}">{tt_phieu}</span>'
+                            f'</div>'
+                            f'</div></div>',
+                            unsafe_allow_html=True,
+                        )
+                    with head_r:
+                        # Edit ✎ + Close ✕
+                        bcol_edit, bcol_close = st.columns(2)
+                        with bcol_edit:
+                            edit_disabled = (tt_phieu == "Hoàn thành")
+                            if st.button("✎", key="sc_drawer_edit",
+                                         help="Cập nhật phiếu (PR3)",
+                                         disabled=edit_disabled,
+                                         use_container_width=True):
+                                st.toast("PR3 sẽ thêm — tạm dùng tab 'Chi tiết / Cập nhật'",
+                                         icon="ℹ️")
+                        with bcol_close:
+                            if st.button("✕", key="sc_drawer_close",
+                                         help="Đóng",
+                                         use_container_width=True):
+                                st.session_state.pop("sc_drawer_ma", None)
+                                st.rerun()
+
+                    # ── Card 1: Thông tin tiếp nhận ──
+                    st.markdown(
+                        '<div class="sc-root"><div class="sc-d-card">'
+                        '<div class="sc-d-card-title">📋 Thông tin tiếp nhận</div>'
+                        '<div class="sc-info-grid">'
+                        f'<div class="sc-info-row"><span class="lab">Chi nhánh</span>'
+                        f'<span class="val">{t.get("chi_nhanh","") or "—"}</span></div>'
+                        f'<div class="sc-info-row"><span class="lab">Loại YC</span>'
+                        f'<span class="val">{t.get("loai_yeu_cau","") or "—"}</span></div>'
+                        f'<div class="sc-info-row"><span class="lab">Hiệu đồng hồ</span>'
+                        f'<span class="val">{t.get("hieu_dong_ho","") or "—"}</span></div>'
+                        f'<div class="sc-info-row"><span class="lab">Đặc điểm</span>'
+                        f'<span class="val">{t.get("dac_diem","") or "—"}</span></div>'
+                        f'<div class="sc-info-row"><span class="lab">NV tiếp nhận</span>'
+                        f'<span class="val">{t.get("nguoi_tiep_nhan","") or "—"}</span></div>'
+                        f'<div class="sc-info-row"><span class="lab">Ngày tiếp nhận</span>'
+                        f'<span class="val sc-num">{t.get("Ngày TN","") or "—"}</span></div>'
+                        f'<div class="sc-info-row full"><span class="lab">Hẹn trả</span>'
+                        f'<span class="val">{t.get("ngay_hen_tra","") or "—"}</span></div>'
+                        '</div></div></div>',
+                        unsafe_allow_html=True,
+                    )
+
+                    # ── Card 2: Mô tả lỗi + ghi chú nội bộ ──
+                    mo_ta = (t.get("mo_ta_loi") or "").strip()
+                    ghi_chu = (t.get("ghi_chu_noi_bo") or "").strip()
+                    desc_html = (
+                        '<div class="sc-root"><div class="sc-d-card">'
+                        '<div class="sc-d-card-title">📝 Mô tả lỗi / Yêu cầu</div>'
+                        f'<div class="sc-desc-block">{mo_ta or "—"}</div>'
+                    )
+                    if ghi_chu:
+                        desc_html += (
+                            '<div class="sc-desc-note">'
+                            '<div class="lab">GHI CHÚ NỘI BỘ</div>'
+                            f'<div>{ghi_chu}</div>'
+                            '</div>'
+                        )
+                    desc_html += '</div></div>'
+                    st.markdown(desc_html, unsafe_allow_html=True)
+
+                    # ── Card 3: Items + 3 money cards ──
+                    ct = _load_chi_tiet(drawer_ma)
+                    tong_hang = 0
+                    items_html = (
+                        '<div class="sc-root"><div class="sc-d-card">'
+                        '<div class="sc-d-card-title">🔧 Dịch vụ / Linh kiện</div>'
+                    )
+                    if ct.empty:
+                        items_html += (
+                            '<div class="sc-empty-items">'
+                            'Chưa có dịch vụ / linh kiện nào</div>'
+                        )
                     else:
-                        ct_list["Thành tiền"] = ct_list["so_luong"] * ct_list["don_gia"]
-                        ct_view = ct_list.rename(columns={
-                            "loai_dong": "Loại", "ten_hang": "Tên", "ma_hang": "Mã",
-                            "so_luong": "SL", "don_gia": "Đơn giá"
-                        })
-                        vcols = ["Loại", "Tên", "Mã", "SL", "Đơn giá", "Thành tiền"]
-                        vcols = [c for c in vcols if c in ct_view.columns]
-                        st.dataframe(ct_view[vcols], use_container_width=True, hide_index=True)
+                        items_html += (
+                            '<table class="sc-items">'
+                            '<thead><tr>'
+                            '<th>Loại</th><th>Tên</th><th>Mã</th>'
+                            '<th class="right">SL</th>'
+                            '<th class="right">Đơn giá</th>'
+                            '<th class="right">Thành tiền</th>'
+                            '</tr></thead><tbody>'
+                        )
+                        for _, r in ct.iterrows():
+                            sl = int(r.get("so_luong") or 0)
+                            dg = int(r.get("don_gia") or 0)
+                            tt_money = sl * dg
+                            tong_hang += tt_money
+                            kind = (r.get("loai_dong") or "").strip()
+                            kind_cls = "dv" if kind == "Dịch vụ" else ""
+                            items_html += (
+                                '<tr>'
+                                f'<td><span class="sc-kind-tag {kind_cls}">{kind or "—"}</span></td>'
+                                f'<td>{r.get("ten_hang","") or "—"}</td>'
+                                f'<td class="ma">{r.get("ma_hang","") or "—"}</td>'
+                                f'<td class="right tnum">{sl}</td>'
+                                f'<td class="right tnum">{_fmt_money(dg)}</td>'
+                                f'<td class="right tnum bold">{_fmt_money(tt_money)}</td>'
+                                '</tr>'
+                            )
+                        items_html += '</tbody></table>'
 
-                    # ── Section HĐ APSC (Phase 5 — Option A') ──
-                    # Lookup HĐ APSC linked với phiếu Hoàn thành để render
-                    # 2 nút: 🖨 In lại (mọi role) + ❌ Hủy HĐ (admin only).
-                    picked_rows = df[df["ma_phieu"] == picked_list]
-                    if not picked_rows.empty and picked_rows.iloc[0].get("trang_thai") == "Hoàn thành":
+                    # 3 money cards
+                    da_tra_truoc = int(t.get("khach_tra_truoc") or 0)
+                    con_lai = max(0, tong_hang - da_tra_truoc)
+                    con_lai_cls = "danger" if con_lai > 0 else "success"
+                    items_html += (
+                        '<div class="sc-money-grid">'
+                        '<div class="sc-money-mini">'
+                        '<div class="mlab">TỔNG CỘNG</div>'
+                        f'<div class="mval">{_fmt_money(tong_hang)}</div></div>'
+                        '<div class="sc-money-mini">'
+                        '<div class="mlab">ĐÃ TRẢ TRƯỚC</div>'
+                        f'<div class="mval">{_fmt_money(da_tra_truoc)}</div></div>'
+                        f'<div class="sc-money-mini {con_lai_cls}">'
+                        '<div class="mlab">CÒN LẠI</div>'
+                        f'<div class="mval">{_fmt_money(con_lai)}</div></div>'
+                        '</div>'
+                    )
+                    items_html += '</div></div>'
+                    st.markdown(items_html, unsafe_allow_html=True)
+
+                    # ── APSC card (nếu Hoàn thành + có HĐ APSC linked) ──
+                    apsc_data = None
+                    if tt_phieu == "Hoàn thành":
                         try:
                             apsc_res = supabase.table("hoa_don").select(
-                                '"Mã hóa đơn", "Trạng thái", "Khách cần trả"'
-                            ).eq("Mã YCSC", picked_list).limit(1).execute()
+                                '"Mã hóa đơn", "Trạng thái", "Khách cần trả",'
+                                '"Tiền mặt", "Chuyển khoản", "Thẻ"'
+                            ).eq("Mã YCSC", drawer_ma).limit(1).execute()
+                            if apsc_res.data:
+                                apsc_data = apsc_res.data[0]
                         except Exception as e:
-                            apsc_res = None
                             st.warning(f"⚠️ Không load được HĐ APSC: {e}")
 
-                        if apsc_res and apsc_res.data:
-                            ma_apsc   = apsc_res.data[0]["Mã hóa đơn"]
-                            tt_apsc   = apsc_res.data[0].get("Trạng thái", "")
-                            tong_apsc = int(apsc_res.data[0].get("Khách cần trả") or 0)
-                            da_huy    = (tt_apsc == "Đã hủy")
-                            tong_str  = f"{tong_apsc:,.0f}đ".replace(",", ".")
+                    if apsc_data:
+                        ma_apsc   = apsc_data.get("Mã hóa đơn", "")
+                        tt_apsc   = apsc_data.get("Trạng thái", "") or ""
+                        tong_kt   = int(apsc_data.get("Khách cần trả") or 0)
+                        tm        = int(apsc_data.get("Tiền mặt") or 0)
+                        ck        = int(apsc_data.get("Chuyển khoản") or 0)
+                        the       = int(apsc_data.get("Thẻ") or 0)
+                        da_huy    = (tt_apsc == "Đã hủy")
 
-                            st.markdown("---")
-                            badge = "❌ ĐÃ HỦY" if da_huy else f"Trạng thái: **{tt_apsc}**"
-                            st.markdown(
-                                f"🧾 **Hóa đơn APSC:** `{ma_apsc}`  \n"
-                                f"Tổng: **{tong_str}**  ·  {badge}"
+                        # Build payment breakdown
+                        pay_parts = []
+                        if tm > 0:  pay_parts.append(f"Tiền mặt {_fmt_money(tm)}")
+                        if ck > 0:  pay_parts.append(f"Chuyển khoản {_fmt_money(ck)}")
+                        if the > 0: pay_parts.append(f"Thẻ {_fmt_money(the)}")
+                        pay_str = " · ".join(pay_parts) if pay_parts else "—"
+
+                        card_cls = "cancelled" if da_huy else ""
+                        st.markdown(
+                            f'<div class="sc-root"><div class="sc-apsc-card {card_cls}">'
+                            f'<div class="sc-apsc-row">'
+                            f'<div class="sc-apsc-info">'
+                            f'<div class="apsc-lab">Hóa đơn APSC</div>'
+                            f'<div class="apsc-id sc-mono">{ma_apsc}</div>'
+                            f'<div class="apsc-meta">Tổng: <strong>{_fmt_money(tong_kt)}</strong>'
+                            f' · {pay_str}</div>'
+                            f'</div></div></div></div>',
+                            unsafe_allow_html=True,
+                        )
+
+                        # Buttons (Streamlit native, không inline được vào HTML)
+                        confirm_key = f"sc_confirm_huy_{ma_apsc}"
+                        if st.session_state.get(confirm_key):
+                            st.warning(
+                                f"⚠️ Xác nhận hủy HĐ **{ma_apsc}**? "
+                                "Đảo kho atomic + audit log, "
+                                "phiếu sẽ revert 'Chờ giao khách' (không thể hoàn tác)."
                             )
+                            cc1, cc2 = st.columns(2)
+                            with cc1:
+                                if st.button("✅ Xác nhận hủy",
+                                             key=f"sc_yes_huy_{ma_apsc}",
+                                             type="primary",
+                                             use_container_width=True):
+                                    from utils.print_queue_apsc import call_huy_hoa_don_apsc
+                                    res = call_huy_hoa_don_apsc(
+                                        ma_apsc, ho_ten or "",
+                                        ma_ycsc=drawer_ma,
+                                    )
+                                    if res.get("ok"):
+                                        st.success(
+                                            f"✅ Đã hủy {ma_apsc} · "
+                                            f"kho restored {res.get('kho_restored', 0)} SKU "
+                                            f"({res.get('units_restored', 0)} đv)"
+                                        )
+                                        if res.get("warn_revert"):
+                                            st.warning(res["warn_revert"])
+                                        st.cache_data.clear()
+                                    else:
+                                        st.error(f"❌ Hủy thất bại: {res.get('error', '?')}")
+                                    st.session_state.pop(confirm_key, None)
+                                    st.rerun()
+                            with cc2:
+                                if st.button("✖ Bỏ qua",
+                                             key=f"sc_no_huy_{ma_apsc}",
+                                             use_container_width=True):
+                                    st.session_state.pop(confirm_key, None)
+                                    st.rerun()
+                        else:
+                            cb1, cb2 = st.columns(2)
+                            with cb1:
+                                if st.button("🖨 In lại",
+                                             key=f"sc_reprint_{ma_apsc}",
+                                             use_container_width=True):
+                                    from utils.print_queue_apsc import enqueue_apsc
+                                    pr = enqueue_apsc(ma_apsc, ho_ten or "")
+                                    if pr.get("ok"):
+                                        st.toast("🖨 Đã gửi lệnh in lại", icon="🖨")
+                                    else:
+                                        st.toast(f"⚠️ {pr.get('error','Lỗi in')}",
+                                                 icon="⚠️")
+                            with cb2:
+                                if not da_huy and is_admin():
+                                    if st.button("❌ Hủy HĐ",
+                                                 key=f"sc_huy_{ma_apsc}",
+                                                 use_container_width=True):
+                                        st.session_state[confirm_key] = True
+                                        st.rerun()
 
-                            confirm_key = f"sc_confirm_huy_{ma_apsc}"
-                            if st.session_state.get(confirm_key):
-                                st.warning(
-                                    f"⚠️ Xác nhận hủy HĐ **{ma_apsc}**? "
-                                    "Hệ thống sẽ đảo kho atomic + ghi audit log "
-                                    "(không thể hoàn tác)."
-                                )
-                                cc1, cc2, _ = st.columns([1, 1, 2])
-                                with cc1:
-                                    if st.button("✅ Xác nhận hủy",
-                                                 key=f"sc_yes_huy_{ma_apsc}",
-                                                 type="primary",
-                                                 use_container_width=True):
-                                        from utils.print_queue_apsc import call_huy_hoa_don_apsc
-                                        res = call_huy_hoa_don_apsc(ma_apsc, ho_ten or "")
-                                        if res.get("ok"):
-                                            st.success(
-                                                f"✅ Đã hủy {ma_apsc} · "
-                                                f"kho restored {res.get('kho_restored', 0)} SKU "
-                                                f"({res.get('units_restored', 0)} đv)"
-                                            )
-                                        else:
-                                            st.error(f"❌ Hủy thất bại: {res.get('error', '?')}")
-                                        st.session_state.pop(confirm_key, None)
-                                        st.rerun()
-                                with cc2:
-                                    if st.button("✖ Bỏ qua",
-                                                 key=f"sc_no_huy_{ma_apsc}",
-                                                 use_container_width=True):
-                                        st.session_state.pop(confirm_key, None)
-                                        st.rerun()
-                            else:
-                                cols_btn = st.columns([1, 1, 2])
-                                with cols_btn[0]:
-                                    if st.button("🖨 In lại",
-                                                 key=f"sc_reprint_{ma_apsc}",
-                                                 use_container_width=True):
-                                        from utils.print_queue_apsc import enqueue_apsc
-                                        pr = enqueue_apsc(ma_apsc, ho_ten or "")
-                                        if pr.get("ok"):
-                                            st.toast("🖨 Đã gửi lệnh in lại", icon="🖨")
-                                        else:
-                                            st.toast(f"⚠️ {pr.get('error', 'Lỗi in')}",
-                                                     icon="⚠️")
-                                with cols_btn[1]:
-                                    if not da_huy and is_admin():
-                                        if st.button("❌ Hủy HĐ",
-                                                     key=f"sc_huy_{ma_apsc}",
-                                                     use_container_width=True):
-                                            st.session_state[confirm_key] = True
-                                            st.rerun()
+                    # ── Create invoice CTA (Chờ giao khách + chưa có HĐ APSC) ──
+                    if tt_phieu == "Chờ giao khách" and not apsc_data:
+                        st.markdown("&nbsp;", unsafe_allow_html=True)
+                        if st.button("🧾 Tạo hóa đơn APSC cho phiếu này",
+                                     key=f"sc_make_apsc_{drawer_ma}",
+                                     type="primary",
+                                     use_container_width=True):
+                            st.toast("PR3 sẽ thêm modal tạo HĐ — "
+                                     "tạm dùng tab 'Tạo hóa đơn sửa'",
+                                     icon="ℹ️")
+                        st.caption("Phiếu đã sẵn sàng giao khách — tạo HĐ APSC để chốt thanh toán.")
+
+                    # ── Footer: In phiếu A5 + Hủy/Xóa ──
+                    st.markdown('<hr style="margin:14px 0 10px 0;border-color:#efece4">',
+                                unsafe_allow_html=True)
+                    foot_l, foot_r = st.columns(2)
+                    with foot_l:
+                        if st.button("🖨 In phiếu (A5)",
+                                     key=f"sc_print_a5_{drawer_ma}",
+                                     use_container_width=True):
+                            try:
+                                phieu_dict = {
+                                    **t,
+                                    "ngay_tn_str": t.get("Ngày TN", ""),
+                                }
+                                html_a5 = _build_phieu_html(phieu_dict, ct)
+                                _in_phieu_sc(html_a5, key=f"sc_a5_{drawer_ma}")
+                            except Exception as e:
+                                st.error(f"Lỗi in: {e}")
+                    with foot_r:
+                        delete_disabled = bool(apsc_data and
+                                               apsc_data.get("Trạng thái") != "Đã hủy")
+                        if st.button("🗑 Hủy / Xóa phiếu",
+                                     key=f"sc_delete_phieu_{drawer_ma}",
+                                     disabled=delete_disabled,
+                                     help=("Hủy HĐ APSC trước"
+                                           if delete_disabled else "Xóa phiếu (PR4)"),
+                                     use_container_width=True):
+                            st.toast("PR4 sẽ thêm confirm dialog — "
+                                     "tạm dùng tab 'Chi tiết / Cập nhật'",
+                                     icon="ℹ️")
 
     # ══════════════════════════════════════════════════════════
     # TAB 2 — TẠO PHIẾU MỚI

@@ -20,6 +20,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from utils.db import supabase
+from utils.helpers import now_vn
 
 _TZ_VN = ZoneInfo("Asia/Ho_Chi_Minh")
 
@@ -308,11 +309,17 @@ def enqueue_apsc(ma_hd: str, created_by: str = "") -> dict:
     )
 
 
-def call_huy_hoa_don_apsc(ma_hd: str, cancelled_by: str) -> dict:
+def call_huy_hoa_don_apsc(ma_hd: str, cancelled_by: str,
+                           ma_ycsc: str = "") -> dict:
     """Wrapper RPC huy_hoa_don_apsc.
 
-    Trả jsonb từ RPC: {ok, ma_hd?, items_count?, kho_restored?,
-    units_restored?, error?}. Phase 5 UI gọi 1 chỗ duy nhất.
+    Sau khi RPC ok + đảo kho atomic, nếu có ma_ycsc → revert phieu_sua_chua
+    trang_thai về 'Chờ giao khách' để user có thể tạo lại HĐ APSC mới.
+    Lỗi revert KHÔNG fail toàn bộ — trả thêm warn_revert trong dict.
+
+    Trả jsonb từ RPC + (optional) warn_revert:
+    {ok, ma_hd?, items_count?, kho_restored?, units_restored?,
+     error?, warn_revert?}.
     """
     if not ma_hd:
         return {"ok": False, "error": "Thiếu mã HĐ"}
@@ -324,6 +331,24 @@ def call_huy_hoa_don_apsc(ma_hd: str, cancelled_by: str) -> dict:
             "p_cancelled_by": cancelled_by,
         }).execute()
         data = res.data if isinstance(res.data, dict) else (res.data or {})
-        return data or {"ok": False, "error": "RPC không trả về data"}
+        if not data:
+            return {"ok": False, "error": "RPC không trả về data"}
     except Exception as e:
         return {"ok": False, "error": str(e)}
+
+    # Revert ticket → 'Chờ giao khách' (Q3 decision của UI refactor).
+    # Best-effort: nếu lỗi, RPC kho + status đã commit thành công, chỉ
+    # ghi warn để UI hiển thị mà không revert kho lại.
+    if data.get("ok") and ma_ycsc:
+        try:
+            supabase.table("phieu_sua_chua").update({
+                "trang_thai": "Chờ giao khách",
+                "updated_at": now_vn().isoformat(),
+            }).eq("ma_phieu", ma_ycsc).execute()
+        except Exception as e:
+            data["warn_revert"] = (
+                f"HĐ {ma_hd} đã hủy + đảo kho OK nhưng phiếu {ma_ycsc} "
+                f"chưa revert được trạng thái: {e}"
+            )
+
+    return data

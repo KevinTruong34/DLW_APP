@@ -3,7 +3,6 @@ import pandas as pd
 from datetime import datetime
 import numpy as np
 import html as _html_esc
-from urllib.parse import quote as _url_quote
 
 from utils.helpers import _normalize, now_vn, now_vn_iso, today_vn, fmt_vn
 from utils.config import ALL_BRANCHES, CN_SHORT, IN_APP_MARKER, ARCHIVED_MARKER
@@ -865,9 +864,25 @@ def module_sua_chua():
     # mở rộng edit sang khách hàng / đồng hồ để tránh đụng audit logic).
     # ══════════════════════════════════════════════════════════
     def _render_edit_drawer(t, ho_ten, fmt_money, close_drawer):
+        # Normalize NaN/None → empty string. pd.DataFrame.iloc[0].to_dict()
+        # giữ NaN cho object cols → _html_esc.escape(NaN) crash silent
+        # giữa render → khúc dưới mất hiển thị (bug PR3b cũ).
+        def _v(key, default=""):
+            val = t.get(key)
+            if val is None:
+                return default
+            try:
+                if isinstance(val, float) and pd.isna(val):
+                    return default
+            except Exception:
+                pass
+            return val
+
         fcnt = st.session_state.setdefault("sc_drawer_form_count", 0)
-        ma_pick = t["ma_phieu"]
-        cur_tt = t.get("trang_thai", "Đang sửa")
+        ma_pick = str(_v("ma_phieu"))
+        cur_tt = str(_v("trang_thai", "Đang sửa")) or "Đang sửa"
+        ten_khach = str(_v("ten_khach", "—"))
+        sdt_khach = str(_v("sdt_khach", "—"))
 
         # Map status → pill class (same as detail drawer)
         PILL_CLASS = {
@@ -876,51 +891,49 @@ def module_sua_chua():
         }
         pill_cls = PILL_CLASS.get(cur_tt, "")
 
-        # ── Header drawer ──
-        head_l, head_r = st.columns([5, 1])
-        with head_l:
-            st.markdown(
-                f'<div class="sc-drawer-head">'
-                f'<div class="small">CẬP NHẬT PHIẾU</div>'
-                f'<h2><span class="id sc-mono">{_html_esc.escape(ma_pick)}</span> '
-                f'· {_html_esc.escape(t.get("ten_khach", "") or "—")}</h2>'
-                f'<div class="meta">'
-                f'<span>📞 {_html_esc.escape(t.get("sdt_khach", "") or "—")}</span>'
-                f'<span class="sc-pill {pill_cls}">{_html_esc.escape(cur_tt)}</span>'
-                f'</div></div>',
-                unsafe_allow_html=True,
-            )
-        with head_r:
-            if st.button("✕", key=f"sc_drawer_edit_close_{fcnt}",
-                         help="Quay lại chi tiết (huỷ chỉnh sửa)",
-                         use_container_width=True):
-                # Chỉ pop form_mode để quay về detail view, KHÔNG đóng drawer
-                st.session_state.pop("sc_form_mode", None)
-                st.session_state["sc_drawer_form_count"] = \
-                    st.session_state.get("sc_drawer_form_count", 0) + 1
-                st.rerun()
+        # ── Header drawer (full-width, không nest columns) ──
+        st.markdown(
+            f'<div class="sc-drawer-head">'
+            f'<div class="small">CẬP NHẬT PHIẾU</div>'
+            f'<h2><span class="id sc-mono">{_html_esc.escape(ma_pick)}</span>'
+            f' · {_html_esc.escape(ten_khach or "—")}</h2>'
+            f'<div class="meta">'
+            f'<span>📞 {_html_esc.escape(sdt_khach or "—")}</span>'
+            f'<span class="sc-pill {pill_cls}">{_html_esc.escape(cur_tt)}</span>'
+            f'</div></div>',
+            unsafe_allow_html=True,
+        )
+        if st.button("✕ Đóng (huỷ chỉnh sửa)",
+                     key=f"sc_drawer_edit_close_{fcnt}",
+                     use_container_width=False):
+            # Chỉ pop form_mode để quay về detail view, KHÔNG đóng drawer
+            st.session_state.pop("sc_form_mode", None)
+            st.session_state["sc_drawer_form_count"] = \
+                st.session_state.get("sc_drawer_form_count", 0) + 1
+            st.rerun()
 
-        # ── Section: Trạng thái ──
+        # ── Section: Trạng thái (selectbox đơn giản, không radio horizontal) ──
         st.markdown(
             '<div class="sc-form-section-title">📊 TRẠNG THÁI</div>',
             unsafe_allow_html=True,
         )
-        new_tt_idx = TRANG_THAI_LIST.index(cur_tt) if cur_tt in TRANG_THAI_LIST else 0
-        new_tt = st.radio(
+        new_tt_idx = (TRANG_THAI_LIST.index(cur_tt)
+                      if cur_tt in TRANG_THAI_LIST else 0)
+        new_tt = st.selectbox(
             "Trạng thái:", TRANG_THAI_LIST, index=new_tt_idx,
             key=f"sc_drawer_edit_tt_{fcnt}",
-            label_visibility="collapsed", horizontal=True,
+            label_visibility="collapsed",
         )
         st.caption("'Hoàn thành' sẽ tự set khi tạo HĐ APSC ở phiếu Chờ giao khách.")
 
-        # ── Section: Hẹn trả + Ghi chú ──
+        # ── Section: Hẹn trả + Ghi chú (2-col, single nest) ──
         st.markdown(
             '<div class="sc-form-section-title">💬 GHI CHÚ & HẸN TRẢ</div>',
             unsafe_allow_html=True,
         )
         c1, c2 = st.columns(2)
         with c1:
-            cur_hen = t.get("ngay_hen_tra")
+            cur_hen = _v("ngay_hen_tra")
             try:
                 hen_value = pd.to_datetime(cur_hen).date() if cur_hen else None
             except Exception:
@@ -931,7 +944,7 @@ def module_sua_chua():
             )
         with c2:
             new_gc = st.text_area(
-                "Ghi chú nội bộ", value=t.get("ghi_chu_noi_bo") or "",
+                "Ghi chú nội bộ", value=str(_v("ghi_chu_noi_bo")),
                 key=f"sc_drawer_edit_gc_{fcnt}", height=80,
             )
 
@@ -1255,26 +1268,6 @@ def module_sua_chua():
         drawer_ma = st.session_state.get("sc_drawer_ma")
         form_mode = st.session_state.get("sc_form_mode")  # None | "create" | "edit"
 
-        # ── Handle URL click (custom HTML table sets ?sc_pick=SC000010) ──
-        # Trigger flow: user click <a href="?sc_pick=...">cell content</a>
-        # → browser navigate → Streamlit rerun với query_params mới → đọc
-        # ở đây → set sc_drawer_ma + clear param + rerun (để URL sạch).
-        try:
-            _picked = st.query_params.get("sc_pick")
-        except Exception:
-            _picked = None
-        if _picked:
-            try:
-                del st.query_params["sc_pick"]
-            except Exception:
-                pass
-            if _picked != drawer_ma:
-                st.session_state["sc_drawer_ma"] = _picked
-                st.session_state.pop("sc_form_mode", None)
-                st.rerun()
-            else:
-                st.rerun()
-
         # ── Render print HTML sau khi vừa tạo phiếu (tab_list có thể đang
         #    không show drawer nữa, nhưng print iframe phải mở)
         if st.session_state.get("sc_pending_print_html"):
@@ -1409,81 +1402,57 @@ def module_sua_chua():
                     unsafe_allow_html=True,
                 )
             else:
-                # ── Custom HTML table (replace st.dataframe) ──
-                # Selection qua URL query param: mỗi cell là <a href="?sc_pick=SC...">.
-                # Click → browser navigate → Streamlit rerun → handler ở đầu
-                # tab_list đọc và set sc_drawer_ma. Render pill có màu trong cell
-                # (st.dataframe không hỗ trợ HTML cells).
-                _PILL_CLASS_MAP = {
-                    "Hoàn thành":     "done",
-                    "Đang sửa":       "fixing",
-                    "Chờ linh kiện":  "waiting",
-                    "Chờ giao khách": "handover",
-                    "Đã hủy":         "cancelled",
+                # ── st.dataframe + emoji prefix cho trạng thái ──
+                # Revert custom HTML table (gây crash session khi click row
+                # do query_param navigation + underline cells khắp nơi).
+                # Selection dùng on_select="rerun" với key động (counter
+                # bump khi close để clear widget state).
+                _STATUS_EMOJI = {
+                    "Hoàn thành":     "🟢 Hoàn thành",
+                    "Đang sửa":       "🟡 Đang sửa",
+                    "Chờ linh kiện":  "🔵 Chờ linh kiện",
+                    "Chờ giao khách": "🟠 Chờ giao khách",
+                    "Đã hủy":         "🔴 Đã hủy",
                 }
 
-                _rows_html = []
-                for _, _r in df.iterrows():
-                    _ma = str(_r["ma_phieu"])
-                    _href = f"?sc_pick={_url_quote(_ma, safe='')}"
-                    _pill = _PILL_CLASS_MAP.get(_r.get("trang_thai", ""), "")
-                    _selected = "selected" if _ma == drawer_ma else ""
-                    _cn = _r.get("chi_nhanh", "")
-                    _cn_short = (CN_SHORT.get(_cn, _cn)
-                                 if isinstance(CN_SHORT, dict) else _cn)
-                    _hen = _r.get("ngay_hen_tra") or ""
+                st.caption(f"📋 Danh sách **{len(df)}** phiếu — click hàng để xem chi tiết")
+                view = pd.DataFrame({
+                    "Mã Phiếu":   df["ma_phieu"].astype(str),
+                    "Chi Nhánh":  df["chi_nhanh"].apply(
+                        lambda c: CN_SHORT.get(c, c) if isinstance(CN_SHORT, dict) else c),
+                    "Khách hàng": df["ten_khach"].fillna(""),
+                    "SĐT":        df["sdt_khach"].fillna("").astype(str),
+                    "Loại":       df["loai_yeu_cau"].fillna(""),
+                    "Hiệu ĐH":    df["hieu_dong_ho"].fillna(""),
+                    "Trạng Thái": df["trang_thai"].fillna("").apply(
+                        lambda s: _STATUS_EMOJI.get(s, s)),
+                    "Hẹn Trả":    df["ngay_hen_tra"].fillna("").astype(str),
+                    "Ngày TN":    df.get("Ngày TN", pd.Series([""] * len(df))),
+                    "NV":         df["nguoi_tiep_nhan"].fillna(""),
+                }).reset_index(drop=True)
 
-                    def _link(text, link_cls=""):
-                        return (f'<a href="{_href}" target="_self" '
-                                f'class="sc-cell-link {link_cls}">'
-                                f'{_html_esc.escape(str(text or ""))}</a>')
-
-                    def _cell(text, td_cls="", link_cls=""):
-                        return f'<td class="{td_cls}">{_link(text, link_cls)}</td>'
-
-                    _tt = str(_r.get("trang_thai", ""))
-                    _pill_cell = (
-                        f'<td><a href="{_href}" target="_self" '
-                        f'class="sc-cell-link"><span class="sc-pill {_pill}">'
-                        f'{_html_esc.escape(_tt)}</span></a></td>'
-                    )
-
-                    _rows_html.append(
-                        f'<tr class="{_selected}">'
-                        + _cell(_ma, "mp")
-                        + _cell(_cn_short, "dim")
-                        + _cell(_r.get("ten_khach", "") or "", "kh")
-                        + _cell(_r.get("sdt_khach", "") or "", "tnum")
-                        + _cell(_r.get("loai_yeu_cau", "") or "", "dim")
-                        + _cell(_r.get("hieu_dong_ho", "") or "", "")
-                        + _pill_cell
-                        + _cell(_hen or "—",
-                                "tnum" if _hen else "fade")
-                        + _cell(_r.get("Ngày TN", "") or "", "tnum dim")
-                        + _cell(_r.get("nguoi_tiep_nhan", "") or "", "dim")
-                        + f'<td class="row-chev"><a href="{_href}" '
-                          f'target="_self" class="sc-cell-link">›</a></td>'
-                        + '</tr>'
-                    )
-
-                _table_html = (
-                    '<div class="sc-tablewrap">'
-                    '<div class="sc-tabletop">'
-                    f'<div class="sc-ttitle">📋 Danh sách '
-                    f'<span class="sc-tcount">({len(df)} phiếu)</span></div>'
-                    '<div style="font-size:11.5px;color:var(--sc-ink-3);">'
-                    'Click hàng để xem chi tiết</div>'
-                    '</div>'
-                    '<table class="sc-table"><thead><tr>'
-                    '<th>Mã Phiếu</th><th>Chi Nhánh</th><th>Khách hàng</th>'
-                    '<th>SĐT</th><th>Loại</th><th>Hiệu ĐH</th>'
-                    '<th>Trạng Thái</th><th>Hẹn Trả</th>'
-                    '<th>Ngày TN</th><th>NV Tiếp Nhận</th><th></th>'
-                    '</tr></thead><tbody>'
-                    + ''.join(_rows_html)
-                    + '</tbody></table></div>'
+                _table_key = f"sc_table_select_{st.session_state['sc_table_key_n']}"
+                event = st.dataframe(
+                    view,
+                    use_container_width=True,
+                    hide_index=True,
+                    height=540,
+                    on_select="rerun",
+                    selection_mode="single-row",
+                    key=_table_key,
                 )
-                st.markdown(_table_html, unsafe_allow_html=True)
+
+                try:
+                    sel_rows = event.selection.rows or []
+                except Exception:
+                    sel_rows = []
+                if sel_rows:
+                    clicked_ma = view.iloc[sel_rows[0]]["Mã Phiếu"]
+                    if clicked_ma != drawer_ma:
+                        # Switch to detail mode, đóng create form nếu đang mở
+                        st.session_state["sc_drawer_ma"] = clicked_ma
+                        st.session_state.pop("sc_form_mode", None)
+                        st.rerun()
 
         # ══════ Drawer column: create | edit | detail ══════
         if col_drawer and form_mode == "create":

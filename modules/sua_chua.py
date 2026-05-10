@@ -499,6 +499,85 @@ def module_sua_chua():
                         vcols = [c for c in vcols if c in ct_view.columns]
                         st.dataframe(ct_view[vcols], use_container_width=True, hide_index=True)
 
+                    # ── Section HĐ APSC (Phase 5 — Option A') ──
+                    # Lookup HĐ APSC linked với phiếu Hoàn thành để render
+                    # 2 nút: 🖨 In lại (mọi role) + ❌ Hủy HĐ (admin only).
+                    picked_rows = df[df["ma_phieu"] == picked_list]
+                    if not picked_rows.empty and picked_rows.iloc[0].get("trang_thai") == "Hoàn thành":
+                        try:
+                            apsc_res = supabase.table("hoa_don").select(
+                                '"Mã hóa đơn", "Trạng thái", "Khách cần trả"'
+                            ).eq("Mã YCSC", picked_list).limit(1).execute()
+                        except Exception as e:
+                            apsc_res = None
+                            st.warning(f"⚠️ Không load được HĐ APSC: {e}")
+
+                        if apsc_res and apsc_res.data:
+                            ma_apsc   = apsc_res.data[0]["Mã hóa đơn"]
+                            tt_apsc   = apsc_res.data[0].get("Trạng thái", "")
+                            tong_apsc = int(apsc_res.data[0].get("Khách cần trả") or 0)
+                            da_huy    = (tt_apsc == "Đã hủy")
+                            tong_str  = f"{tong_apsc:,.0f}đ".replace(",", ".")
+
+                            st.markdown("---")
+                            badge = "❌ ĐÃ HỦY" if da_huy else f"Trạng thái: **{tt_apsc}**"
+                            st.markdown(
+                                f"🧾 **Hóa đơn APSC:** `{ma_apsc}`  \n"
+                                f"Tổng: **{tong_str}**  ·  {badge}"
+                            )
+
+                            confirm_key = f"sc_confirm_huy_{ma_apsc}"
+                            if st.session_state.get(confirm_key):
+                                st.warning(
+                                    f"⚠️ Xác nhận hủy HĐ **{ma_apsc}**? "
+                                    "Hệ thống sẽ đảo kho atomic + ghi audit log "
+                                    "(không thể hoàn tác)."
+                                )
+                                cc1, cc2, _ = st.columns([1, 1, 2])
+                                with cc1:
+                                    if st.button("✅ Xác nhận hủy",
+                                                 key=f"sc_yes_huy_{ma_apsc}",
+                                                 type="primary",
+                                                 use_container_width=True):
+                                        from utils.print_queue_apsc import call_huy_hoa_don_apsc
+                                        res = call_huy_hoa_don_apsc(ma_apsc, ho_ten or "")
+                                        if res.get("ok"):
+                                            st.success(
+                                                f"✅ Đã hủy {ma_apsc} · "
+                                                f"kho restored {res.get('kho_restored', 0)} SKU "
+                                                f"({res.get('units_restored', 0)} đv)"
+                                            )
+                                        else:
+                                            st.error(f"❌ Hủy thất bại: {res.get('error', '?')}")
+                                        st.session_state.pop(confirm_key, None)
+                                        st.rerun()
+                                with cc2:
+                                    if st.button("✖ Bỏ qua",
+                                                 key=f"sc_no_huy_{ma_apsc}",
+                                                 use_container_width=True):
+                                        st.session_state.pop(confirm_key, None)
+                                        st.rerun()
+                            else:
+                                cols_btn = st.columns([1, 1, 2])
+                                with cols_btn[0]:
+                                    if st.button("🖨 In lại",
+                                                 key=f"sc_reprint_{ma_apsc}",
+                                                 use_container_width=True):
+                                        from utils.print_queue_apsc import enqueue_apsc
+                                        pr = enqueue_apsc(ma_apsc, ho_ten or "")
+                                        if pr.get("ok"):
+                                            st.toast("🖨 Đã gửi lệnh in lại", icon="🖨")
+                                        else:
+                                            st.toast(f"⚠️ {pr.get('error', 'Lỗi in')}",
+                                                     icon="⚠️")
+                                with cols_btn[1]:
+                                    if not da_huy and is_admin():
+                                        if st.button("❌ Hủy HĐ",
+                                                     key=f"sc_huy_{ma_apsc}",
+                                                     use_container_width=True):
+                                            st.session_state[confirm_key] = True
+                                            st.rerun()
+
     # ══════════════════════════════════════════════════════════
     # TAB 2 — TẠO PHIẾU MỚI
     # ══════════════════════════════════════════════════════════

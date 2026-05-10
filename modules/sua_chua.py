@@ -1868,30 +1868,8 @@ def module_sua_chua():
                             f'</div></div></div></div>',
                             unsafe_allow_html=True,
                         )
-
-                        # Buttons: 🖨 In lại + ❌ Hủy HĐ (admin only)
-                        # Hủy HĐ dùng @st.dialog _cancel_apsc_dialog với type
-                        # "HỦY" validation (PR4 — replace 2-step confirm cũ).
-                        cb1, cb2 = st.columns(2)
-                        with cb1:
-                            if st.button("🖨 In lại",
-                                         key=f"sc_reprint_{ma_apsc}",
-                                         use_container_width=True):
-                                from utils.print_queue_apsc import enqueue_apsc
-                                pr = enqueue_apsc(ma_apsc, ho_ten or "")
-                                if pr.get("ok"):
-                                    st.toast("🖨 Đã gửi lệnh in lại", icon="🖨")
-                                else:
-                                    st.toast(f"⚠️ {pr.get('error','Lỗi in')}",
-                                             icon="⚠️")
-                        with cb2:
-                            if not da_huy and is_admin():
-                                if st.button("❌ Hủy HĐ",
-                                             key=f"sc_huy_{ma_apsc}",
-                                             use_container_width=True):
-                                    st.session_state["sc_cancel_open"] = \
-                                        (ma_apsc, drawer_ma)
-                                    st.rerun()
+                        # Buttons gom xuống footer (top row in K80 + A5,
+                        # bottom row Hủy + Xóa) — APSC card chỉ giữ info.
 
                     # ── Create invoice CTA (Chờ giao khách + chưa có HĐ APSC) ──
                     if tt_phieu == "Chờ giao khách" and not apsc_data:
@@ -1905,12 +1883,35 @@ def module_sua_chua():
                             st.rerun()
                         st.caption("Phiếu đã sẵn sàng giao khách — tạo HĐ APSC để chốt thanh toán.")
 
-                    # ── Footer: In phiếu A5 + Hủy/Xóa ──
+                    # ── Footer: 4 buttons trong 2 rows × 2 cols ──
+                    # Top row (mọi role): In hóa đơn K80 | In phiếu sửa A5
+                    # Bottom row (admin only): Hủy HĐ | Xóa phiếu
                     st.markdown('<hr style="margin:14px 0 10px 0;border-color:#efece4">',
                                 unsafe_allow_html=True)
-                    foot_l, foot_r = st.columns(2)
-                    with foot_l:
-                        if st.button("🖨 In phiếu (A5)",
+
+                    # ─ Top row: print actions ─
+                    pr_l, pr_r = st.columns(2)
+                    with pr_l:
+                        # In hóa đơn K80 — disabled nếu không có HĐ APSC linked
+                        k80_disabled = (apsc_data is None)
+                        k80_help = ("Phiếu chưa có HĐ APSC để in"
+                                    if k80_disabled
+                                    else "Gửi lệnh in K80 cho HĐ APSC")
+                        if st.button("🖨 In hóa đơn (K80)",
+                                     key=f"sc_print_k80_{drawer_ma}",
+                                     disabled=k80_disabled,
+                                     help=k80_help,
+                                     use_container_width=True):
+                            from utils.print_queue_apsc import enqueue_apsc
+                            ma_apsc_print = (apsc_data or {}).get("Mã hóa đơn", "")
+                            pr = enqueue_apsc(ma_apsc_print, ho_ten or "")
+                            if pr.get("ok"):
+                                st.toast("🖨 Đã gửi lệnh in HĐ APSC", icon="🖨")
+                            else:
+                                st.toast(f"⚠️ {pr.get('error','Lỗi in')}",
+                                         icon="⚠️")
+                    with pr_r:
+                        if st.button("🖨 In phiếu sửa (A5)",
                                      key=f"sc_print_a5_{drawer_ma}",
                                      use_container_width=True):
                             try:
@@ -1923,10 +1924,31 @@ def module_sua_chua():
                                 _in_phieu_sc(html_a5, key=f"sc_a5_{drawer_ma}")
                             except Exception as e:
                                 st.error(f"Lỗi in: {e}")
-                    with foot_r:
-                        # 🗑 Xóa phiếu — admin only + disabled nếu phiếu có
-                        # HĐ APSC chưa hủy. Non-admin: button không hiện.
-                        if is_admin():
+
+                    # ─ Bottom row: destructive actions (admin only) ─
+                    if is_admin():
+                        dr_l, dr_r = st.columns(2)
+                        with dr_l:
+                            # Hủy HĐ — disabled nếu không có HĐ APSC hoặc đã hủy
+                            ma_apsc_curr = (apsc_data or {}).get("Mã hóa đơn", "")
+                            tt_apsc_curr = (apsc_data or {}).get("Trạng thái", "")
+                            huy_disabled = (apsc_data is None
+                                            or tt_apsc_curr == "Đã hủy")
+                            huy_help = ("Phiếu chưa có HĐ APSC"
+                                        if apsc_data is None
+                                        else "HĐ APSC đã hủy"
+                                        if tt_apsc_curr == "Đã hủy"
+                                        else "Hủy HĐ APSC + đảo kho (cần type HỦY)")
+                            if st.button("❌ Hủy HĐ",
+                                         key=f"sc_huy_hd_{drawer_ma}",
+                                         disabled=huy_disabled,
+                                         help=huy_help,
+                                         use_container_width=True):
+                                st.session_state["sc_cancel_open"] = \
+                                    (ma_apsc_curr, drawer_ma)
+                                st.rerun()
+                        with dr_r:
+                            # Xóa phiếu — disabled nếu phiếu có HĐ APSC chưa hủy
                             delete_disabled = bool(apsc_data and
                                                    apsc_data.get("Trạng thái") != "Đã hủy")
                             if st.button("🗑 Xóa phiếu",

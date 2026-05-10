@@ -837,6 +837,191 @@ def module_sua_chua():
                     st.error(f"Lỗi tạo phiếu: {e}")
 
     # ══════════════════════════════════════════════════════════
+    # PR3b — Edit drawer (render trong col_drawer khi sc_form_mode=edit)
+    # Scope match existing tab_detail: update trang_thai + ngay_hen_tra
+    # + ghi_chu_noi_bo + add new items (giữ behavior hiện tại, không
+    # mở rộng edit sang khách hàng / đồng hồ để tránh đụng audit logic).
+    # ══════════════════════════════════════════════════════════
+    def _render_edit_drawer(t, ho_ten, fmt_money, close_drawer):
+        fcnt = st.session_state.setdefault("sc_drawer_form_count", 0)
+        ma_pick = t["ma_phieu"]
+        cur_tt = t.get("trang_thai", "Đang sửa")
+
+        # Map status → pill class (same as detail drawer)
+        PILL_CLASS = {
+            "Hoàn thành": "done", "Đang sửa": "fixing",
+            "Chờ linh kiện": "waiting", "Chờ giao khách": "handover",
+        }
+        pill_cls = PILL_CLASS.get(cur_tt, "")
+
+        # ── Header drawer ──
+        head_l, head_r = st.columns([5, 1])
+        with head_l:
+            st.markdown(
+                f'<div class="sc-drawer-head">'
+                f'<div class="small">CẬP NHẬT PHIẾU</div>'
+                f'<h2><span class="id sc-mono">{_html_esc.escape(ma_pick)}</span> '
+                f'· {_html_esc.escape(t.get("ten_khach", "") or "—")}</h2>'
+                f'<div class="meta">'
+                f'<span>📞 {_html_esc.escape(t.get("sdt_khach", "") or "—")}</span>'
+                f'<span class="sc-pill {pill_cls}">{_html_esc.escape(cur_tt)}</span>'
+                f'</div></div>',
+                unsafe_allow_html=True,
+            )
+        with head_r:
+            if st.button("✕", key=f"sc_drawer_edit_close_{fcnt}",
+                         help="Quay lại chi tiết (huỷ chỉnh sửa)",
+                         use_container_width=True):
+                # Chỉ pop form_mode để quay về detail view, KHÔNG đóng drawer
+                st.session_state.pop("sc_form_mode", None)
+                st.session_state["sc_drawer_form_count"] = \
+                    st.session_state.get("sc_drawer_form_count", 0) + 1
+                st.rerun()
+
+        # ── Section: Trạng thái ──
+        st.markdown(
+            '<div class="sc-form-section-title">📊 TRẠNG THÁI</div>',
+            unsafe_allow_html=True,
+        )
+        new_tt_idx = TRANG_THAI_LIST.index(cur_tt) if cur_tt in TRANG_THAI_LIST else 0
+        new_tt = st.radio(
+            "Trạng thái:", TRANG_THAI_LIST, index=new_tt_idx,
+            key=f"sc_drawer_edit_tt_{fcnt}",
+            label_visibility="collapsed", horizontal=True,
+        )
+        st.caption("'Hoàn thành' sẽ tự set khi tạo HĐ APSC ở phiếu Chờ giao khách.")
+
+        # ── Section: Hẹn trả + Ghi chú ──
+        st.markdown(
+            '<div class="sc-form-section-title">💬 GHI CHÚ & HẸN TRẢ</div>',
+            unsafe_allow_html=True,
+        )
+        c1, c2 = st.columns(2)
+        with c1:
+            cur_hen = t.get("ngay_hen_tra")
+            try:
+                hen_value = pd.to_datetime(cur_hen).date() if cur_hen else None
+            except Exception:
+                hen_value = None
+            new_hen = st.date_input(
+                "Ngày hẹn trả", value=hen_value,
+                key=f"sc_drawer_edit_hen_{fcnt}", format="DD/MM/YYYY",
+            )
+        with c2:
+            new_gc = st.text_area(
+                "Ghi chú nội bộ", value=t.get("ghi_chu_noi_bo") or "",
+                key=f"sc_drawer_edit_gc_{fcnt}", height=80,
+            )
+
+        # ── Section: Items hiện có (delete X) + Thêm mới ──
+        st.markdown(
+            '<div class="sc-form-section-title">'
+            '🔧 DỊCH VỤ / LINH KIỆN'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        ct = _load_chi_tiet(ma_pick)
+        if not ct.empty:
+            for _, row in ct.iterrows():
+                ci1, ci2, ci3, ci4, ci5 = st.columns([2, 4, 1, 2, 1])
+                with ci1:
+                    st.markdown(
+                        f"<span style='font-size:0.9rem'>"
+                        f"{_html_esc.escape(str(row.get('loai_dong','')))}</span>",
+                        unsafe_allow_html=True,
+                    )
+                with ci2:
+                    st.markdown(
+                        f"<span style='font-size:0.9rem'>"
+                        f"{_html_esc.escape(str(row.get('ten_hang','')))}</span>",
+                        unsafe_allow_html=True,
+                    )
+                with ci3:
+                    st.markdown(
+                        f"<span style='font-size:0.9rem'>"
+                        f"x{int(row.get('so_luong', 1) or 0)}</span>",
+                        unsafe_allow_html=True,
+                    )
+                with ci4:
+                    st.markdown(
+                        f"<span style='font-size:0.9rem'>"
+                        f"{fmt_money(row.get('don_gia', 0))}</span>",
+                        unsafe_allow_html=True,
+                    )
+                with ci5:
+                    if st.button("✕", key=f"sc_drawer_del_ct_{fcnt}_{row['id']}"):
+                        try:
+                            supabase.table("phieu_sua_chua_chi_tiet") \
+                                .delete().eq("id", int(row["id"])).execute()
+                            st.cache_data.clear()
+                            log_action("SC_DEL_ITEM",
+                                       f"ma={ma_pick} item={row.get('ten_hang','')}")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Lỗi xóa: {e}")
+        else:
+            st.caption("_(Phiếu chưa có dịch vụ / linh kiện nào)_")
+
+        # Thêm mới
+        st.markdown(
+            '<div style="font-size:11.5px;color:var(--sc-ink-3);'
+            'margin:10px 0 4px;">➕ Thêm dịch vụ / linh kiện</div>',
+            unsafe_allow_html=True,
+        )
+        new_items_key = f"sc_drawer_edit_items_{fcnt}"
+        st.session_state.setdefault(new_items_key, [])
+        _widget_them_dv(f"sc_drawer_edit_new_{fcnt}", new_items_key)
+        new_items = st.session_state.get(new_items_key, [])
+        if new_items:
+            _hien_thi_items(new_items_key)
+            tong_moi = sum(int(x.get("so_luong", 0)) * int(x.get("don_gia", 0))
+                           for x in new_items)
+            st.caption(f"Tổng dịch vụ mới thêm: **{fmt_money(tong_moi)}**")
+
+        # ── Footer: Hủy + Lưu cập nhật ──
+        st.markdown('<hr style="margin:14px 0 10px 0;border-color:#efece4">',
+                    unsafe_allow_html=True)
+        ft_l, ft_r = st.columns([1, 2])
+        with ft_l:
+            if st.button("Hủy bỏ", key=f"sc_drawer_edit_cancel_{fcnt}",
+                         use_container_width=True):
+                # Pop form_mode chỉ → quay về detail view (giữ drawer_ma)
+                st.session_state.pop("sc_form_mode", None)
+                st.session_state["sc_drawer_form_count"] = \
+                    st.session_state.get("sc_drawer_form_count", 0) + 1
+                st.rerun()
+        with ft_r:
+            if st.button(
+                "💾 Lưu cập nhật", key=f"sc_drawer_edit_submit_{fcnt}",
+                type="primary", use_container_width=True,
+            ):
+                try:
+                    supabase.table("phieu_sua_chua").update({
+                        "trang_thai":     new_tt,
+                        "ngay_hen_tra":   new_hen.isoformat() if new_hen else None,
+                        "ghi_chu_noi_bo": (new_gc or "").strip() or None,
+                        "updated_at":     now_vn_iso(),
+                    }).eq("ma_phieu", ma_pick).execute()
+
+                    if new_items:
+                        supabase.table("phieu_sua_chua_chi_tiet").insert(
+                            [{"ma_phieu": ma_pick, **item} for item in new_items]
+                        ).execute()
+                        st.session_state[new_items_key] = []
+
+                    st.cache_data.clear()
+                    log_action("SC_UPDATE",
+                               f"ma={ma_pick} trang_thai={new_tt}")
+                    # Save success → quay về detail view (giữ drawer_ma)
+                    st.session_state.pop("sc_form_mode", None)
+                    st.session_state["sc_drawer_form_count"] = \
+                        st.session_state.get("sc_drawer_form_count", 0) + 1
+                    st.toast("✓ Đã cập nhật phiếu", icon="✅")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Lỗi cập nhật: {e}")
+
+    # ══════════════════════════════════════════════════════════
     # TAB 1 — DANH SÁCH PHIẾU
     # ══════════════════════════════════════════════════════════
     with tab_list:
@@ -988,6 +1173,8 @@ def module_sua_chua():
         # Create form rộng hơn (60%) vì có nhiều fields
         if form_mode == "create":
             col_main, col_drawer = st.columns([2, 3], gap="medium")
+        elif form_mode == "edit" and drawer_ma:
+            col_main, col_drawer = st.columns([3, 2], gap="medium")
         elif drawer_ma:
             col_main, col_drawer = st.columns([3, 2], gap="medium")
         else:
@@ -1081,7 +1268,7 @@ def module_sua_chua():
                 )
                 st.markdown(_table_html, unsafe_allow_html=True)
 
-        # ══════ Drawer column: create | detail ══════
+        # ══════ Drawer column: create | edit | detail ══════
         if col_drawer and form_mode == "create":
             with col_drawer:
                 _render_create_drawer(
@@ -1093,6 +1280,21 @@ def module_sua_chua():
                     fmt_money=_fmt_money,
                     close_drawer=_close_drawer,
                 )
+        elif col_drawer and form_mode == "edit" and drawer_ma:
+            with col_drawer:
+                _t_rows = df[df["ma_phieu"] == drawer_ma]
+                if _t_rows.empty:
+                    st.warning(f"Phiếu {drawer_ma} không còn trong filter.")
+                    if st.button("✕ Đóng", key="sc_drawer_edit_close_err"):
+                        _close_drawer()
+                        st.rerun()
+                else:
+                    _render_edit_drawer(
+                        t=_t_rows.iloc[0].to_dict(),
+                        ho_ten=ho_ten,
+                        fmt_money=_fmt_money,
+                        close_drawer=_close_drawer,
+                    )
         elif col_drawer:
             with col_drawer:
                 t_rows = df[df["ma_phieu"] == drawer_ma]
@@ -1135,11 +1337,17 @@ def module_sua_chua():
                         with bcol_edit:
                             edit_disabled = (tt_phieu == "Hoàn thành")
                             if st.button("✎", key="sc_drawer_edit",
-                                         help="Cập nhật phiếu (PR3)",
+                                         help=("Phiếu Hoàn thành không thể sửa"
+                                               if edit_disabled
+                                               else "Cập nhật phiếu"),
                                          disabled=edit_disabled,
                                          use_container_width=True):
-                                st.toast("PR3 sẽ thêm — tạm dùng tab 'Chi tiết / Cập nhật'",
-                                         icon="ℹ️")
+                                # Switch sang edit mode — drawer column
+                                # render _render_edit_drawer ở rerun tới
+                                st.session_state["sc_form_mode"] = "edit"
+                                st.session_state["sc_drawer_form_count"] = \
+                                    st.session_state.get("sc_drawer_form_count", 0) + 1
+                                st.rerun()
                         with bcol_close:
                             if st.button("✕", key="sc_drawer_close",
                                          help="Đóng",

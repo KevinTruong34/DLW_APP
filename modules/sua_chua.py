@@ -500,9 +500,20 @@ def module_sua_chua():
         return f'<span class="{cls}">{tt}</span>'
 
     def _widget_them_dv(key_prefix: str, items_key: str):
+        """Widget thêm hàng hóa / dịch vụ — redesign với bordered card per
+        result để tách bạch rõ ràng:
+        - Search box riêng 1 row.
+        - Mỗi result render trong st.container(border=True):
+          - Top: mã (mono dim) + tên (bold) | giá (emerald, right)
+          - Bottom: SL input | (Giá input nếu open-price) | ➕ Thêm
+        - Manual entry fallback: 1 bordered card riêng nếu search không match.
+        """
         hh = load_hang_hoa()
-        ma_tim = st.text_input("🔍 Tìm mã / tên hàng hóa:", key=f"{key_prefix}_ma_tim",
-                                placeholder="VD: PDH, pin, lau dầu...")
+        ma_tim = st.text_input(
+            "🔍 Tìm hàng hóa / dịch vụ", key=f"{key_prefix}_ma_tim",
+            placeholder="Nhập mã hoặc tên (vd: PDH, pin, lau dầu)...",
+            label_visibility="collapsed",
+        )
         hits = pd.DataFrame()
         if ma_tim.strip() and not hh.empty:
             s = ma_tim.strip().lower()
@@ -511,65 +522,116 @@ def module_sua_chua():
                 v = str(val).lower()
                 return s in v or s_nospace in v.replace(" ", "")
             mask = (hh["ma_hang"].apply(_fuzzy) | hh["ten_hang"].apply(_fuzzy))
-            hits = hh[mask].head(8)
+            hits = hh[mask].head(6)
 
         if not hits.empty:
+            st.caption(f"📦 Tìm thấy **{len(hits)}** kết quả — chọn một để thêm")
             for _, row in hits.iterrows():
-                gia_def = int(row.get("gia_ban", 0))
+                ma = str(row["ma_hang"])
+                ten = str(row["ten_hang"])
+                gia_def = int(row.get("gia_ban", 0) or 0)
                 is_open = _is_open_price_row(row)
+                gia_str = f"{gia_def:,}đ".replace(",", ".")
+                gia_label = (f"{gia_str} <span style=\"color:var(--sc-ink-3);"
+                             f"font-size:11px;font-weight:400;margin-left:4px;\">"
+                             f"(mở giá)</span>") if is_open else gia_str
 
-                if is_open:
-                    label = f"✏️ {row['ma_hang']} — {row['ten_hang']}"
-                    col_lbl, col_sl, col_gia, col_btn = st.columns([4, 1, 2, 1])
-                else:
-                    label = f"{row['ma_hang']} — {row['ten_hang']}  |  {gia_def:,}đ".replace(",", ".")
-                    col_lbl, col_sl, col_btn = st.columns([5, 1, 1])
+                with st.container(border=True):
+                    # Top: mã (mono) — tên (bold)  | giá (emerald, right)
+                    st.markdown(
+                        f'<div style="display:flex;justify-content:space-between;'
+                        f'gap:12px;align-items:flex-start;margin-bottom:8px;">'
+                        f'<div style="flex:1;min-width:0;font-size:13px;">'
+                        f'<span class="sc-mono" style="color:var(--sc-ink-3);'
+                        f'font-size:11.5px;">{_html_esc.escape(ma)}</span>'
+                        f' <span style="font-weight:500;">'
+                        f'{_html_esc.escape(ten)}</span></div>'
+                        f'<div style="font-variant-numeric:tabular-nums;'
+                        f'font-weight:600;color:var(--sc-emerald-ink);'
+                        f'font-size:13px;white-space:nowrap;">{gia_label}</div>'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+                    # Bottom: SL | (Giá nếu open) | ➕ Thêm
+                    if is_open:
+                        c_sl, c_gia, c_btn = st.columns([1, 2, 1.4])
+                    else:
+                        c_sl, c_btn = st.columns([1, 1.4])
+                        c_gia = None
 
-                with col_lbl:
-                    st.markdown(f"<span style='font-size:0.9rem'>{label}</span>",
-                                unsafe_allow_html=True)
-                with col_sl:
-                    sl = st.number_input("SL", min_value=1, value=1,
-                                          key=f"{key_prefix}_sl_{row['ma_hang']}",
-                                          label_visibility="collapsed")
-
-                if is_open:
-                    with col_gia:
-                        gia_input = st.number_input(
-                            "Giá", min_value=0, value=gia_def, step=10000,
-                            key=f"{key_prefix}_gia_{row['ma_hang']}",
-                            label_visibility="collapsed",
+                    with c_sl:
+                        sl = st.number_input(
+                            "SL", min_value=1, value=1,
+                            key=f"{key_prefix}_sl_{ma}",
                         )
-                else:
-                    gia_input = gia_def
-
-                with col_btn:
-                    can_add = (not is_open) or (gia_input > 0)
-                    if st.button("➕", key=f"{key_prefix}_add_{row['ma_hang']}",
-                                  disabled=not can_add):
+                    if c_gia is not None:
+                        with c_gia:
+                            gia_input = st.number_input(
+                                "Đơn giá", min_value=0, value=gia_def,
+                                step=10000,
+                                key=f"{key_prefix}_gia_{ma}",
+                            )
+                    else:
+                        gia_input = gia_def
+                    with c_btn:
+                        st.markdown(
+                            '<div style="height:24px;"></div>',
+                            unsafe_allow_html=True,
+                        )
+                        can_add = (not is_open) or (gia_input > 0)
+                        if st.button(
+                            "➕ Thêm", key=f"{key_prefix}_add_{ma}",
+                            disabled=not can_add,
+                            type="primary",
+                            use_container_width=True,
+                        ):
+                            st.session_state.setdefault(items_key, []).append({
+                                "loai_dong": "Dịch vụ",
+                                "ten_hang":  ten,
+                                "ma_hang":   ma,
+                                "so_luong":  int(sl),
+                                "don_gia":   int(gia_input),
+                            })
+                            st.rerun()
+        elif ma_tim.strip():
+            # Fallback: manual entry trong 1 bordered card riêng
+            st.caption("⚠️ Không tìm thấy — nhập tay bên dưới")
+            with st.container(border=True):
+                ten_tay = st.text_input(
+                    "Tên dịch vụ / linh kiện",
+                    key=f"{key_prefix}_tay_ten",
+                    placeholder="VD: Thay dây da custom...",
+                )
+                ct1, ct2, ct3 = st.columns([1, 2, 1.4])
+                with ct1:
+                    sl_tay = st.number_input(
+                        "SL", min_value=1, value=1,
+                        key=f"{key_prefix}_tay_sl",
+                    )
+                with ct2:
+                    gia_tay = st.number_input(
+                        "Đơn giá (đ)", min_value=0, step=10000, value=0,
+                        key=f"{key_prefix}_tay_gia",
+                    )
+                with ct3:
+                    st.markdown(
+                        '<div style="height:24px;"></div>',
+                        unsafe_allow_html=True,
+                    )
+                    if st.button(
+                        "➕ Thêm", key=f"{key_prefix}_tay_add",
+                        disabled=not ten_tay.strip(),
+                        type="primary",
+                        use_container_width=True,
+                    ):
                         st.session_state.setdefault(items_key, []).append({
                             "loai_dong": "Dịch vụ",
-                            "ten_hang":  str(row["ten_hang"]),
-                            "ma_hang":   str(row["ma_hang"]),
-                            "so_luong":  int(sl),
-                            "don_gia":   int(gia_input),
+                            "ten_hang": ten_tay.strip(),
+                            "ma_hang": None,
+                            "so_luong": int(sl_tay),
+                            "don_gia": int(gia_tay),
                         })
                         st.rerun()
-        elif ma_tim.strip():
-            st.caption("Không tìm thấy — có thể nhập tay bên dưới:")
-            ca, cb, cc, cd = st.columns([3, 1, 2, 1])
-            with ca: ten_tay = st.text_input("Tên:", key=f"{key_prefix}_tay_ten")
-            with cb: sl_tay  = st.number_input("SL:", min_value=1, value=1, key=f"{key_prefix}_tay_sl")
-            with cc: gia_tay = st.number_input("Đơn giá:", min_value=0, step=10000,
-                                                value=0, key=f"{key_prefix}_tay_gia")
-            with cd:
-                st.write("")
-                if st.button("➕", key=f"{key_prefix}_tay_add") and ten_tay.strip():
-                    st.session_state.setdefault(items_key, []).append({
-                        "loai_dong": "Dịch vụ", "ten_hang": ten_tay.strip(),
-                        "ma_hang": None, "so_luong": sl_tay, "don_gia": gia_tay,
-                    })
-                    st.rerun()
 
     def _hien_thi_items(items_key: str):
         items = st.session_state.get(items_key, [])
@@ -599,24 +661,25 @@ def module_sua_chua():
         fcnt = st.session_state.setdefault("sc_drawer_form_count", 0)
         ma_du_kien = _preview_next_ma_phieu()
 
-        # ── Header drawer ──
-        head_l, head_r = st.columns([5, 1])
-        with head_l:
-            st.markdown(
-                f'<div class="sc-root"><div class="sc-drawer-head">'
-                f'<div class="small">PHIẾU SỬA CHỮA MỚI</div>'
-                f'<h2><span class="id sc-mono">{ma_du_kien}</span></h2>'
-                f'<div class="meta" style="font-size:11px;color:var(--sc-ink-3);">'
-                f'Mã thực sẽ cấp khi lưu</div>'
-                f'</div></div>',
-                unsafe_allow_html=True,
-            )
-        with head_r:
+        # ── Top action row: ✕ Close (right-aligned, same pattern as detail/edit) ──
+        _spc, _btn_x = st.columns([7, 1])
+        with _btn_x:
             if st.button("✕", key=f"sc_drawer_create_close_{fcnt}",
                          help="Đóng (huỷ form)",
                          use_container_width=True):
                 close_drawer()
                 st.rerun()
+
+        # ── Header full-width (thụt xuống dưới button row) ──
+        st.markdown(
+            f'<div class="sc-root"><div class="sc-drawer-head">'
+            f'<div class="small">PHIẾU SỬA CHỮA MỚI</div>'
+            f'<h2><span class="id sc-mono">{ma_du_kien}</span></h2>'
+            f'<div class="meta" style="font-size:11px;color:var(--sc-ink-3);">'
+            f'Mã thực sẽ cấp khi lưu</div>'
+            f'</div></div>',
+            unsafe_allow_html=True,
+        )
 
         # ── Section 1: Khách hàng ──
         st.markdown(
@@ -851,7 +914,18 @@ def module_sua_chua():
         }
         pill_cls = PILL_CLASS.get(cur_tt, "")
 
-        # ── Header drawer (full-width, không nest columns) ──
+        # ── Top action row: ✕ Đóng (right-aligned, same pattern as detail) ──
+        _spc, _btn_x = st.columns([7, 1])
+        with _btn_x:
+            if st.button("✕", key=f"sc_drawer_edit_close_{fcnt}",
+                         help="Quay lại chi tiết (huỷ chỉnh sửa)",
+                         use_container_width=True):
+                st.session_state.pop("sc_form_mode", None)
+                st.session_state["sc_drawer_form_count"] = \
+                    st.session_state.get("sc_drawer_form_count", 0) + 1
+                st.rerun()
+
+        # ── Header full-width (thụt xuống dưới buttons row) ──
         st.markdown(
             f'<div class="sc-drawer-head">'
             f'<div class="small">CẬP NHẬT PHIẾU</div>'
@@ -863,14 +937,6 @@ def module_sua_chua():
             f'</div></div>',
             unsafe_allow_html=True,
         )
-        if st.button("✕ Đóng (huỷ chỉnh sửa)",
-                     key=f"sc_drawer_edit_close_{fcnt}",
-                     use_container_width=False):
-            # Chỉ pop form_mode để quay về detail view, KHÔNG đóng drawer
-            st.session_state.pop("sc_form_mode", None)
-            st.session_state["sc_drawer_form_count"] = \
-                st.session_state.get("sc_drawer_form_count", 0) + 1
-            st.rerun()
 
         # ── Section: Trạng thái (selectbox đơn giản, không radio horizontal) ──
         st.markdown(
@@ -1618,44 +1684,40 @@ def module_sua_chua():
                     tt_phieu = str(_v("trang_thai")) or ""
                     pill_cls = PILL_CLASS.get(tt_phieu, "")
 
-                    # ── Header ──
-                    head_l, head_r = st.columns([5, 1.2])
-                    with head_l:
-                        st.markdown(
-                            f'<div class="sc-root"><div class="sc-drawer-head">'
-                            f'<div class="small">PHIẾU SỬA CHỮA</div>'
-                            f'<h2><span class="id sc-mono">{_html_esc.escape(str(_v("ma_phieu")))}</span>'
-                            f' · {_html_esc.escape(str(_v("ten_khach", "—")) or "—")}</h2>'
-                            f'<div class="meta">'
-                            f'<span>📞 {_html_esc.escape(str(_v("sdt_khach", "—")) or "—")}</span>'
-                            f'<span class="sc-pill {pill_cls}">{_html_esc.escape(tt_phieu)}</span>'
-                            f'</div>'
-                            f'</div></div>',
-                            unsafe_allow_html=True,
-                        )
-                    with head_r:
-                        # Edit ✎ + Close ✕
-                        bcol_edit, bcol_close = st.columns(2)
-                        with bcol_edit:
-                            edit_disabled = (tt_phieu == "Hoàn thành")
-                            if st.button("✎", key="sc_drawer_edit",
-                                         help=("Phiếu Hoàn thành không thể sửa"
-                                               if edit_disabled
-                                               else "Cập nhật phiếu"),
-                                         disabled=edit_disabled,
-                                         use_container_width=True):
-                                # Switch sang edit mode — drawer column
-                                # render _render_edit_drawer ở rerun tới
-                                st.session_state["sc_form_mode"] = "edit"
-                                st.session_state["sc_drawer_form_count"] = \
-                                    st.session_state.get("sc_drawer_form_count", 0) + 1
-                                st.rerun()
-                        with bcol_close:
-                            if st.button("✕", key="sc_drawer_close",
-                                         help="Đóng",
-                                         use_container_width=True):
-                                _close_drawer()
-                                st.rerun()
+                    # ── Top action row: ✎ Edit + ✕ Close (right-aligned) ──
+                    edit_disabled = (tt_phieu == "Hoàn thành")
+                    _spacer, _btn_edit, _btn_close = st.columns([6, 1, 1])
+                    with _btn_edit:
+                        if st.button("✎", key="sc_drawer_edit",
+                                     help=("Phiếu Hoàn thành không thể sửa"
+                                           if edit_disabled
+                                           else "Cập nhật phiếu"),
+                                     disabled=edit_disabled,
+                                     use_container_width=True):
+                            st.session_state["sc_form_mode"] = "edit"
+                            st.session_state["sc_drawer_form_count"] = \
+                                st.session_state.get("sc_drawer_form_count", 0) + 1
+                            st.rerun()
+                    with _btn_close:
+                        if st.button("✕", key="sc_drawer_close",
+                                     help="Đóng",
+                                     use_container_width=True):
+                            _close_drawer()
+                            st.rerun()
+
+                    # ── Header full-width (thụt xuống dưới buttons row) ──
+                    st.markdown(
+                        f'<div class="sc-root"><div class="sc-drawer-head">'
+                        f'<div class="small">PHIẾU SỬA CHỮA</div>'
+                        f'<h2><span class="id sc-mono">{_html_esc.escape(str(_v("ma_phieu")))}</span>'
+                        f' · {_html_esc.escape(str(_v("ten_khach", "—")) or "—")}</h2>'
+                        f'<div class="meta">'
+                        f'<span>📞 {_html_esc.escape(str(_v("sdt_khach", "—")) or "—")}</span>'
+                        f'<span class="sc-pill {pill_cls}">{_html_esc.escape(tt_phieu)}</span>'
+                        f'</div>'
+                        f'</div></div>',
+                        unsafe_allow_html=True,
+                    )
 
                     # ── Card 1: Thông tin tiếp nhận ──
                     def _vesc(key, default="—"):
@@ -1862,16 +1924,18 @@ def module_sua_chua():
                             except Exception as e:
                                 st.error(f"Lỗi in: {e}")
                     with foot_r:
-                        # 🗑 Xóa phiếu — disabled nếu phiếu có HĐ APSC chưa hủy
-                        delete_disabled = bool(apsc_data and
-                                               apsc_data.get("Trạng thái") != "Đã hủy")
-                        if st.button("🗑 Xóa phiếu",
-                                     key=f"sc_delete_phieu_{drawer_ma}",
-                                     disabled=delete_disabled,
-                                     help=("Hủy HĐ APSC trước khi xóa phiếu"
-                                           if delete_disabled
-                                           else "Xóa phiếu + items (cần type XÓA)"),
-                                     use_container_width=True):
-                            st.session_state["sc_delete_open"] = drawer_ma
-                            st.rerun()
+                        # 🗑 Xóa phiếu — admin only + disabled nếu phiếu có
+                        # HĐ APSC chưa hủy. Non-admin: button không hiện.
+                        if is_admin():
+                            delete_disabled = bool(apsc_data and
+                                                   apsc_data.get("Trạng thái") != "Đã hủy")
+                            if st.button("🗑 Xóa phiếu",
+                                         key=f"sc_delete_phieu_{drawer_ma}",
+                                         disabled=delete_disabled,
+                                         help=("Hủy HĐ APSC trước khi xóa phiếu"
+                                               if delete_disabled
+                                               else "Xóa phiếu + items (cần type XÓA)"),
+                                         use_container_width=True):
+                                st.session_state["sc_delete_open"] = drawer_ma
+                                st.rerun()
 

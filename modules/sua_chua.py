@@ -62,9 +62,16 @@ _SC_CSS = """
     --sc-indigo-ink: oklch(0.4 0.13 260);
 }
 
-/* Body warm bg + font */
-.stApp { background: var(--sc-bg); }
-.stApp, .stApp * { font-family: 'Be Vietnam Pro', system-ui, -apple-system, sans-serif; }
+/* Body warm bg + font.
+   Set font CHỈ trên .stApp — children tự inherit. Icon containers
+   (Material Symbols / Material Icons) có font-family riêng tự override
+   inheritance, nên ligature "expand_more" render đúng thành icon. */
+.stApp { background: var(--sc-bg); font-family: 'Be Vietnam Pro', system-ui, -apple-system, sans-serif; }
+/* Restore icon fonts nếu bị global override khác trộn vào */
+[class*="material-symbols"], [class*="material-icons"],
+.material-symbols-outlined, .material-symbols-rounded, .material-icons {
+    font-family: 'Material Symbols Outlined', 'Material Icons' !important;
+}
 .sc-mono { font-family: 'DM Mono', ui-monospace, monospace; font-feature-settings: 'tnum'; }
 .sc-num  { font-variant-numeric: tabular-nums; }
 
@@ -178,7 +185,7 @@ _SC_CSS = """
 .sc-drawer-head { padding: 14px 16px; border-bottom: 1px solid var(--sc-line); background: var(--sc-surface); border-radius: 10px 10px 0 0; }
 .sc-drawer-head .small { font-size: 11px; color: var(--sc-ink-3); letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 4px; }
 .sc-drawer-head h2 { margin: 0; font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.sc-drawer-head h2 .id { font-family: 'DM Mono', monospace; font-size: 14px; color: var(--sc-ink-2); }
+.sc-drawer-head h2 .id { font-family: 'DM Mono', monospace; font-size: 17px; color: var(--sc-ink); font-weight: 700; letter-spacing: 0.02em; margin-right: 4px; }
 .sc-drawer-head .meta { margin-top: 6px; font-size: 12.5px; color: var(--sc-ink-2); display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 
 .sc-d-card { background: var(--sc-surface); border: 1px solid var(--sc-line); border-radius: 10px; padding: 12px 14px; }
@@ -1388,8 +1395,12 @@ def module_sua_chua():
             if has_filter:
                 if st.button("✕ Xóa lọc", key="sc_clear_filter",
                              use_container_width=True):
-                    for k in ("sc_search", "sc_tt_filter", "sc_cn_filter"):
-                        st.session_state.pop(k, None)
+                    # Set explicit default values thay vì pop —
+                    # st.selectbox widget state không reset bằng pop alone.
+                    st.session_state["sc_search"] = ""
+                    st.session_state["sc_tt_filter"] = "Trạng thái: Tất cả"
+                    if show_branch_filter:
+                        st.session_state["sc_cn_filter"] = "Chi nhánh: Tất cả"
                     _close_drawer()
                     st.rerun()
 
@@ -1575,6 +1586,20 @@ def module_sua_chua():
                         _close_drawer()
                         st.rerun()
                 else:
+                    # Normalize NaN/None → "" cho mọi field. df.iloc[0].to_dict()
+                    # giữ NaN cho object cols → (NaN or "").strip() crash
+                    # AttributeError. Apply uniform fix với helper local.
+                    def _v(key, default=""):
+                        val = t.get(key)
+                        if val is None:
+                            return default
+                        try:
+                            if isinstance(val, float) and pd.isna(val):
+                                return default
+                        except Exception:
+                            pass
+                        return val
+
                     # Map status → pill class
                     PILL_CLASS = {
                         "Hoàn thành":     "done",
@@ -1582,7 +1607,7 @@ def module_sua_chua():
                         "Chờ linh kiện":  "waiting",
                         "Chờ giao khách": "handover",
                     }
-                    tt_phieu = t.get("trang_thai", "") or ""
+                    tt_phieu = str(_v("trang_thai")) or ""
                     pill_cls = PILL_CLASS.get(tt_phieu, "")
 
                     # ── Header ──
@@ -1591,11 +1616,11 @@ def module_sua_chua():
                         st.markdown(
                             f'<div class="sc-root"><div class="sc-drawer-head">'
                             f'<div class="small">PHIẾU SỬA CHỮA</div>'
-                            f'<h2><span class="id sc-mono">{t.get("ma_phieu","")}</span>'
-                            f'· {t.get("ten_khach","") or "—"}</h2>'
+                            f'<h2><span class="id sc-mono">{_html_esc.escape(str(_v("ma_phieu")))}</span>'
+                            f' · {_html_esc.escape(str(_v("ten_khach", "—")) or "—")}</h2>'
                             f'<div class="meta">'
-                            f'<span>📞 {t.get("sdt_khach","") or "—"}</span>'
-                            f'<span class="sc-pill {pill_cls}">{tt_phieu}</span>'
+                            f'<span>📞 {_html_esc.escape(str(_v("sdt_khach", "—")) or "—")}</span>'
+                            f'<span class="sc-pill {pill_cls}">{_html_esc.escape(tt_phieu)}</span>'
                             f'</div>'
                             f'</div></div>',
                             unsafe_allow_html=True,
@@ -1625,41 +1650,47 @@ def module_sua_chua():
                                 st.rerun()
 
                     # ── Card 1: Thông tin tiếp nhận ──
+                    def _vesc(key, default="—"):
+                        v = _v(key, default)
+                        s = str(v) if v else default
+                        return _html_esc.escape(s or default)
+
                     st.markdown(
                         '<div class="sc-root"><div class="sc-d-card">'
                         '<div class="sc-d-card-title">📋 Thông tin tiếp nhận</div>'
                         '<div class="sc-info-grid">'
                         f'<div class="sc-info-row"><span class="lab">Chi nhánh</span>'
-                        f'<span class="val">{t.get("chi_nhanh","") or "—"}</span></div>'
+                        f'<span class="val">{_vesc("chi_nhanh")}</span></div>'
                         f'<div class="sc-info-row"><span class="lab">Loại YC</span>'
-                        f'<span class="val">{t.get("loai_yeu_cau","") or "—"}</span></div>'
+                        f'<span class="val">{_vesc("loai_yeu_cau")}</span></div>'
                         f'<div class="sc-info-row"><span class="lab">Hiệu đồng hồ</span>'
-                        f'<span class="val">{t.get("hieu_dong_ho","") or "—"}</span></div>'
+                        f'<span class="val">{_vesc("hieu_dong_ho")}</span></div>'
                         f'<div class="sc-info-row"><span class="lab">Đặc điểm</span>'
-                        f'<span class="val">{t.get("dac_diem","") or "—"}</span></div>'
+                        f'<span class="val">{_vesc("dac_diem")}</span></div>'
                         f'<div class="sc-info-row"><span class="lab">NV tiếp nhận</span>'
-                        f'<span class="val">{t.get("nguoi_tiep_nhan","") or "—"}</span></div>'
+                        f'<span class="val">{_vesc("nguoi_tiep_nhan")}</span></div>'
                         f'<div class="sc-info-row"><span class="lab">Ngày tiếp nhận</span>'
-                        f'<span class="val sc-num">{t.get("Ngày TN","") or "—"}</span></div>'
+                        f'<span class="val sc-num">{_vesc("Ngày TN")}</span></div>'
                         f'<div class="sc-info-row full"><span class="lab">Hẹn trả</span>'
-                        f'<span class="val">{t.get("ngay_hen_tra","") or "—"}</span></div>'
+                        f'<span class="val">{_vesc("ngay_hen_tra")}</span></div>'
                         '</div></div></div>',
                         unsafe_allow_html=True,
                     )
 
                     # ── Card 2: Mô tả lỗi + ghi chú nội bộ ──
-                    mo_ta = (t.get("mo_ta_loi") or "").strip()
-                    ghi_chu = (t.get("ghi_chu_noi_bo") or "").strip()
+                    mo_ta = str(_v("mo_ta_loi")).strip()
+                    ghi_chu = str(_v("ghi_chu_noi_bo")).strip()
                     desc_html = (
                         '<div class="sc-root"><div class="sc-d-card">'
                         '<div class="sc-d-card-title">📝 Mô tả lỗi / Yêu cầu</div>'
-                        f'<div class="sc-desc-block">{mo_ta or "—"}</div>'
+                        f'<div class="sc-desc-block">'
+                        f'{_html_esc.escape(mo_ta) if mo_ta else "—"}</div>'
                     )
                     if ghi_chu:
                         desc_html += (
                             '<div class="sc-desc-note">'
                             '<div class="lab">GHI CHÚ NỘI BỘ</div>'
-                            f'<div>{ghi_chu}</div>'
+                            f'<div>{_html_esc.escape(ghi_chu)}</div>'
                             '</div>'
                         )
                     desc_html += '</div></div>'
@@ -1707,7 +1738,7 @@ def module_sua_chua():
                         items_html += '</tbody></table>'
 
                     # 3 money cards
-                    da_tra_truoc = int(t.get("khach_tra_truoc") or 0)
+                    da_tra_truoc = int(_v("khach_tra_truoc", 0) or 0)
                     con_lai = max(0, tong_hang - da_tra_truoc)
                     con_lai_cls = "danger" if con_lai > 0 else "success"
                     items_html += (
@@ -1813,10 +1844,11 @@ def module_sua_chua():
                                      key=f"sc_print_a5_{drawer_ma}",
                                      use_container_width=True):
                             try:
+                                # Normalize NaN/None → "" cho _build_phieu_html
                                 phieu_dict = {
-                                    **t,
-                                    "ngay_tn_str": t.get("Ngày TN", ""),
+                                    k: _v(k, "") for k in t.keys()
                                 }
+                                phieu_dict["ngay_tn_str"] = _v("Ngày TN", "")
                                 html_a5 = _build_phieu_html(phieu_dict, ct)
                                 _in_phieu_sc(html_a5, key=f"sc_a5_{drawer_ma}")
                             except Exception as e:

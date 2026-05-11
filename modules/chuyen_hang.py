@@ -39,6 +39,30 @@ STATUS_EMOJI = {
 
 
 # ════════════════════════════════════════════════════════════════
+# CART CALLBACKS — chạy trước script rerun nên state đã updated
+# khi cart re-render. Pattern `if st.button(): items.append()` chạy
+# SAU khi cart đã render trong cùng run → cần 2 click mới thấy.
+# ════════════════════════════════════════════════════════════════
+
+def _add_to_cart_cb(mh: str, tn: str, gb: int):
+    items = st.session_state.get("ck_items", [])
+    items.append({
+        "ma_hang":  mh,
+        "ten_hang": tn,
+        "so_luong": 1,
+        "gia_ban":  int(gb),
+    })
+    st.session_state["ck_items"] = items
+
+
+def _remove_from_cart_cb(idx: int):
+    items = st.session_state.get("ck_items", [])
+    if 0 <= idx < len(items):
+        items.pop(idx)
+    st.session_state["ck_items"] = items
+
+
+# ════════════════════════════════════════════════════════════════
 # BACKEND HELPERS — RPC + race-retry mã phiếu (giữ nguyên hành vi)
 # ════════════════════════════════════════════════════════════════
 
@@ -512,12 +536,11 @@ def _render_form(ma_phieu: str | None, df_phieu: pd.DataFrame | None):
                 tien = int(new_sl) * int(it["gia_ban"])
                 st.markdown(f":{color}[{tien:,}đ]".replace(",", "."))
             with c_del:
-                if st.button("🗑", key=f"ck_del_{idx}", use_container_width=True,
-                             help="Xóa khỏi giỏ"):
-                    items.pop(idx)
-                    st.session_state["ck_items"] = items
-                    # Không gọi st.rerun() — sẽ đóng dialog. Streamlit tự rerun
-                    # khi button click; cart re-render với items đã update.
+                # on_click callback chạy TRƯỚC rerun để tránh bug "phải bấm 2 lần"
+                # (cart đã render với items cũ khi if-button block executes).
+                st.button("🗑", key=f"ck_del_{idx}", use_container_width=True,
+                          help="Xóa khỏi giỏ",
+                          on_click=_remove_from_cart_cb, args=(idx,))
             total_sl += int(new_sl)
             total_gb += int(new_sl) * int(it["gia_ban"])
 
@@ -575,15 +598,10 @@ def _render_form(ma_phieu: str | None, df_phieu: pd.DataFrame | None):
                     if already:
                         st.markdown(":green[✓ Đã thêm]")
                     else:
-                        if st.button("➕", key=f"ck_add_{mh}", use_container_width=True):
-                            items.append({
-                                "ma_hang":  mh,
-                                "ten_hang": tn,
-                                "so_luong": 1,
-                                "gia_ban":  gb,
-                            })
-                            st.session_state["ck_items"] = items
-                            # Không gọi st.rerun() — đóng dialog. Button click tự rerun.
+                        # on_click callback chạy TRƯỚC rerun → state updated
+                        # trước khi cart re-render. Tránh bug "phải bấm 2 lần".
+                        st.button("➕", key=f"ck_add_{mh}", use_container_width=True,
+                                  on_click=_add_to_cart_cb, args=(mh, tn, gb))
 
     # ── Validation + Submit ──
     st.divider()

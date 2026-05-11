@@ -778,6 +778,19 @@ def _dlg_cancel(ma_phieu: str, df_phieu: pd.DataFrame):
 
 def module_chuyen_hang():
     try:
+        # ════════════════════════════════════════════════════════
+        # CLEANUP STALE GROUP SELECTIONS — chạy đầu run trước khi
+        # bất kỳ st.dataframe nào render. Streamlit không cho modify
+        # widget state sau khi widget render, nên việc clear phải
+        # defer sang run kế (set _ch_clear_keys cuối run trước).
+        # ════════════════════════════════════════════════════════
+        for _k in st.session_state.pop("_ch_clear_keys", []):
+            if _k in st.session_state:
+                try:
+                    st.session_state[_k] = {"selection": {"rows": [], "columns": []}}
+                except Exception:
+                    pass
+
         active = get_active_branch()
         accessible = get_accessible_branches()
         view_cns = tuple(accessible) if is_ke_toan_or_admin() else (active,)
@@ -910,6 +923,7 @@ def module_chuyen_hang():
                 }
 
                 any_selection = False
+                groups_with_sel = []  # (grp_key, ma) — dùng để clear stale selections
                 for date_key, group_df in display_df.groupby("_date_key", sort=False):
                     label = _format_date_label(date_key) if date_key else "—"
                     st.markdown(
@@ -933,6 +947,7 @@ def module_chuyen_hang():
                     if sel_rows:
                         any_selection = True
                         ma = grp_view.iloc[sel_rows[0]]["Mã phiếu"]
+                        groups_with_sel.append((grp_key, ma))
                         # Chỉ mở dialog cho NEW selection — first new wins.
                         if (detail_ma_candidate is None and
                                 st.session_state.get("_ch_dialog_for") != ma):
@@ -941,6 +956,19 @@ def module_chuyen_hang():
                 # User bỏ chọn hết → reset dedup flag để có thể click lại
                 if not any_selection:
                     st.session_state.pop("_ch_dialog_for", None)
+
+                # Khi chọn row mới ở group A trong khi group B vẫn còn
+                # selection stale → schedule clear B cho run kế. Streamlit
+                # không cho modify widget state ngay trong run này (sau
+                # khi widget đã render), nên defer qua session_state flag.
+                if detail_ma_candidate and len(groups_with_sel) > 1:
+                    keep_key = next(
+                        (k for k, ma in groups_with_sel if ma == detail_ma_candidate),
+                        None,
+                    )
+                    stale_keys = [k for k, _ in groups_with_sel if k != keep_key]
+                    if stale_keys:
+                        st.session_state["_ch_clear_keys"] = stale_keys
 
                 # Pagination controls
                 if total_pages > 1:

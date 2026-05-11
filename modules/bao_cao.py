@@ -567,8 +567,14 @@ def _tab_cuoi_ngay():
     # ── Phiếu sửa chữa hôm nay — data chung CN ──
     df_sc = _apply_admin_filter(_load_sc_phieu(load_cns, today, today))
 
-    so_sc_tao    = len(df_sc)
-    so_sc_xong   = len(df_sc[df_sc["trang_thai"] == "Hoàn thành"]) if not df_sc.empty else 0
+    so_sc_tao = len(df_sc)
+    # Phiếu giao xong = số HĐ APSC tạo hôm nay (mỗi phiếu giao tạo đúng 1 APSC).
+    # Đếm qua raw_today thay vì df_sc vì phiếu có thể tạo trước, giao xong hôm nay.
+    if not raw_today.empty:
+        apsc_today = raw_today.drop_duplicates(subset=["Mã hóa đơn"])
+        so_sc_xong = int(apsc_today["Mã hóa đơn"].apply(_is_apsc_hd).sum())
+    else:
+        so_sc_xong = 0
 
     st.markdown(
         "<div style='font-size:0.82rem;font-weight:600;color:#555;"
@@ -637,9 +643,19 @@ def _tab_cuoi_ngay():
             return "📋 KiotViet"
         hd_unique["Loại"] = hd_unique["Mã hóa đơn"].apply(_loai)
 
+        # APSC ghi vào table hoa_don chỉ có cột "Người bán" (= ho_ten),
+        # không có "Người tạo" → fallback để bảng không hiện None.
+        if "Người bán" in hd_unique.columns:
+            if "Người tạo" not in hd_unique.columns:
+                hd_unique["Người tạo"] = hd_unique["Người bán"]
+            else:
+                mask_empty = hd_unique["Người tạo"].isna() | \
+                    hd_unique["Người tạo"].astype(str).str.strip().isin(["", "None", "nan"])
+                hd_unique.loc[mask_empty, "Người tạo"] = hd_unique.loc[mask_empty, "Người bán"]
+
         st.markdown(
             "<div style='font-size:0.82rem;font-weight:600;color:#555;"
-            "margin:14px 0 6px;'>📋 Danh sách chứng từ</div>",
+            "margin:14px 0 6px;'>📋 Giao dịch hôm nay</div>",
             unsafe_allow_html=True
         )
         cols_show = ["Mã hóa đơn", "Loại", "Thời gian", "Tên khách hàng",

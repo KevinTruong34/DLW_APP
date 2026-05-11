@@ -168,6 +168,18 @@ def _clean_str(v) -> str:
     return "" if s.lower() in ("nan", "none") else s
 
 
+def _format_date_label(d) -> str:
+    """Format date label cho group header: HÔM NAY / HÔM QUA / THỨ X, dd/mm/yyyy."""
+    today = datetime.now().date()
+    if d == today:
+        return "HÔM NAY"
+    if d == today - timedelta(days=1):
+        return "HÔM QUA"
+    weekdays = ["THỨ HAI", "THỨ BA", "THỨ TƯ", "THỨ NĂM",
+                "THỨ SÁU", "THỨ BẢY", "CHỦ NHẬT"]
+    return f"{weekdays[d.weekday()]}, {d.strftime('%d/%m/%Y')}"
+
+
 def _apply_filters(df_all: pd.DataFrame, query: str, period: str, branch: str,
                    status: str, first_month, first_last) -> pd.DataFrame:
     df = df_all.copy()
@@ -178,7 +190,9 @@ def _apply_filters(df_all: pd.DataFrame, query: str, period: str, branch: str,
         df = df[(df["_date"] >= first_last) & (df["_date"] <= last_end)]
     if branch != "Tất cả":
         df = df[(df["tu_chi_nhanh"] == branch) | (df["toi_chi_nhanh"] == branch)]
-    if status != "Tất cả":
+    if status == "Tất cả (trừ phiếu hủy)":
+        df = df[df["trang_thai"] != "Đã hủy"]
+    elif status != "Tất cả":
         df = df[df["trang_thai"] == status]
     if query.strip():
         q = _normalize(query)
@@ -198,7 +212,7 @@ def _apply_filters(df_all: pd.DataFrame, query: str, period: str, branch: str,
 
 
 def _build_display_df(df: pd.DataFrame, gia_map: dict) -> pd.DataFrame:
-    """Build dataframe để hiển thị trong st.dataframe — 1 row/phiếu."""
+    """Build dataframe để hiển thị — 1 row/phiếu. Cột `_date_key` ẩn dùng để group."""
     if df.empty:
         return pd.DataFrame()
     rows = []
@@ -209,10 +223,12 @@ def _build_display_df(df: pd.DataFrame, gia_map: dict) -> pd.DataFrame:
             if ts.tzinfo is None:
                 ts = ts.tz_localize("UTC")
             ts_vn = ts.tz_convert("Asia/Ho_Chi_Minh")
-            date_str = ts_vn.strftime("%d/%m %H:%M")
+            time_str = ts_vn.strftime("%H:%M")
+            date_key = ts_vn.date()
             ts_sort = ts_vn
         except Exception:
-            date_str = ""
+            time_str = ""
+            date_key = None
             ts_sort = None
         tu = _clean_str(head.get("tu_chi_nhanh"))
         toi = _clean_str(head.get("toi_chi_nhanh"))
@@ -226,8 +242,9 @@ def _build_display_df(df: pd.DataFrame, gia_map: dict) -> pd.DataFrame:
             tot_gia += slc * gb
         rows.append({
             "_sort": ts_sort,
+            "_date_key": date_key,
             "Mã phiếu":   ma,
-            "Thời gian":  date_str,
+            "Giờ":        time_str,
             "Chi nhánh":  f"{_fmt_branch(tu)} → {_fmt_branch(toi)}",
             "Mặt hàng":   f"{n_mat} mục · {tong_sl} SL",
             "Giá trị":    _fmt_money_short(tot_gia),
@@ -499,7 +516,8 @@ def _render_form(ma_phieu: str | None, df_phieu: pd.DataFrame | None):
                              help="Xóa khỏi giỏ"):
                     items.pop(idx)
                     st.session_state["ck_items"] = items
-                    st.rerun()
+                    # Không gọi st.rerun() — sẽ đóng dialog. Streamlit tự rerun
+                    # khi button click; cart re-render với items đã update.
             total_sl += int(new_sl)
             total_gb += int(new_sl) * int(it["gia_ban"])
 
@@ -514,35 +532,32 @@ def _render_form(ma_phieu: str | None, df_phieu: pd.DataFrame | None):
     st.divider()
 
     # ── Search & add ──
+    # Luôn enforce "chỉ hàng còn tồn ở nguồn" — không cho phép chuyển hàng hết kho.
     st.markdown("**🔍 Thêm sản phẩm**")
-    cols = st.columns([3, 2])
-    kw = cols[0].text_input("Tìm", placeholder="Tìm theo mã, tên...",
-                            key="ck_search", label_visibility="collapsed")
-    only_stock = cols[1].checkbox("Chỉ hàng còn tồn ở nguồn", value=True, key="ck_only_stock")
+    kw = st.text_input("Tìm", placeholder="Tìm theo mã, tên...",
+                       key="ck_search", label_visibility="collapsed")
 
     hh = load_hang_hoa()
     if hh.empty:
         st.warning("Chưa có dữ liệu Hàng hóa master.")
+    elif not kw.strip():
+        # Không hiện gợi ý khi search trống — chỉ render kết quả khi user gõ.
+        st.caption("Gõ mã/tên sản phẩm để tìm kiếm.")
     else:
         hh_list = hh.copy()
         hh_list["_ton_src"] = hh_list["ma_hang"].astype(str).map(ton_map).fillna(0).astype(int)
-        if kw.strip():
-            kwn = _normalize(kw)
-            hh_list["_n_ma"]  = hh_list["ma_hang"].apply(_normalize)
-            hh_list["_n_ten"] = hh_list["ten_hang"].apply(_normalize)
-            hh_list = hh_list[
-                hh_list["_n_ma"].str.contains(kwn, na=False) |
-                hh_list["_n_ten"].str.contains(kwn, na=False)
-            ]
-        if only_stock:
-            hh_list = hh_list[hh_list["_ton_src"] > 0]
+        kwn = _normalize(kw)
+        hh_list["_n_ma"]  = hh_list["ma_hang"].apply(_normalize)
+        hh_list["_n_ten"] = hh_list["ten_hang"].apply(_normalize)
+        hh_list = hh_list[
+            (hh_list["_n_ma"].str.contains(kwn, na=False) |
+             hh_list["_n_ten"].str.contains(kwn, na=False))
+            & (hh_list["_ton_src"] > 0)
+        ]
         hh_list = hh_list.head(SUGGEST_LIMIT)
 
         if hh_list.empty:
-            if kw.strip():
-                st.caption("Không tìm thấy sản phẩm phù hợp.")
-            else:
-                st.caption("Gõ mã/tên sản phẩm để tìm kiếm.")
+            st.caption("Không tìm thấy sản phẩm còn tồn ở nguồn.")
         else:
             for _, r in hh_list.iterrows():
                 mh     = str(r["ma_hang"])
@@ -568,7 +583,7 @@ def _render_form(ma_phieu: str | None, df_phieu: pd.DataFrame | None):
                                 "gia_ban":  gb,
                             })
                             st.session_state["ck_items"] = items
-                            st.rerun()
+                            # Không gọi st.rerun() — đóng dialog. Button click tự rerun.
 
     # ── Validation + Submit ──
     st.divider()
@@ -780,9 +795,18 @@ def module_chuyen_hang():
                 branch = active
                 st.caption(f"📍 {active}")
         with cols[3]:
+            status_options = [
+                "Tất cả (trừ phiếu hủy)",
+                "Tất cả",
+                "Phiếu tạm",
+                "Đang chuyển",
+                "Đã nhận",
+                "Đã hủy",
+            ]
             status = st.selectbox(
                 "Trạng thái",
-                ["Tất cả", "Phiếu tạm", "Đang chuyển", "Đã nhận", "Đã hủy"],
+                status_options,
+                index=0,
                 key="ch_status",
                 label_visibility="collapsed",
             )
@@ -793,138 +817,159 @@ def module_chuyen_hang():
                 key="ch_btn_create",
             )
 
-        # Handle handoffs giữa dialogs trước khi render list
-        # (mở dialog kế tiếp khi flag được set bởi dialog trước)
+        # ════════════════════════════════════════════════════════
+        # RENDER LIST TRƯỚC, DIALOG OPEN SAU
+        # — Tránh trang trắng khi user đóng dialog bằng X (rerun
+        # đôi khi không trigger đúng nếu trước đó early-return).
+        # — Bảo đảm chỉ 1 dialog mở mỗi run qua elif chain.
+        # ════════════════════════════════════════════════════════
+
+        detail_ma_candidate = None  # set bởi row selection (xử lý cuối cùng)
+
+        if df_all.empty:
+            st.info("Chưa có phiếu chuyển nào. Bấm **Tạo phiếu** để bắt đầu.")
+        else:
+            # Filtered df
+            today = datetime.now().date()
+            first_month = today.replace(day=1)
+            first_last = (first_month - timedelta(days=1)).replace(day=1)
+            df_filtered = _apply_filters(df_all, query, period, branch, status,
+                                         first_month, first_last)
+
+            # Summary metrics
+            ma_unique = df_filtered["ma_phieu"].unique() if not df_filtered.empty else []
+            total_count = len(ma_unique)
+            df_unique_phieu = (df_filtered.drop_duplicates(subset=["ma_phieu"])
+                                if not df_filtered.empty else df_filtered)
+            total_sl = int(df_unique_phieu["tong_sl_chuyen"].fillna(0).astype(int).sum()) \
+                if "tong_sl_chuyen" in df_unique_phieu.columns else 0
+            total_gt = int(df_unique_phieu["tong_gia_tri"].fillna(0).astype(int).sum()) \
+                if "tong_gia_tri" in df_unique_phieu.columns else 0
+
+            m_cols = st.columns(3)
+            m_cols[0].metric("Số phiếu trong kỳ", total_count)
+            m_cols[1].metric("Tổng số lượng", f"{total_sl:,}".replace(",", "."))
+            m_cols[2].metric("Tổng giá trị", _fmt_money_short(total_gt))
+
+            if df_filtered.empty:
+                st.info("Không có phiếu phù hợp bộ lọc.")
+            else:
+                # Pagination
+                page_key = "ch_page"
+                filter_sig = f"{query}|{period}|{branch}|{status}"
+                if st.session_state.get("_ch_filter_sig") != filter_sig:
+                    st.session_state["_ch_filter_sig"] = filter_sig
+                    st.session_state[page_key] = 0
+                page = int(st.session_state.get(page_key, 0))
+                total_pages = max(1, (total_count + PHIEU_PER_PAGE - 1) // PHIEU_PER_PAGE)
+                if page >= total_pages:
+                    page = total_pages - 1
+                if page < 0:
+                    page = 0
+
+                # Build display df (paginated)
+                ma_sorted = (df_filtered.drop_duplicates(subset=["ma_phieu"])
+                             .sort_values("_ngay", ascending=False)["ma_phieu"].tolist())
+                start = page * PHIEU_PER_PAGE
+                end = start + PHIEU_PER_PAGE
+                ma_page = ma_sorted[start:end]
+                df_page = df_filtered[df_filtered["ma_phieu"].isin(ma_page)]
+                gia_map = get_gia_ban_map()
+                display_df = _build_display_df(df_page, gia_map)
+
+                # ─── Render group theo ngày ───
+                # Mỗi group = 1 st.dataframe riêng với key unique theo date.
+                # Selection state mỗi group độc lập; logic dưới chọn group
+                # đang có selection MỚI (vs _ch_dialog_for) để mở detail.
+                col_cfg = {
+                    "Mã phiếu":   st.column_config.TextColumn(width="small"),
+                    "Giờ":        st.column_config.TextColumn(width="small"),
+                    "Chi nhánh":  st.column_config.TextColumn(width="medium"),
+                    "Mặt hàng":   st.column_config.TextColumn(width="small"),
+                    "Giá trị":    st.column_config.TextColumn(width="small"),
+                    "Người tạo":  st.column_config.TextColumn(width="small"),
+                    "Trạng thái": st.column_config.TextColumn(width="small"),
+                }
+
+                any_selection = False
+                for date_key, group_df in display_df.groupby("_date_key", sort=False):
+                    label = _format_date_label(date_key) if date_key else "—"
+                    st.markdown(
+                        f"<div style='font-size:0.78rem;font-weight:600;color:#888;"
+                        f"margin:14px 0 4px;letter-spacing:0.5px;'>{label}</div>",
+                        unsafe_allow_html=True,
+                    )
+                    grp_view = group_df.drop(columns=["_date_key"]).reset_index(drop=True)
+                    grp_key = f"ch_list_{date_key.isoformat()}" if date_key else "ch_list_none"
+                    sel = st.dataframe(
+                        grp_view,
+                        use_container_width=True,
+                        hide_index=True,
+                        on_select="rerun",
+                        selection_mode="single-row",
+                        height=42 + len(grp_view) * 36,
+                        key=grp_key,
+                        column_config=col_cfg,
+                    )
+                    sel_rows = (sel.selection.rows if hasattr(sel, "selection") else []) or []
+                    if sel_rows:
+                        any_selection = True
+                        ma = grp_view.iloc[sel_rows[0]]["Mã phiếu"]
+                        # Chỉ mở dialog cho NEW selection — first new wins.
+                        if (detail_ma_candidate is None and
+                                st.session_state.get("_ch_dialog_for") != ma):
+                            detail_ma_candidate = ma
+
+                # User bỏ chọn hết → reset dedup flag để có thể click lại
+                if not any_selection:
+                    st.session_state.pop("_ch_dialog_for", None)
+
+                # Pagination controls
+                if total_pages > 1:
+                    col_l, col_m, col_r = st.columns([1, 2, 1])
+                    if col_l.button("← Trước", disabled=(page == 0),
+                                    use_container_width=True, key="ch_pg_prev"):
+                        st.session_state[page_key] = page - 1
+                        st.rerun()
+                    col_m.markdown(
+                        f"<div style='text-align:center;padding-top:6px;font-size:0.85rem;color:#666;'>"
+                        f"Trang <b>{page+1}</b>/{total_pages} · "
+                        f"{start+1}–{min(end, total_count)} / {total_count} phiếu</div>",
+                        unsafe_allow_html=True,
+                    )
+                    if col_r.button("Sau →", disabled=(page >= total_pages - 1),
+                                    use_container_width=True, key="ch_pg_next"):
+                        st.session_state[page_key] = page + 1
+                        st.rerun()
+
+        # ════════════════════════════════════════════════════════
+        # DIALOG DISPATCH — chỉ 1 dialog mở mỗi run (elif chain)
+        # ════════════════════════════════════════════════════════
+        edit_id = st.session_state.pop("_ch_open_edit", None)
+        recv_id = st.session_state.pop("_ch_open_receive", None)
+        cnc_id  = st.session_state.pop("_ch_open_cancel", None)
+
         if create_clicked:
             _clear_cart_state()
             _dlg_create()
-            return
-
-        edit_id = st.session_state.pop("_ch_open_edit", None)
-        if edit_id:
+        elif edit_id:
             df_phieu = df_all[df_all["ma_phieu"] == edit_id]
             if not df_phieu.empty:
                 _clear_cart_state()
                 _dlg_edit(edit_id, df_phieu)
-                return
-
-        recv_id = st.session_state.pop("_ch_open_receive", None)
-        if recv_id:
+        elif recv_id:
             df_phieu = df_all[df_all["ma_phieu"] == recv_id]
             if not df_phieu.empty:
                 _dlg_receive(recv_id, df_phieu)
-                return
-
-        cnc_id = st.session_state.pop("_ch_open_cancel", None)
-        if cnc_id:
+        elif cnc_id:
             df_phieu = df_all[df_all["ma_phieu"] == cnc_id]
             if not df_phieu.empty:
                 _dlg_cancel(cnc_id, df_phieu)
-                return
-
-        if df_all.empty:
-            st.info("Chưa có phiếu chuyển nào. Bấm **Tạo phiếu** để bắt đầu.")
-            return
-
-        # Filtered df
-        today = datetime.now().date()
-        first_month = today.replace(day=1)
-        first_last = (first_month - timedelta(days=1)).replace(day=1)
-        df_filtered = _apply_filters(df_all, query, period, branch, status,
-                                     first_month, first_last)
-
-        # Summary metrics
-        ma_unique = df_filtered["ma_phieu"].unique() if not df_filtered.empty else []
-        total_count = len(ma_unique)
-        df_unique_phieu = (df_filtered.drop_duplicates(subset=["ma_phieu"])
-                            if not df_filtered.empty else df_filtered)
-        total_sl = int(df_unique_phieu["tong_sl_chuyen"].fillna(0).astype(int).sum()) \
-            if "tong_sl_chuyen" in df_unique_phieu.columns else 0
-        total_gt = int(df_unique_phieu["tong_gia_tri"].fillna(0).astype(int).sum()) \
-            if "tong_gia_tri" in df_unique_phieu.columns else 0
-
-        cols = st.columns(3)
-        cols[0].metric("Số phiếu", total_count)
-        cols[1].metric("Tổng SL", f"{total_sl:,}".replace(",", "."))
-        cols[2].metric("Tổng giá trị", _fmt_money_short(total_gt))
-
-        if df_filtered.empty:
-            st.info("Không có phiếu trong kỳ này. Thử đổi bộ lọc.")
-            return
-
-        # Pagination
-        page_key = "ch_page"
-        filter_sig = f"{query}|{period}|{branch}|{status}"
-        if st.session_state.get("_ch_filter_sig") != filter_sig:
-            st.session_state["_ch_filter_sig"] = filter_sig
-            st.session_state[page_key] = 0
-        page = int(st.session_state.get(page_key, 0))
-        total_pages = max(1, (total_count + PHIEU_PER_PAGE - 1) // PHIEU_PER_PAGE)
-        if page >= total_pages:
-            page = total_pages - 1
-        if page < 0:
-            page = 0
-
-        # Build display df (paginated)
-        ma_sorted = (df_filtered.drop_duplicates(subset=["ma_phieu"])
-                     .sort_values("_ngay", ascending=False)["ma_phieu"].tolist())
-        start = page * PHIEU_PER_PAGE
-        end = start + PHIEU_PER_PAGE
-        ma_page = ma_sorted[start:end]
-        df_page = df_filtered[df_filtered["ma_phieu"].isin(ma_page)]
-        gia_map = get_gia_ban_map()
-        display_df = _build_display_df(df_page, gia_map)
-
-        # List as dataframe with row selection
-        sel = st.dataframe(
-            display_df,
-            use_container_width=True,
-            hide_index=True,
-            on_select="rerun",
-            selection_mode="single-row",
-            height=min(620, 56 + len(display_df) * 36),
-            key="ch_list",
-            column_config={
-                "Mã phiếu":   st.column_config.TextColumn(width="small"),
-                "Thời gian":  st.column_config.TextColumn(width="small"),
-                "Chi nhánh":  st.column_config.TextColumn(width="medium"),
-                "Mặt hàng":   st.column_config.TextColumn(width="small"),
-                "Giá trị":    st.column_config.TextColumn(width="small"),
-                "Người tạo":  st.column_config.TextColumn(width="small"),
-                "Trạng thái": st.column_config.TextColumn(width="small"),
-            },
-        )
-
-        # Pagination controls
-        if total_pages > 1:
-            col_l, col_m, col_r = st.columns([1, 2, 1])
-            if col_l.button("← Trước", disabled=(page == 0),
-                            use_container_width=True, key="ch_pg_prev"):
-                st.session_state[page_key] = page - 1
-                st.rerun()
-            col_m.markdown(
-                f"<div style='text-align:center;padding-top:6px;font-size:0.85rem;color:#666;'>"
-                f"Trang <b>{page+1}</b>/{total_pages} · "
-                f"{start+1}–{min(end, total_count)} / {total_count} phiếu</div>",
-                unsafe_allow_html=True,
-            )
-            if col_r.button("Sau →", disabled=(page >= total_pages - 1),
-                            use_container_width=True, key="ch_pg_next"):
-                st.session_state[page_key] = page + 1
-                st.rerun()
-
-        # Open detail dialog when a NEW row is selected
-        sel_rows = (sel.selection.rows if hasattr(sel, "selection") else []) or []
-        if sel_rows:
-            sel_ma = display_df.iloc[sel_rows[0]]["Mã phiếu"]
-            if st.session_state.get("_ch_dialog_for") != sel_ma:
-                st.session_state["_ch_dialog_for"] = sel_ma
-                df_phieu = df_all[df_all["ma_phieu"] == sel_ma]
-                if not df_phieu.empty:
-                    _dlg_detail(sel_ma, df_phieu)
-        else:
-            # User deselected — reset để có thể click lại same row
-            st.session_state.pop("_ch_dialog_for", None)
+        elif detail_ma_candidate:
+            st.session_state["_ch_dialog_for"] = detail_ma_candidate
+            df_phieu = df_all[df_all["ma_phieu"] == detail_ma_candidate]
+            if not df_phieu.empty:
+                _dlg_detail(detail_ma_candidate, df_phieu)
 
     except Exception as e:
         st.error(f"Lỗi tải Chuyển hàng: {e}")

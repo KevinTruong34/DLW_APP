@@ -1586,10 +1586,25 @@ def module_sua_chua():
             # Search filter
             if search and search.strip():
                 s = search.strip().lower()
-                mask = (df["ma_phieu"].apply(lambda m: _sc_match_ma(m, s)) |
-                        df["sdt_khach"].astype(str).str.lower().str.contains(s, na=False) |
-                        df["ten_khach"].astype(str).str.lower().str.contains(s, na=False))
-                df = df[mask]
+                # Convert mỗi mask sang numpy bool array trước khi `|`.
+                # Pandas mới với pyarrow-backed strings trả về Arrow bool
+                # cho .str.contains, không tương thích với numpy bool từ
+                # .apply() → TypeError "logical_op" khi `|`.
+                mask_ma = np.asarray(
+                    df["ma_phieu"].apply(lambda m: _sc_match_ma(m, s)),
+                    dtype=bool,
+                )
+                mask_sdt = np.asarray(
+                    df["sdt_khach"].astype(str).str.lower()
+                        .str.contains(s, na=False).fillna(False),
+                    dtype=bool,
+                )
+                mask_ten = np.asarray(
+                    df["ten_khach"].astype(str).str.lower()
+                        .str.contains(s, na=False).fillna(False),
+                    dtype=bool,
+                )
+                df = df[mask_ma | mask_sdt | mask_ten]
 
             # Date filter — _ngay là timezone-aware datetime từ _load_phieu
             if (isinstance(date_range, tuple) and len(date_range) == 2

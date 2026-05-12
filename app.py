@@ -7,6 +7,10 @@ st.set_page_config(
     layout="wide"
 )
 
+# === Hide Streamlit Cloud branding === 
+from utils.hide_streamlit_badge import hide_streamlit_branding
+hide_streamlit_branding()
+
 st.markdown("""
 <style>
 /* ══════════════════════════════════════════

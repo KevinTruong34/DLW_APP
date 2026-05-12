@@ -106,12 +106,18 @@ def _scan_and_add_to_ck_cart(active_cn: str):
 
     item = result["item"]
 
+    # Chặn Dịch vụ — logic chuyển hàng KHÔNG cho phép chuyển loai_sp dịch vụ
+    if item.get("loai_sp") == "Dịch vụ":
+        st.warning(
+            f"⚠️ **{item['ten_hang']}** là dịch vụ — không thể chuyển kho"
+        )
+        return
+
     # Block tồn = 0 — không cho chuyển hàng hết kho (consistent với
     # filter "chỉ hàng còn tồn ở nguồn" của search hiện tại).
-    # Dịch vụ + open-price: ton=999999 từ lookup → không block.
+    # Open-price: ton=999999 từ lookup → không block.
     is_out = (
-        item.get("loai_sp") != "Dịch vụ"
-        and not item.get("is_open")
+        not item.get("is_open")
         and int(item.get("ton") or 0) <= 0
     )
     if is_out:
@@ -119,6 +125,23 @@ def _scan_and_add_to_ck_cart(active_cn: str):
             f"⚠️ **{item['ten_hang']}** tồn = 0 tại {active_cn} — không thể thêm"
         )
         return
+
+    # Chặn vượt tồn — tính sum so_luong của các row cùng ma_hang trong
+    # cart (DLW append duplicate rows thay vì gộp như POS). Skip open-price.
+    if not item.get("is_open"):
+        ma_hang = item["ma_hang"]
+        ton = int(item.get("ton") or 0)
+        existing_qty = sum(
+            int(line.get("so_luong") or 0)
+            for line in st.session_state.get("ck_items", [])
+            if line.get("ma_hang") == ma_hang
+        )
+        if existing_qty + 1 > ton:
+            st.warning(
+                f"⚠️ **{item['ten_hang']}** — giỏ đã có {existing_qty}, "
+                f"tồn chỉ còn {ton} tại {active_cn}. Không thể thêm."
+            )
+            return
 
     _add_to_cart_cb(
         mh=item["ma_hang"],

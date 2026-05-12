@@ -126,8 +126,13 @@ def _scan_and_add_to_ck_cart(active_cn: str):
         gb=int(item.get("gia_ban") or 0),
     )
 
+    # KHÔNG st.rerun() — component v2 (setTriggerValue) tự trigger rerun
+    # khi scan thành công. Manual rerun ở đây sẽ ĐÓNG DIALOG cha
+    # (chuyen_hang.py wrap trong @st.dialog("Tạo phiếu")) — user thấy
+    # như dialog crash/biến mất.
+    # POS dùng st.rerun() được vì scan ở sub-dialog riêng (one-shot,
+    # rerun đóng dialog scan, OK). DLW scan inline → khác context.
     st.toast(f"✅ Đã thêm: {item['ten_hang']}", icon="🛒")
-    st.rerun()
 
 
 def _remove_from_cart_cb(idx: int):

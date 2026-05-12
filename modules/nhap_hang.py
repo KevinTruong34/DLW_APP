@@ -41,6 +41,25 @@ def _build_pnh_excel(header: dict, ct_df: pd.DataFrame) -> bytes:
         df_ct_out["Thành tiền"] = (
             df_ct_out["so_luong"].astype(int) * df_ct_out["gia_von"].astype(int)
         )
+
+        # Bổ sung loai_hang/ma_vach/thuong_hieu từ master hang_hoa cho các mã
+        # đã tồn tại (CT chỉ lưu 3 trường này khi nhập mã mới lần đầu).
+        try:
+            hh = load_hang_hoa()
+            if hh is not None and not hh.empty:
+                hh_idx = hh.set_index("ma_hang")
+                for col in ("ma_vach", "loai_hang", "thuong_hieu"):
+                    if col not in hh_idx.columns:
+                        continue
+                    master_vals = df_ct_out["ma_hang"].map(hh_idx[col])
+                    if col in df_ct_out.columns:
+                        cur = df_ct_out[col]
+                        blank = cur.isna() | (cur.astype(str).str.strip() == "")
+                        df_ct_out.loc[blank, col] = master_vals[blank]
+                    else:
+                        df_ct_out[col] = master_vals
+        except Exception:
+            pass
     rename_map = {
         "ma_hang":      "Mã hàng",
         "ten_hang":     "Tên hàng",

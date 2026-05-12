@@ -55,6 +55,81 @@ def _add_to_cart_cb(mh: str, tn: str, gb: int):
     st.session_state["ck_items"] = items
 
 
+def _scan_and_add_to_ck_cart(active_cn: str):
+    """Inline barcode scan trong dialog Tạo/Sửa phiếu chuyển hàng.
+
+    Render trong dialog (KHÔNG nested) — toggle on/off qua session_state.
+    Camera mount khi scan section open, unmount khi đóng section.
+
+    chi_nhanh = active_cn (CN login) — KHÔNG dùng tu_cn từ form.
+    Admin muốn scan SP CN khác → đổi active branch trước.
+    """
+    from utils.scanner_component import live_scanner
+    from utils.barcode import lookup_hang_by_ma_vach
+
+    st.caption("📸 Chĩa camera vào tem — app tự nhận diện, add vào giỏ")
+
+    paused = st.checkbox("⏸ Tạm dừng quét", key="_ck_scan_paused", value=False)
+    if paused:
+        st.caption("Camera tạm dừng — bỏ tick để tiếp tục")
+        return
+
+    scan = live_scanner(key="ck_scan")
+    if not scan or not isinstance(scan, dict):
+        return
+
+    code = (scan.get("code") or "").strip()
+    if not code:
+        return
+
+    last_ts = st.session_state.get("_ck_scan_last_ts")
+    if last_ts == scan.get("ts"):
+        return
+    st.session_state["_ck_scan_last_ts"] = scan.get("ts")
+
+    result = lookup_hang_by_ma_vach(code, active_cn)
+
+    if not result["ok"]:
+        err = result.get("error")
+        if err == "not_found":
+            st.warning(f"⚠️ Không tìm thấy SP có mã vạch `{code}`")
+        elif err == "duplicate":
+            st.error(
+                f"❌ Nhiều SP cùng mã vạch — báo admin: "
+                f"{result.get('ma_hang_list')}"
+            )
+        elif err == "empty":
+            pass
+        else:
+            st.error(f"❌ Lỗi: {err} {result.get('detail', '')}")
+        return
+
+    item = result["item"]
+
+    # Block tồn = 0 — không cho chuyển hàng hết kho (consistent với
+    # filter "chỉ hàng còn tồn ở nguồn" của search hiện tại).
+    # Dịch vụ + open-price: ton=999999 từ lookup → không block.
+    is_out = (
+        item.get("loai_sp") != "Dịch vụ"
+        and not item.get("is_open")
+        and int(item.get("ton") or 0) <= 0
+    )
+    if is_out:
+        st.warning(
+            f"⚠️ **{item['ten_hang']}** tồn = 0 tại {active_cn} — không thể thêm"
+        )
+        return
+
+    _add_to_cart_cb(
+        mh=item["ma_hang"],
+        tn=item["ten_hang"],
+        gb=int(item.get("gia_ban") or 0),
+    )
+
+    st.toast(f"✅ Đã thêm: {item['ten_hang']}", icon="🛒")
+    st.rerun()
+
+
 def _remove_from_cart_cb(idx: int):
     items = st.session_state.get("ck_items", [])
     if 0 <= idx < len(items):
@@ -554,6 +629,31 @@ def _render_form(ma_phieu: str | None, df_phieu: pd.DataFrame | None):
 
     st.divider()
 
+    # ── Barcode scan (inline trong dialog, KHÔNG nested) ──
+    active_cn = get_active_branch()
+    scan_open = st.toggle(
+        "📷 Quét mã vạch",
+        key="_ck_scan_open",
+        value=False,
+        help=f"Quét tem SP — verify tồn tại {active_cn}",
+    )
+    if scan_open:
+        st.markdown(
+            """<style>
+            .st-key-ck-scan-section {
+                background: #fafbff;
+                border: 1px solid #d8dce8;
+                border-radius: 10px;
+                padding: 10px 12px;
+                margin: 8px 0;
+            }
+            </style>""",
+            unsafe_allow_html=True,
+        )
+        with st.container(key="ck-scan-section"):
+            _scan_and_add_to_ck_cart(active_cn)
+        st.divider()
+
     # ── Search & add ──
     # Luôn enforce "chỉ hàng còn tồn ở nguồn" — không cho phép chuyển hàng hết kho.
     st.markdown("**🔍 Thêm sản phẩm**")
@@ -639,7 +739,9 @@ def _render_form(ma_phieu: str | None, df_phieu: pd.DataFrame | None):
 
 def _clear_cart_state():
     for k in ("ck_items", "_ck_loaded_for", "_ck_tu_cn", "_ck_toi_cn",
-              "_ck_ng_init", "_ck_gc_init"):
+              "_ck_ng_init", "_ck_gc_init",
+              # Barcode scan state
+              "_ck_scan_open", "_ck_scan_paused", "_ck_scan_last_ts"):
         st.session_state.pop(k, None)
 
 

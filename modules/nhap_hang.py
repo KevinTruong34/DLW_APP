@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime
 import numpy as np
+import io
 
 from utils.helpers import _normalize, now_vn, now_vn_iso, today_vn, fmt_vn
 from utils.config import ALL_BRANCHES, CN_SHORT, IN_APP_MARKER, ARCHIVED_MARKER
@@ -10,6 +11,57 @@ from utils.db import supabase, log_action, load_hoa_don, load_the_kho, load_hang
     load_khach_hang_list, lookup_khach_hang, _upsert_khach_hang, get_archive_reminder
 from utils.auth import get_user, is_admin, is_ke_toan_or_admin, \
     get_active_branch, get_accessible_branches
+
+
+def _build_pnh_excel(header: dict, ct_df: pd.DataFrame) -> bytes:
+    """Build Excel 1 phiếu nhập hàng — 2 sheet: header (field-value) + chi tiết.
+
+    Args:
+        header: 1 row của phieu_nhap_hang (dict từ df.iloc[0].to_dict()).
+        ct_df:  df của phieu_nhap_hang_ct (đã filter theo ma_phieu).
+
+    Return: bytes file .xlsx.
+    """
+    header_rows = [
+        ("Mã phiếu",      header.get("ma_phieu", "")),
+        ("Chi nhánh",     header.get("chi_nhanh", "")),
+        ("Nhà cung cấp",  header.get("ten_ncc", "")),
+        ("Mã NCC",        header.get("ma_ncc", "") or ""),
+        ("Trạng thái",    header.get("trang_thai", "")),
+        ("Người tạo",     header.get("created_by", "") or ""),
+        ("Người duyệt",   header.get("confirmed_by", "") or ""),
+        ("Ngày tạo",      header.get("created_at", "") or ""),
+        ("Ngày cập nhật", header.get("updated_at", "") or ""),
+        ("Ghi chú",       header.get("ghi_chu", "") or ""),
+    ]
+    df_h = pd.DataFrame(header_rows, columns=["Trường", "Giá trị"])
+
+    df_ct_out = ct_df.copy()
+    if not df_ct_out.empty:
+        df_ct_out["Thành tiền"] = (
+            df_ct_out["so_luong"].astype(int) * df_ct_out["gia_von"].astype(int)
+        )
+    rename_map = {
+        "ma_hang":      "Mã hàng",
+        "ten_hang":     "Tên hàng",
+        "ma_vach":      "Mã vạch",
+        "loai_hang":    "Loại hàng",
+        "thuong_hieu":  "Thương hiệu",
+        "so_luong":     "SL",
+        "gia_von":      "Giá vốn",
+        "gia_ban_cu":   "Giá bán cũ",
+        "gia_ban_moi":  "Giá bán mới",
+    }
+    df_ct_out = df_ct_out.rename(columns=rename_map)
+    cols_out = ["Mã hàng", "Tên hàng", "Mã vạch", "Loại hàng", "Thương hiệu",
+                "SL", "Giá vốn", "Giá bán cũ", "Giá bán mới", "Thành tiền"]
+    df_ct_out = df_ct_out[[c for c in cols_out if c in df_ct_out.columns]]
+
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        df_h.to_excel(writer, sheet_name="Thông tin chung", index=False)
+        df_ct_out.to_excel(writer, sheet_name="Chi tiết hàng", index=False)
+    return buf.getvalue()
 
 
 def module_nhap_hang():
@@ -133,6 +185,15 @@ def module_nhap_hang():
                         st.dataframe(ct_ds_view, use_container_width=True, hide_index=True)
                         tong_von_ds = int((ct_ds["so_luong"] * ct_ds["gia_von"]).sum())
                         st.metric("Tổng giá vốn", f"{_fmt(tong_von_ds)}đ")
+
+                        header_row = df_ds[df_ds["ma_phieu"] == picked_ds].iloc[0].to_dict()
+                        st.download_button(
+                            "📥 Xuất Excel",
+                            data=_build_pnh_excel(header_row, ct_ds),
+                            file_name=f"PhieuNhap_{picked_ds}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            key=f"pnh_ds_export_{picked_ds}",
+                        )
 
         # ── Sub-tab: Tạo phiếu ──
         with sub_tao:

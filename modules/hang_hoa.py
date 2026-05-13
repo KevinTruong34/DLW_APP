@@ -1,28 +1,33 @@
 """
 modules/hang_hoa.py
 ─────────────────────────────────────────────────────────────────────────────
-Module Hàng hóa — Redesign (Phương án B · Bold, header sáng)
+Module Hàng hóa — Redesign v4 (match design_handoff_hang_hoa/).
 
-Drop-in replacement. Giữ nguyên toàn bộ logic phân quyền, call supabase,
-session_state keys cũ. Đồng thời preserve tính năng **In tem mã vạch**
-(multi-row select trên bảng + dialog + Blob URL print) đã merge ở Phase 2.
+Drop-in replacement. Layout: Header · Search row · Pills · (Conditional
+detail panel) · Bảng + footer in tem.
 
-UI/UX changes:
-  1. Header sáng 1 dòng: tiêu đề + tổng SKU + chip Chi nhánh + Tải lại + Thêm.
-  2. **KPI strip 4 ô** (trong khung có background): Tổng SKU · Đang bán ·
-     Sắp hết (≤10) · Hết hàng (=0).
-  3. **Khung Tìm kiếm + Bộ lọc** với section title — gộp search bar + filter
-     pills + sort dropdown trong 1 container có viền.
-  4. **Sticky banner mảnh** cho sản phẩm đang chọn: icon + name + code chips
-     + mini bar 3 chi nhánh + quick-action popovers (Sửa / Tồn / Sử / Ẩn / ✕).
-     Chỉ hiện khi chọn ĐÚNG 1 dòng.
-  5. **Khung Bảng + nút In tem** — bảng dùng multi-row select, dưới bảng
-     có nút "🏷️ In tem mã vạch (N)" enable khi chọn ≥ 1 dòng. Giữ trải
-     nghiệm in tem hàng loạt cũ.
-  6. Admin actions mở qua `st.popover` thay vì 3 expander xếp dọc.
+Thay đổi UX so với v3:
+- Bỏ hoàn toàn khối Tổng quan (KPI 4 ô) — không còn _render_kpi.
+- Bỏ checkbox "Chỉ hiện tồn ≤ 10" + tham số low_only trong _apply_filters.
+- Bảng chỉ 5 cột: Sản phẩm · Nhóm · Mã hàng · Mã vạch · Giá bán.
+  Không còn ProgressColumn theo chi nhánh, không còn cột Tổng / Trạng thái.
+- Detail panel mới (trắng, 18-20px padding, 3 branch card to 26px bên dưới):
+  · Chọn ĐÚNG 1 dòng → product detail
+  · Lọc nhóm + chưa chọn dòng → group detail (cộng dồn tồn của cả nhóm)
+- Pills nhóm hàng CLICK ĐƯỢC (st.button primary/secondary toggle).
 
-Yêu cầu: Streamlit ≥ 1.32 (st.popover, dataframe selection, ProgressColumn,
-container border).
+Giữ NGUYÊN:
+- Imports utils.config / utils.db / utils.auth / utils.helpers.
+- _build_df + _apply_filters (bỏ low_only).
+- _render_them_moi / _render_sua_hang_hoa / _render_chinh_ton /
+  _render_an_hang_hoa.
+- _dlg_in_tem_hh / _render_dialog_in_tem / _trigger_print_window
+  (Blob URL + escape </script>).
+- Session state keys: hh_cn / hh_ma_chon / hh_search_cnt / hh_cha / hh_con
+  / hh_sort / _hh_in_tem_items / _intem_hh_qty / _intem_hh_symb.
+
+Yêu cầu: Streamlit ≥ 1.34 (st.popover, dataframe selection, st.button
+type=secondary).
 """
 
 import streamlit as st
@@ -40,141 +45,252 @@ from utils.helpers import _normalize
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# DESIGN TOKENS
+# DESIGN TOKENS (match design_handoff_hang_hoa/design_reference/styles.css)
 # ═══════════════════════════════════════════════════════════════════════
 T = {
-    "ink":      "#1c1f2a",
-    "ink2":     "#4a4f5c",
-    "muted":    "#7a8090",
-    "border":   "#e7e8ec",
-    "subtle":   "#f5f5f7",
-    "surface":  "#ffffff",
-    "accent":   "#cf3b2c",
-    "accentBg": "#fdecea",
-    "good":     "#1f8b4a",
-    "goodBg":   "#e8f5ee",
-    "warn":     "#c98a14",
-    "warnBg":   "#fdf3e0",
-    "danger":   "#cf3b2c",
-    "dangerBg": "#fdecea",
-    "sectionBg": "#fbfbfd",
+    "bg":         "#f6f5f2",
+    "surface":    "#ffffff",
+    "surface_2":  "#fbfaf7",
+    "ink":        "#1a1a18",
+    "ink_2":      "#44443f",
+    "muted":      "#8a8a82",
+    "muted_2":    "#b4b3aa",
+    "border":     "#ece9e2",
+    "border_2":   "#e0dcd2",
+    "accent":     "#c63a2b",
+    "accent_2":   "#fbe9e5",
+    "accent_ink": "#8a2418",
+    "good":       "#2f6b3f",
 }
 
 
-def _stock_meta(n: int):
-    """Trả về (fg, bg, label) cho mức tồn kho."""
-    if n <= 0:   return (T["danger"], T["dangerBg"], "Hết")
-    if n <= 10:  return (T["warn"],   T["warnBg"],   "Sắp hết")
-    return            (T["good"],   T["goodBg"],   "Đủ")
-
-
 def _inject_css_once():
-    if st.session_state.get("_hh_css_v3"):
+    if st.session_state.get("_hh_css_v4"):
         return
-    st.session_state["_hh_css_v3"] = True
+    st.session_state["_hh_css_v4"] = True
     st.markdown(f"""
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500&display=swap">
     <style>
-      .block-container {{ padding-top: 1rem; padding-bottom: 1rem; }}
+      :root {{
+        --bg:        {T['bg']};
+        --surface:   {T['surface']};
+        --surface-2: {T['surface_2']};
+        --ink:       {T['ink']};
+        --ink-2:     {T['ink_2']};
+        --muted:     {T['muted']};
+        --muted-2:   {T['muted_2']};
+        --border:    {T['border']};
+        --border-2:  {T['border_2']};
+        --accent:    {T['accent']};
+        --accent-2:  {T['accent_2']};
+        --accent-ink:{T['accent_ink']};
+        --good:      {T['good']};
+        --radius:    10px;
+        --radius-sm: 7px;
+        --font:      "Geist","Söhne","Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+        --mono:      "Geist Mono","JetBrains Mono",ui-monospace,"SFMono-Regular",Menlo,monospace;
+      }}
 
-      /* Section containers (st.container border=True) — thêm background */
+      /* Page bg (warm neutral) */
+      .stApp {{ background: {T['bg']} !important; }}
+      .block-container {{
+        padding-top: 1.2rem !important;
+        padding-bottom: 2rem !important;
+        font-family: var(--font);
+        color: var(--ink);
+      }}
+      .block-container, .block-container * {{
+        font-family: var(--font);
+      }}
+
+      /* Container bordered → white surface */
       [data-testid="stVerticalBlockBorderWrapper"] {{
-        background: {T['sectionBg']};
-        border-radius: 12px;
-        border: 1px solid {T['border']} !important;
+        background: var(--surface) !important;
+        border-radius: var(--radius) !important;
+        border: 1px solid var(--border) !important;
       }}
-      /* Popover content giữ background trắng */
+      /* Reset popover content background */
       [data-baseweb="popover"] [data-testid="stVerticalBlockBorderWrapper"] {{
-        background: {T['surface']};
+        background: var(--surface) !important;
+        border: 1px solid var(--border-2) !important;
       }}
 
-      /* Section title */
-      .hh-section-title {{
-        font-size: 10px; font-weight: 600;
-        color: {T['muted']}; text-transform: uppercase;
-        letter-spacing: .08em;
-        margin: -2px 0 8px 0;
+      /* ─── Header ─── */
+      .hh-title {{
+        font-size: 22px; font-weight: 600; letter-spacing: -.02em;
+        color: var(--ink);
+      }}
+      .hh-sub {{
+        font-size: 12px; color: var(--muted);
+        font-variant-numeric: tabular-nums;
+      }}
+      .hh-branch-chip {{
+        display: inline-flex; align-items: center; gap: 7px;
+        height: 30px; padding: 0 12px;
+        background: var(--surface); color: var(--ink);
+        border: 1px solid var(--border-2);
+        border-radius: var(--radius-sm);
+        font-size: 12.5px; font-weight: 500;
+      }}
+      .hh-branch-chip .dot {{
+        width: 6px; height: 6px; border-radius: 50%;
+        background: var(--good);
       }}
 
-      /* Chip / pill */
-      .hh-chip {{
-        display: inline-flex; align-items: center; gap: 6px;
-        height: 26px; padding: 0 11px; border-radius: 999px;
-        font-size: 12px; font-weight: 500;
-        background: {T['surface']}; color: {T['ink2']};
-        border: 1px solid {T['border']};
-      }}
-      .hh-chip.active {{
-        background: {T['accentBg']}; color: {T['accent']};
-        border-color: {T['accentBg']};
-      }}
-      .hh-chip .count {{
-        font-size: 11px; color: inherit; opacity: .65; margin-left: 2px;
-      }}
-
-      /* Code chip */
+      /* ─── Code chips ─── */
       .hh-code {{
-        font-family: ui-monospace, "JetBrains Mono", monospace;
-        font-size: 11px; padding: 2px 7px; border-radius: 5px;
-        background: {T['subtle']}; border: 1px solid {T['border']};
-        color: {T['ink']};
+        display: inline-block;
+        font-family: var(--mono); font-size: 11.5px;
+        color: var(--ink-2);
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        border-radius: 5px;
+        padding: 2px 7px;
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
+      }}
+      .hh-code.dashed {{ background: transparent; border-style: dashed; }}
+
+      /* ─── Detail panel ─── */
+      .hh-detail-name {{
+        font-size: 17px; font-weight: 600; letter-spacing: -.012em;
+        color: var(--ink);
+        display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      }}
+      .hh-detail-meta {{
+        margin-top: 6px;
+        font-size: 12.5px; color: var(--muted);
+        display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+      }}
+      .hh-detail-meta b {{
+        color: var(--ink); font-weight: 600;
+        font-variant-numeric: tabular-nums;
+      }}
+      .hh-detail-meta .sep {{ color: var(--muted-2); }}
+
+      .hh-branch-grid {{
+        margin-top: 16px;
+        display: grid; gap: 10px;
+        grid-template-columns: repeat(3, 1fr);
+      }}
+      .hh-branch-card {{
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        padding: 12px 14px;
+      }}
+      .hh-branch-card.active {{
+        background: #fff;
+        border-color: var(--ink);
+      }}
+      .hh-branch-card .b-label {{
+        font-size: 11px; color: var(--muted);
+        text-transform: uppercase; letter-spacing: .04em;
+        display: flex; align-items: center; gap: 6px;
+      }}
+      .hh-branch-card .b-pin {{
+        width: 5px; height: 5px; border-radius: 50%;
+        background: var(--ink);
+      }}
+      .hh-branch-card .b-val {{
+        margin-top: 4px;
+        font-size: 26px; font-weight: 600;
+        letter-spacing: -.02em;
+        font-variant-numeric: tabular-nums;
+        color: var(--ink);
+      }}
+      .hh-branch-card .b-share {{
+        font-size: 11px; color: var(--muted);
+        margin-top: 2px;
+      }}
+      .hh-branch-card .b-bar {{
+        margin-top: 10px;
+        height: 3px; background: var(--border);
+        border-radius: 2px; overflow: hidden;
+      }}
+      .hh-branch-card .b-fill {{
+        height: 100%; background: var(--ink);
+        border-radius: 2px;
+      }}
+      .hh-branch-card.active .b-fill {{ background: var(--accent); }}
+
+      /* ─── Buttons (Streamlit override) ─── */
+      div[data-testid="stButton"] > button[kind="primary"] {{
+        background: var(--ink); color: #faf9f6;
+        border: 1px solid var(--ink);
+        border-radius: 999px; height: 30px;
+        font-size: 12.5px; font-weight: 500;
+        padding: 0 14px;
+      }}
+      div[data-testid="stButton"] > button[kind="primary"]:hover {{
+        background: #000; border-color: #000;
+      }}
+      div[data-testid="stButton"] > button[kind="secondary"] {{
+        background: var(--surface); color: var(--ink-2);
+        border: 1px solid var(--border);
+        border-radius: 999px; height: 30px;
+        font-size: 12px; font-weight: 400;
+        padding: 0 12px;
+      }}
+      div[data-testid="stButton"] > button[kind="secondary"]:hover {{
+        background: var(--surface-2);
       }}
 
-      /* KPI tile */
-      .hh-kpi {{
-        display: flex; flex-direction: column; gap: 2px;
-        padding: 10px 18px;
-        background: {T['surface']};
-        border: 1px solid {T['border']};
-        border-radius: 10px;
+      /* Header "+ Thêm" popover button → ink primary */
+      .hh-header-actions [data-testid="stPopover"] > div > button {{
+        background: var(--ink) !important;
+        color: #faf9f6 !important;
+        border: 1px solid var(--ink) !important;
+        border-radius: var(--radius-sm) !important;
+        height: 30px !important;
+        font-size: 12.5px !important;
+        font-weight: 500 !important;
+        padding: 0 14px !important;
       }}
-      .hh-kpi .l {{ font-size: 11px; color: {T['muted']};
-        text-transform: uppercase; letter-spacing: .06em; font-weight: 500; }}
-      .hh-kpi .v {{ font-size: 22px; font-weight: 600; letter-spacing: -.02em;
-        font-variant-numeric: tabular-nums; }}
-      .hh-kpi .s {{ font-size: 11px; color: {T['muted']}; margin-left: 4px; }}
-
-      /* Selected product banner */
-      .hh-banner {{
-        background: linear-gradient(90deg, {T['accentBg']} 0%, {T['surface']} 65%);
-        border: 1px solid {T['border']};
-        border-left: 3px solid {T['accent']};
-        border-radius: 10px;
-        padding: 12px 16px;
+      .hh-header-actions [data-testid="stPopover"] > div > button:hover {{
+        background: #000 !important; border-color: #000 !important;
       }}
-      .hh-banner .name {{ font-size: 15px; font-weight: 600; color: {T['ink']}; }}
-      .hh-banner .meta {{ font-size: 11px; color: {T['muted']}; margin-top: 2px; }}
 
-      /* Mini bar in banner */
-      .hh-mini {{
-        display: flex; flex-direction: column; gap: 4px;
-        padding: 6px 10px; border-radius: 8px;
-        background: {T['surface']}; border: 1px solid {T['border']};
-        min-width: 110px;
+      /* In tem accent red button */
+      .hh-print-zone div[data-testid="stButton"] > button {{
+        background: var(--accent) !important; color: #fff !important;
+        border: 1px solid var(--accent) !important;
+        border-radius: var(--radius-sm) !important;
+        height: 34px !important; font-size: 13px !important;
+        font-weight: 500 !important;
       }}
-      .hh-mini.active {{ box-shadow: inset 0 0 0 1px {T['accent']}; }}
-      .hh-mini .label {{ font-size: 10px; color: {T['muted']};
-        text-transform: uppercase; letter-spacing: .04em; font-weight: 500; }}
-      .hh-mini .val {{ font-size: 13px; font-weight: 600;
-        font-variant-numeric: tabular-nums; }}
-      .hh-mini .track {{ height: 4px; background: {T['subtle']};
-        border-radius: 2px; overflow: hidden; }}
-      .hh-mini .fill {{ height: 100%; border-radius: 2px; }}
+      .hh-print-zone div[data-testid="stButton"] > button:hover {{
+        background: #b3331f !important; border-color: #b3331f !important;
+      }}
+      .hh-print-zone div[data-testid="stButton"] > button:disabled {{
+        opacity: .45 !important; cursor: not-allowed !important;
+      }}
 
-      /* Status badge (inline) */
-      .hh-badge {{
+      /* Reload + close icon button (small square) */
+      .hh-icon-btn div[data-testid="stButton"] > button {{
+        background: var(--surface) !important; color: var(--ink-2) !important;
+        border: 1px solid var(--border-2) !important;
+        border-radius: var(--radius-sm) !important;
+        height: 30px !important;
+        font-size: 14px !important;
+        padding: 0 !important;
+      }}
+      .hh-icon-btn div[data-testid="stButton"] > button:hover {{
+        background: var(--surface-2) !important;
+      }}
+
+      /* Filter tag chip (table header) */
+      .hh-filter-tag {{
         display: inline-flex; align-items: center; gap: 4px;
-        padding: 2px 8px; border-radius: 999px;
-        font-size: 11px; font-weight: 600;
+        background: var(--surface-2); border: 1px solid var(--border);
+        border-radius: 5px; padding: 2px 7px;
+        font-size: 11px; color: var(--ink-2);
+        margin-left: 6px;
       }}
     </style>
     """, unsafe_allow_html=True)
-
-
-def _section_title(text: str):
-    st.markdown(
-        f"<div class='hh-section-title'>{text}</div>",
-        unsafe_allow_html=True,
-    )
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -201,29 +317,22 @@ def module_hang_hoa():
             st.warning("Chọn ít nhất một chi nhánh.")
             return
 
-        # Re-load với branches đã chọn
         the_kho = load_the_kho(branches_key=tuple(view_branches))
         df = _build_df(master, the_kho)
 
-        # ── KPI STRIP ──
-        if not master.empty:
-            with st.container(border=True):
-                _section_title("Tổng quan")
-                _render_kpi(df)
+        # ── SEARCH + SORT ──
+        keyword, sort_by = _render_search(df)
 
-        # ── TÌM KIẾM + BỘ LỌC ──
-        with st.container(border=True):
-            _section_title("Tìm kiếm & bộ lọc")
-            keyword = _render_search(df)
-            cha_chon, con_chon, low_only, sort_by = _render_filter_pills(df)
+        # ── PILLS ──
+        cha_chon = _render_pills(df)
+        con_chon = st.session_state.get("hh_con", "Tất cả")
 
-        filtered = _apply_filters(df, keyword, cha_chon, con_chon, low_only, sort_by)
+        filtered = _apply_filters(df, keyword, cha_chon, con_chon, sort_by)
 
         if filtered.empty:
             st.warning("Không tìm thấy hàng hóa phù hợp.")
             return
 
-        # Auto-select khi chỉ còn 1 kết quả
         if len(filtered) == 1:
             st.session_state["hh_ma_chon"] = filtered.iloc[0]["ma_hang"]
 
@@ -232,38 +341,38 @@ def module_hang_hoa():
             st.session_state.pop("hh_ma_chon", None)
             ma_chon = None
 
-        # ── BANNER (chỉ khi chọn 1 dòng) ──
+        # ── DETAIL PANEL (conditional) ──
         if ma_chon:
-            _render_selected_banner(filtered, ma_chon, active)
+            _render_product_detail(filtered, ma_chon, active)
+        elif cha_chon and cha_chon != "Tất cả":
+            _render_group_detail(cha_chon, filtered, active)
 
-        # ── BẢNG + IN TEM ──
-        with st.container(border=True):
-            _section_title("Danh sách sản phẩm")
-            _render_table(filtered, view_branches)
+        # ── TABLE + IN TEM ──
+        _render_table(filtered, view_branches, cha_chon, keyword)
 
     except Exception as e:
         st.error(f"Lỗi tải Hàng hóa: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# HEADER + KPI
+# HEADER
 # ═══════════════════════════════════════════════════════════════════════
 def _render_header(active: str, accessible: list, total: int):
-    c1, c2, c3, c4 = st.columns([5, 1.6, 0.5, 1.5])
+    c1, c2, c3, c4 = st.columns([5.5, 1.6, 0.6, 1.7])
+
     with c1:
         st.markdown(
-            f"<div style='display:flex;align-items:baseline;gap:12px;padding-top:6px;'>"
-            f"<span style='font-size:22px;font-weight:600;letter-spacing:-.015em;"
-            f"color:{T['ink']}'>Hàng hóa</span>"
-            f"<span style='font-size:12px;color:{T['muted']}'>"
-            f"{total:,} SKU</span>"
+            f"<div style='display:flex;align-items:baseline;gap:14px;padding-top:4px;'>"
+            f"<span class='hh-title'>Hàng hóa</span>"
+            f"<span class='hh-sub'>{total:,} SKU · 3 chi nhánh</span>"
             f"</div>",
             unsafe_allow_html=True,
         )
+
     with c2:
         if is_ke_toan_or_admin() and len(accessible) > 1:
-            with st.popover(f"● {CN_SHORT.get(active, active)}",
-                            use_container_width=True):
+            label = f"● {CN_SHORT.get(active, active)} ⌄"
+            with st.popover(label, use_container_width=True):
                 view = st.multiselect(
                     "Chi nhánh xem:", accessible,
                     default=st.session_state.get("hh_cn", [active]),
@@ -273,150 +382,117 @@ def _render_header(active: str, accessible: list, total: int):
                     view = [active]
         else:
             st.markdown(
-                f"<div style='text-align:right;padding-top:8px;'>"
-                f"<span class='hh-chip active'>● {CN_SHORT.get(active, active)}</span>"
-                f"</div>", unsafe_allow_html=True,
+                f"<div style='display:flex;justify-content:center;padding-top:5px;'>"
+                f"<span class='hh-branch-chip'><span class='dot'></span>"
+                f"{CN_SHORT.get(active, active)}</span></div>",
+                unsafe_allow_html=True,
             )
             return [active]
+
     with c3:
-        if st.button("↻", key="hh_reload", help="Tải lại"):
+        st.markdown("<div class='hh-icon-btn'>", unsafe_allow_html=True)
+        if st.button("↻", key="hh_reload", help="Tải lại", use_container_width=True):
             st.cache_data.clear()
             st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+
     with c4:
         if is_admin():
-            with st.popover("➕ Thêm hàng hóa", use_container_width=True):
+            st.markdown("<div class='hh-header-actions'>", unsafe_allow_html=True)
+            with st.popover("+ Thêm hàng hóa", use_container_width=True):
                 _render_them_moi()
+            st.markdown("</div>", unsafe_allow_html=True)
+
     return st.session_state.get("hh_cn", [active])
 
 
-def _render_kpi(df: pd.DataFrame):
+# ═══════════════════════════════════════════════════════════════════════
+# SEARCH ROW + SORT
+# ═══════════════════════════════════════════════════════════════════════
+def _render_search(df: pd.DataFrame):
+    with st.container(border=True):
+        cs, cb, csort = st.columns([7, 0.7, 2.3])
+        with cs:
+            _sc = st.session_state.get("hh_search_cnt", 0)
+            keyword = st.text_input(
+                "", key=f"hh_search_{_sc}",
+                placeholder="🔍  Tìm theo tên, mã hàng hoặc mã vạch…",
+                label_visibility="collapsed",
+            )
+        with cb:
+            st.markdown("<div class='hh-icon-btn'>", unsafe_allow_html=True)
+            st.button("⌷", key="hh_scan", help="Quét mã vạch",
+                      use_container_width=True)
+            st.markdown("</div>", unsafe_allow_html=True)
+        with csort:
+            sort_by = st.selectbox(
+                "Sắp xếp:",
+                ["Tên A → Z", "Giá cao → thấp", "Giá thấp → cao",
+                 "Mã hàng A → Z", "Tồn: cao → thấp", "Tồn: thấp → cao"],
+                key="hh_sort", label_visibility="collapsed",
+            )
+    return keyword, sort_by
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# PILLS (clickable - st.button primary/secondary)
+# ═══════════════════════════════════════════════════════════════════════
+def _render_pills(df: pd.DataFrame):
+    cha_chon = st.session_state.get("hh_cha", "Tất cả")
+    counts = df.groupby("_cha").size().sort_values(ascending=False)
+    top_groups = [g for g in counts.index.tolist() if g][:6]
     total = len(df)
-    selling = int((df["Ton_cuoi"] > 0).sum())
-    low = int(((df["Ton_cuoi"] > 0) & (df["Ton_cuoi"] <= 10)).sum())
-    out = int((df["Ton_cuoi"] <= 0).sum())
 
-    c1, c2, c3, c4 = st.columns(4)
-    for col, label, val, sub, color in [
-        (c1, "Tổng SKU", f"{total:,}", "trong kho", T["ink"]),
-        (c2, "Đang bán", f"{selling:,}",
-         f"{(selling/total*100):.0f}%" if total else "—", T["ink"]),
-        (c3, "Sắp hết",  f"{low:,}",   "≤ 10 cái", T["warn"]),
-        (c4, "Hết hàng", f"{out:,}",   "cần nhập", T["danger"]),
-    ]:
-        with col:
-            st.markdown(
-                f"<div class='hh-kpi'>"
-                f"<div class='l'>{label}</div>"
-                f"<div style='display:flex;align-items:baseline;'>"
-                f"<span class='v' style='color:{color}'>{val}</span>"
-                f"<span class='s'>· {sub}</span>"
-                f"</div></div>",
-                unsafe_allow_html=True,
+    labels = ["Tất cả"] + top_groups
+    weights = [1.0] + [max(1.4, len(g) * 0.10 + 1.0) for g in top_groups]
+    weights.append(2.0)  # Bộ lọc nâng cao
+
+    cols = st.columns(weights)
+    for i, lbl in enumerate(labels):
+        with cols[i]:
+            count = total if lbl == "Tất cả" else int(counts.get(lbl, 0))
+            is_active = (lbl == "Tất cả" and cha_chon == "Tất cả") or (lbl == cha_chon)
+            display = f"{lbl}  {count}"
+            if st.button(
+                display, key=f"hh_pill_{i}",
+                type="primary" if is_active else "secondary",
+                use_container_width=True,
+            ):
+                if lbl == "Tất cả":
+                    st.session_state["hh_cha"] = "Tất cả"
+                    st.session_state["hh_con"] = "Tất cả"
+                elif lbl == cha_chon:
+                    st.session_state["hh_cha"] = "Tất cả"
+                    st.session_state["hh_con"] = "Tất cả"
+                else:
+                    st.session_state["hh_cha"] = lbl
+                    st.session_state["hh_con"] = "Tất cả"
+                st.session_state.pop("hh_ma_chon", None)
+                st.rerun()
+    with cols[-1]:
+        with st.popover("⊞ Bộ lọc nâng cao", use_container_width=True):
+            cha_list = sorted([c for c in df["_cha"].dropna().unique() if c])
+            opts = ["Tất cả"] + cha_list
+            cur_idx = opts.index(cha_chon) if cha_chon in opts else 0
+            cha_sel = st.selectbox(
+                "Nhóm hàng:", opts, index=cur_idx, key="hh_cha_adv",
             )
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# SEARCH + FILTERS
-# ═══════════════════════════════════════════════════════════════════════
-def _render_search(df: pd.DataFrame) -> str:
-    cs, cb = st.columns([10, 1])
-    with cs:
-        _sc = st.session_state.get("hh_search_cnt", 0)
-        keyword = st.text_input(
-            "", key=f"hh_search_{_sc}",
-            placeholder="🔍  Tìm theo tên, mã hàng hoặc mã vạch…",
-            label_visibility="collapsed",
-        )
-    with cb:
-        st.button("📷", key="hh_scan", help="Quét mã vạch",
-                  use_container_width=True)
-    return keyword
-
-
-def _render_filter_pills(df: pd.DataFrame):
-    """Hàng pills: nhóm phổ biến + filter popover + sort."""
-    cha_list = sorted([c for c in df["_cha"].dropna().unique() if c])
-    top_groups = (df.groupby("_cha").size()
-                  .sort_values(ascending=False).head(4).index.tolist())
-
-    cl, cr = st.columns([7, 3])
-    with cl:
-        with st.popover("⊞ Bộ lọc nâng cao", use_container_width=False):
-            cha_chon = st.selectbox(
-                "Nhóm hàng:", ["Tất cả"] + cha_list, key="hh_cha",
-            )
-            if cha_chon != "Tất cả":
+            if cha_sel != cha_chon:
+                st.session_state["hh_cha"] = cha_sel
+                st.session_state["hh_con"] = "Tất cả"
+                st.session_state.pop("hh_ma_chon", None)
+                st.rerun()
+            if cha_sel != "Tất cả":
                 con_list = sorted([c for c in
-                    df[df["_cha"] == cha_chon]["_con"].dropna().unique() if c])
-                _ = st.selectbox(
+                    df[df["_cha"] == cha_sel]["_con"].dropna().unique() if c])
+                st.selectbox(
                     "Nhóm con:", ["Tất cả"] + con_list, key="hh_con",
                 )
-            st.divider()
-            _ = st.checkbox("Chỉ hiện tồn ≤ 10", key="hh_low_only")
-
-        cha_chon = st.session_state.get("hh_cha", "Tất cả")
-        con_chon = st.session_state.get("hh_con", "Tất cả")
-        low_only = st.session_state.get("hh_low_only", False)
-
-        # Pills nhóm phổ biến (read-only chips)
-        if top_groups:
-            chips = ["<div style='display:flex;gap:6px;align-items:center;margin-top:8px;flex-wrap:wrap;'>"]
-            for g in top_groups:
-                n = int((df["_cha"] == g).sum())
-                cls = "hh-chip active" if g == cha_chon else "hh-chip"
-                chips.append(
-                    f"<span class='{cls}'>{g}<span class='count'>{n}</span></span>"
-                )
-            if low_only:
-                chips.append(f"<span class='hh-chip active'>⚠ Tồn ≤ 10</span>")
-            chips.append("</div>")
-            st.markdown("".join(chips), unsafe_allow_html=True)
-
-    with cr:
-        sort_by = st.selectbox(
-            "Sắp xếp:",
-            ["Tồn: cao → thấp", "Tồn: thấp → cao",
-             "Tên: A → Z", "Giá: cao → thấp", "Giá: thấp → cao"],
-            key="hh_sort", label_visibility="collapsed",
-        )
-
-    return (st.session_state.get("hh_cha", "Tất cả"),
-            st.session_state.get("hh_con", "Tất cả"),
-            st.session_state.get("hh_low_only", False),
-            sort_by)
-
-
-def _apply_filters(df, keyword, cha_chon, con_chon, low_only, sort_by):
-    out = df.copy()
-    kw = _normalize(keyword) if keyword and keyword.strip() else ""
-    if kw:
-        out = out[
-            out["_norm_ma"].str.contains(kw, na=False)
-            | out["_norm_vach"].str.contains(kw, na=False)
-            | out["_norm_ten"].str.contains(kw, na=False)
-        ]
-    if cha_chon and cha_chon != "Tất cả":
-        out = out[out["_cha"] == cha_chon]
-    if con_chon and con_chon != "Tất cả":
-        out = out[out["_con"] == con_chon]
-    if low_only:
-        out = out[out["Ton_cuoi"] <= 10]
-
-    sort_map = {
-        "Tồn: cao → thấp": ("Ton_cuoi", False),
-        "Tồn: thấp → cao": ("Ton_cuoi", True),
-        "Tên: A → Z":       ("ten_hang", True),
-        "Giá: cao → thấp":  ("gia_ban",  False),
-        "Giá: thấp → cao":  ("gia_ban",  True),
-    }
-    col, asc = sort_map.get(sort_by, ("Ton_cuoi", False))
-    if col in out.columns:
-        out = out.sort_values(col, ascending=asc)
-    return out.reset_index(drop=True)
+    return st.session_state.get("hh_cha", "Tất cả")
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# DATA BUILD
+# DATA BUILD + FILTERS
 # ═══════════════════════════════════════════════════════════════════════
 def _build_df(master: pd.DataFrame, the_kho: pd.DataFrame) -> pd.DataFrame:
     has_master = not master.empty
@@ -456,16 +532,43 @@ def _build_df(master: pd.DataFrame, the_kho: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# SELECTED PRODUCT BANNER (slim, horizontal)
-# ═══════════════════════════════════════════════════════════════════════
-def _render_selected_banner(filtered: pd.DataFrame, ma_chon: str, active: str):
-    row_m = filtered[filtered["ma_hang"] == ma_chon].iloc[0]
+def _apply_filters(df, keyword, cha_chon, con_chon, sort_by):
+    out = df.copy()
+    kw = _normalize(keyword) if keyword and keyword.strip() else ""
+    if kw:
+        out = out[
+            out["_norm_ma"].str.contains(kw, na=False)
+            | out["_norm_vach"].str.contains(kw, na=False)
+            | out["_norm_ten"].str.contains(kw, na=False)
+        ]
+    if cha_chon and cha_chon != "Tất cả":
+        out = out[out["_cha"] == cha_chon]
+    if con_chon and con_chon != "Tất cả":
+        out = out[out["_con"] == con_chon]
 
+    sort_map = {
+        "Tên A → Z":        ("ten_hang", True),
+        "Giá cao → thấp":   ("gia_ban",  False),
+        "Giá thấp → cao":   ("gia_ban",  True),
+        "Mã hàng A → Z":    ("ma_hang",  True),
+        "Tồn: cao → thấp":  ("Ton_cuoi", False),
+        "Tồn: thấp → cao":  ("Ton_cuoi", True),
+    }
+    col, asc = sort_map.get(sort_by, ("ten_hang", True))
+    if col in out.columns:
+        out = out.sort_values(col, ascending=asc)
+    return out.reset_index(drop=True)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# DETAIL PANEL — Product (chọn 1 dòng)
+# ═══════════════════════════════════════════════════════════════════════
+def _branch_data_for_product(ma_chon: str):
+    """Trả về (branch_tons, branch_kho_ids) cho 1 SP."""
+    branch_tons = {cn: 0 for cn in ALL_BRANCHES}
+    branch_kho_ids = {cn: None for cn in ALL_BRANCHES}
     try:
         all_kho = load_the_kho(branches_key=tuple(ALL_BRANCHES))
-        branch_tons = {cn: 0 for cn in ALL_BRANCHES}
-        branch_kho_ids = {cn: None for cn in ALL_BRANCHES}
         if not all_kho.empty:
             rk = all_kho[all_kho["Mã hàng"].astype(str).str.strip() == str(ma_chon).strip()]
             for _, kr in rk.iterrows():
@@ -474,94 +577,160 @@ def _render_selected_banner(filtered: pd.DataFrame, ma_chon: str, active: str):
                     branch_tons[cn] += int(kr.get("Tồn cuối kì", 0) or 0)
                     branch_kho_ids[cn] = kr.get("id")
     except Exception:
-        branch_tons = {cn: 0 for cn in ALL_BRANCHES}
-        branch_kho_ids = {cn: None for cn in ALL_BRANCHES}
+        pass
+    return branch_tons, branch_kho_ids
 
-    max_ton = max(branch_tons.values()) or 1
-    gb = int(row_m.get("gia_ban", 0) or 0)
-    th_str = str(row_m.get("thuong_hieu", "") or "")
-    nhom = (f"{row_m.get('_cha','')} › {row_m['_con']}"
-            if row_m.get("_con", "") else row_m.get("_cha", ""))
 
-    with st.container():
-        st.markdown("<div class='hh-banner'>", unsafe_allow_html=True)
-        c1, c2, c3 = st.columns([4, 5, 3])
+def _branch_grid_html(branch_tons: dict, active: str) -> str:
+    total = sum(branch_tons.values())
+    max_v = max(branch_tons.values()) or 1
+    cards = ['<div class="hh-branch-grid">']
+    for cn in ALL_BRANCHES:
+        n = branch_tons[cn]
+        share = (n / total * 100) if total else 0
+        pct_bar = (n / max_v * 100) if max_v else 0
+        is_act = (cn == active)
+        cls = "hh-branch-card active" if is_act else "hh-branch-card"
+        pin = '<span class="b-pin"></span>' if is_act else ''
+        cards.append(
+            f'<div class="{cls}">'
+            f'  <div class="b-label">{pin}{CN_SHORT.get(cn, cn).upper()}</div>'
+            f'  <div class="b-val">{n:,}</div>'
+            f'  <div class="b-share">{share:.0f}% tổng tồn</div>'
+            f'  <div class="b-bar"><div class="b-fill" style="width:{pct_bar:.1f}%"></div></div>'
+            f'</div>'
+        )
+    cards.append('</div>')
+    return ''.join(cards)
 
-        with c1:
-            vach = str(row_m.get("ma_vach", "") or "")
-            vach_html = (f"<span class='hh-code' style='border-style:dashed;background:transparent;'>{vach}</span>"
-                         if vach and vach != row_m["ma_hang"] else "")
+
+def _render_product_detail(filtered: pd.DataFrame, ma_chon: str, active: str):
+    row_m = filtered[filtered["ma_hang"] == ma_chon].iloc[0]
+    branch_tons, branch_kho_ids = _branch_data_for_product(ma_chon)
+
+    name = str(row_m.get("ten_hang", ""))
+    ma   = str(row_m.get("ma_hang", ""))
+    vach = str(row_m.get("ma_vach", "") or "")
+    gb   = int(row_m.get("gia_ban", 0) or 0)
+    nhom = str(row_m.get("_cha", "") or "")
+    th   = str(row_m.get("thuong_hieu", "") or "")
+
+    chips = f'<span class="hh-code">{ma}</span>'
+    if vach and vach != ma:
+        chips += f' <span class="hh-code dashed">{vach}</span>'
+
+    meta_bits = []
+    if nhom:
+        meta_bits.append(nhom)
+    if th and th != "—":
+        meta_bits.append(f'<span class="sep">›</span> {th}')
+    meta_html = " ".join(meta_bits)
+    if meta_html:
+        meta_html += ' <span class="sep">·</span> '
+    meta_html += f'Giá bán <b>{(f"{gb:,} đ" if gb else "—")}</b>'
+
+    with st.container(border=True):
+        rc1, rc2 = st.columns([8.5, 0.5])
+        with rc1:
             st.markdown(
-                f"<div style='padding-top:4px;'>"
-                f"<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap;'>"
-                f"<span class='name'>{row_m['ten_hang']}</span>"
-                f"<span class='hh-code'>{row_m['ma_hang']}</span>"
-                f"{vach_html}"
-                f"</div>"
-                f"<div class='meta'>"
-                f"{nhom}{(' · ' + th_str) if th_str else ''}"
-                f" · Giá bán <b style='color:{T['ink']};font-variant-numeric:tabular-nums;'>"
-                f"{(f'{gb:,} đ' if gb else '—')}</b>"
-                f"</div></div>",
+                f"<div class='hh-detail-name'>{name} {chips}</div>"
+                f"<div class='hh-detail-meta'>{meta_html}</div>",
                 unsafe_allow_html=True,
             )
+        with rc2:
+            st.markdown("<div class='hh-icon-btn'>", unsafe_allow_html=True)
+            if st.button("✕", key="hh_dt_close", help="Bỏ chọn",
+                         use_container_width=True):
+                st.session_state.pop("hh_ma_chon", None)
+                st.session_state["hh_search_cnt"] = (
+                    st.session_state.get("hh_search_cnt", 0) + 1)
+                st.rerun()
+            st.markdown("</div>", unsafe_allow_html=True)
 
-        with c2:
-            mini_html = ["<div style='display:flex;gap:8px;'>"]
-            for cn in ALL_BRANCHES:
-                n = branch_tons[cn]
-                pct = max(4.0, (n / max_ton) * 100) if max_ton else 0
-                fg, _bg, _ = _stock_meta(n)
-                is_act = cn == active
-                pin = "📍 " if is_act else ""
-                mini_html.append(
-                    f"<div class='hh-mini{' active' if is_act else ''}'>"
-                    f"<div style='display:flex;justify-content:space-between;align-items:baseline;'>"
-                    f"<span class='label'>{pin}{CN_SHORT.get(cn, cn)}</span>"
-                    f"<span class='val' style='color:{fg};'>{n:,}</span>"
-                    f"</div>"
-                    f"<div class='track'><div class='fill' style='width:{pct:.1f}%;background:{fg};'></div></div>"
-                    f"</div>"
-                )
-            mini_html.append("</div>")
-            st.markdown("".join(mini_html), unsafe_allow_html=True)
-
-        with c3:
-            ac1, ac2, ac3, ac4, ac5 = st.columns(5)
-            with ac1:
-                with st.popover("✏️", use_container_width=True, help="Sửa thông tin"):
-                    if is_admin(): _render_sua_hang_hoa(row_m)
-                    else:          st.info("Cần quyền admin.")
-            with ac2:
-                with st.popover("📦", use_container_width=True, help="Chỉnh tồn kho"):
-                    if is_admin():
-                        _render_chinh_ton(ma_chon, row_m, branch_tons, branch_kho_ids)
+        # Action buttons row
+        is_adm = is_admin()
+        _spacer, ab = st.columns([6, 4])
+        with ab:
+            a1, a2, a3, a4 = st.columns(4)
+            with a1:
+                with st.popover("✎", use_container_width=True,
+                                help="Sửa thông tin"):
+                    if is_adm:
+                        _render_sua_hang_hoa(row_m)
                     else:
                         st.info("Cần quyền admin.")
-            with ac3:
-                with st.popover("⏱", use_container_width=True, help="Lịch sử giao dịch"):
+            with a2:
+                with st.popover("▣", use_container_width=True,
+                                help="Chỉnh tồn kho"):
+                    if is_adm:
+                        _render_chinh_ton(ma, row_m, branch_tons, branch_kho_ids)
+                    else:
+                        st.info("Cần quyền admin.")
+            with a3:
+                with st.popover("↺", use_container_width=True,
+                                help="Lịch sử giao dịch"):
                     st.caption("Lịch sử nhập / bán / chuyển kho")
-                    st.info("(Truy vấn hoa_don + nhap_hang + chuyen_hang theo ma_hang)")
-            with ac4:
-                with st.popover("🚫", use_container_width=True, help="Ẩn hàng hóa"):
-                    if is_admin():
-                        _render_an_hang_hoa(ma_chon, str(row_m.get("ten_hang", "")))
+                    st.info("(Đang phát triển)")
+            with a4:
+                with st.popover("⊘", use_container_width=True,
+                                help="Ẩn hàng hóa"):
+                    if is_adm:
+                        _render_an_hang_hoa(ma, name)
                     else:
                         st.info("Cần quyền admin.")
-            with ac5:
-                if st.button("✕", key="hh_close", use_container_width=True, help="Bỏ chọn"):
-                    st.session_state.pop("hh_ma_chon", None)
-                    st.session_state["hh_search_cnt"] = (
-                        st.session_state.get("hh_search_cnt", 0) + 1)
-                    st.rerun()
 
-        st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown(_branch_grid_html(branch_tons, active),
+                    unsafe_allow_html=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# TABLE + IN TEM
+# DETAIL PANEL — Group (lọc nhóm + chưa chọn SP)
 # ═══════════════════════════════════════════════════════════════════════
-def _render_table(filtered: pd.DataFrame, view_branches: list):
+def _render_group_detail(group_name: str, df_group: pd.DataFrame, active: str):
+    branch_tons = {cn: 0 for cn in ALL_BRANCHES}
+    try:
+        ma_list = df_group["ma_hang"].astype(str).str.strip().tolist()
+        all_kho = load_the_kho(branches_key=tuple(ALL_BRANCHES))
+        if not all_kho.empty and ma_list:
+            sub = all_kho[all_kho["Mã hàng"].astype(str).str.strip().isin(ma_list)]
+            for _, kr in sub.iterrows():
+                cn = kr.get("Chi nhánh", "")
+                if cn in branch_tons:
+                    branch_tons[cn] += int(kr.get("Tồn cuối kì", 0) or 0)
+    except Exception:
+        pass
+
+    n_sku = len(df_group)
+    with st.container(border=True):
+        rc1, rc2 = st.columns([8.5, 0.5])
+        with rc1:
+            st.markdown(
+                f"<div class='hh-detail-name'>{group_name} "
+                f"<span class='hh-code'>{n_sku} SKU</span></div>"
+                f"<div class='hh-detail-meta'>"
+                f"Tồn kho theo chi nhánh <span class='sep'>·</span> "
+                f"Cộng dồn toàn bộ SKU trong nhóm"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+        with rc2:
+            st.markdown("<div class='hh-icon-btn'>", unsafe_allow_html=True)
+            if st.button("✕", key="hh_gr_close", help="Bỏ lọc nhóm",
+                         use_container_width=True):
+                st.session_state["hh_cha"] = "Tất cả"
+                st.session_state["hh_con"] = "Tất cả"
+                st.rerun()
+            st.markdown("</div>", unsafe_allow_html=True)
+
+        st.markdown(_branch_grid_html(branch_tons, active),
+                    unsafe_allow_html=True)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# TABLE + IN TEM FOOTER
+# ═══════════════════════════════════════════════════════════════════════
+def _render_table(filtered: pd.DataFrame, view_branches: list,
+                  cha_chon: str, keyword: str):
     total = len(filtered)
 
     ma_v = filtered.get("ma_vach", filtered["ma_hang"]).fillna("")
@@ -573,51 +742,30 @@ def _render_table(filtered: pd.DataFrame, view_branches: list):
         "Giá bán":   filtered["gia_ban"].astype(int),
     })
 
-    # Tồn theo từng chi nhánh
-    try:
-        all_kho = load_the_kho(branches_key=tuple(ALL_BRANCHES))
-        per_branch = {cn: {} for cn in ALL_BRANCHES}
-        if not all_kho.empty:
-            for cn in ALL_BRANCHES:
-                sub = all_kho[all_kho["Chi nhánh"] == cn]
-                per_branch[cn] = (sub.groupby("Mã hàng")["Tồn cuối kì"]
-                                  .sum().astype(int).to_dict())
-    except Exception:
-        per_branch = {cn: {} for cn in ALL_BRANCHES}
+    # Header meta + filter tags
+    tags_html = ""
+    if cha_chon and cha_chon != "Tất cả":
+        tags_html += f"<span class='hh-filter-tag'>Nhóm: {cha_chon}</span>"
+    if keyword and keyword.strip():
+        tags_html += f"<span class='hh-filter-tag'>Từ khóa: \"{keyword.strip()}\"</span>"
 
-    for cn in ALL_BRANCHES:
-        short = CN_SHORT.get(cn, cn)
-        disp[short] = filtered["ma_hang"].map(per_branch[cn]).fillna(0).astype(int)
-    disp["Tổng"] = sum(disp[CN_SHORT.get(cn, cn)] for cn in ALL_BRANCHES)
-
-    active_short = CN_SHORT.get(view_branches[0], view_branches[0])
-    def _status(n):
-        if n <= 0:  return "🔴 Hết"
-        if n <= 10: return "🟡 Sắp hết"
-        return       "🟢 Đủ"
-    disp["Trạng thái"] = disp[active_short].apply(_status)
-
-    hint = " — lọc thêm để thu hẹp" if total > 100 else ""
-    st.caption(f"**{total:,}** sản phẩm · {', '.join(view_branches)}{hint}")
+    st.markdown(
+        f"<div style='font-size:12px;color:{T['muted']};padding:4px 2px;"
+        f"display:flex;align-items:center;'>"
+        f"<b style='color:{T['ink']};font-weight:500'>{total:,}</b>"
+        f"&nbsp;sản phẩm{tags_html}"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
 
     col_cfg = {
         "Sản phẩm": st.column_config.TextColumn("Sản phẩm", width="large"),
-        "Nhóm":     st.column_config.TextColumn("Nhóm",     width="small"),
+        "Nhóm":     st.column_config.TextColumn("Nhóm",     width="medium"),
         "Mã hàng":  st.column_config.TextColumn("Mã hàng",  width="small"),
         "Mã vạch":  st.column_config.TextColumn("Mã vạch",  width="small"),
         "Giá bán":  st.column_config.NumberColumn(
             "Giá bán", format="%d ₫", width="small"),
-        "Tổng":     st.column_config.NumberColumn(
-            "Tổng (3 CN)", format="%d", width="small"),
-        "Trạng thái": st.column_config.TextColumn(
-            "Trạng thái", width="small"),
     }
-    for cn in ALL_BRANCHES:
-        short = CN_SHORT.get(cn, cn)
-        max_v = int(max(disp[short].max(), 1))
-        col_cfg[short] = st.column_config.ProgressColumn(
-            short, format="%d", min_value=0, max_value=max_v, width="small",
-        )
 
     event = st.dataframe(
         disp,
@@ -625,15 +773,18 @@ def _render_table(filtered: pd.DataFrame, view_branches: list):
         hide_index=True,
         on_select="rerun",
         selection_mode="multi-row",
-        key="hh_table_v3",
+        key="hh_table_v4",
         column_config=col_cfg,
-        height=min(560, 42 + len(disp) * 35 + 4),
+        height=min(560, 42 + len(disp) * 36 + 4),
     )
 
     sel = event.selection.rows if event.selection else []
     pre_ma = st.session_state.get("hh_ma_chon")
 
-    # Banner chỉ hiện khi chọn ĐÚNG 1 dòng. Multi-select ẩn banner.
+    # Multi-row logic:
+    # - len == 1 → set ma_chon → product detail
+    # - len >= 2 → clear ma_chon → enable In tem
+    # - len == 0 + group → group detail
     if len(sel) == 1 and sel[0] < len(disp):
         new_ma = disp.iloc[sel[0]]["Mã hàng"]
         if new_ma != pre_ma:
@@ -643,16 +794,25 @@ def _render_table(filtered: pd.DataFrame, view_branches: list):
         st.session_state.pop("hh_ma_chon", None)
         st.rerun()
 
+    # ── FOOTER: hint + In tem button ──
     n_sel = len(sel)
-    if not pre_ma and n_sel == 0:
-        st.caption("↑ Chọn 1 dòng để xem chi tiết, hoặc chọn nhiều dòng để in tem hàng loạt")
-
-    # ── NÚT IN TEM MÃ VẠCH ──
-    col_btn1, _col_btn2 = st.columns([2, 4])
-    with col_btn1:
+    hint = ("Tick các dòng cần in tem, hoặc click 1 dòng để xem chi tiết."
+            if n_sel < 2 else
+            f"Đã chọn <b>{n_sel} sản phẩm</b> để in tem.")
+    st.markdown("<div class='hh-print-zone'>", unsafe_allow_html=True)
+    fl, fr = st.columns([5, 2])
+    with fl:
+        st.markdown(
+            f"<div style='font-size:12px;color:{T['muted']};padding-top:8px;'>"
+            f"{hint}</div>",
+            unsafe_allow_html=True,
+        )
+    with fr:
+        btn_label = (f"🏷️ In tem mã vạch  ({n_sel})"
+                     if n_sel >= 2 else "🏷️ In tem mã vạch")
         if st.button(
-            f"🏷️ In tem mã vạch{f' ({n_sel})' if n_sel else ''}",
-            disabled=(n_sel == 0),
+            btn_label,
+            disabled=(n_sel < 2),
             key="hh_btn_in_tem",
             use_container_width=True,
         ):
@@ -679,6 +839,7 @@ def _render_table(filtered: pd.DataFrame, view_branches: list):
             st.session_state["_hh_in_tem_items"] = items_for_print
             st.session_state.pop("_intem_hh_qty", None)
             _dlg_in_tem_hh()
+    st.markdown("</div>", unsafe_allow_html=True)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -690,10 +851,10 @@ def _render_chinh_ton(ma_chon, row_m, branch_tons, branch_kho_ids):
     for cn in ALL_BRANCHES:
         adj[cn] = st.number_input(
             CN_SHORT.get(cn, cn), min_value=0, step=1,
-            value=branch_tons[cn], key=f"adj_v3_{ma_chon}_{cn}",
+            value=branch_tons[cn], key=f"adj_v4_{ma_chon}_{cn}",
         )
     if st.button("💾 Lưu", type="primary", use_container_width=True,
-                 key=f"save_ton_v3_{ma_chon}"):
+                 key=f"save_ton_v4_{ma_chon}"):
         try:
             changed = []
             for cn in ALL_BRANCHES:
@@ -881,7 +1042,7 @@ def _render_an_hang_hoa(ma: str, ten: str):
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# BARCODE LABEL PRINT (Phase 2 — preserve từ main)
+# BARCODE LABEL PRINT (GIỮ NGUYÊN — Phase 2 + script-escape fix)
 # ═══════════════════════════════════════════════════════════════════════
 
 @st.dialog("🏷️ In tem mã vạch", width="large")
@@ -963,9 +1124,8 @@ def _render_dialog_in_tem(items: list[dict], dialog_key: str):
 def _trigger_print_window(html_content: str):
     """Mở tab mới qua Blob URL, render HTML tem.
 
-    Escape "</" → "<\\/" trên JSON dump vì payload có chứa </script> từ
-    inner bwip-js script — HTML tokenizer sẽ đóng wrapper sớm nếu không
-    escape.
+    Escape "</" → "<\\/" sau json.dumps để </script> trong payload không
+    đóng wrapper script sớm.
     """
     import streamlit.components.v1 as components
     import json

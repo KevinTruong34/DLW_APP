@@ -206,13 +206,48 @@ def module_nhap_hang():
                         st.metric("Tổng giá vốn", f"{_fmt(tong_von_ds)}đ")
 
                         header_row = df_ds[df_ds["ma_phieu"] == picked_ds].iloc[0].to_dict()
-                        st.download_button(
-                            "📥 Xuất Excel",
-                            data=_build_pnh_excel(header_row, ct_ds),
-                            file_name=f"PhieuNhap_{picked_ds}.xlsx",
-                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                            key=f"pnh_ds_export_{picked_ds}",
-                        )
+                        col_xls, col_tem = st.columns(2)
+                        with col_xls:
+                            st.download_button(
+                                "📥 Xuất Excel",
+                                data=_build_pnh_excel(header_row, ct_ds),
+                                file_name=f"PhieuNhap_{picked_ds}.xlsx",
+                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                key=f"pnh_ds_export_{picked_ds}",
+                                use_container_width=True,
+                            )
+                        with col_tem:
+                            if st.button(
+                                "🏷️ In tem theo phiếu",
+                                key=f"pnh_ds_in_tem_{picked_ds}",
+                                use_container_width=True,
+                            ):
+                                # JOIN ma_vach từ hang_hoa (ct không có sẵn)
+                                master_hh = load_hang_hoa()
+                                ma_vach_map = {}
+                                if not master_hh.empty and "ma_vach" in master_hh.columns:
+                                    ma_vach_map = dict(zip(
+                                        master_hh["ma_hang"].astype(str),
+                                        master_hh["ma_vach"].fillna("").astype(str),
+                                    ))
+                                items_for_print = []
+                                for _, ct_row in ct_ds.iterrows():
+                                    mh = str(ct_row["ma_hang"])
+                                    qty = int(ct_row.get("so_luong", 0) or 0)
+                                    if qty <= 0:
+                                        continue
+                                    gb_raw = ct_row.get("gia_ban_moi", 0)
+                                    gb_clean = 0 if pd.isna(gb_raw) else int(gb_raw or 0)
+                                    items_for_print.append({
+                                        "ma_hang":  mh,
+                                        "ten_hang": str(ct_row.get("ten_hang", "")),
+                                        "gia_ban":  gb_clean,
+                                        "ma_vach":  ma_vach_map.get(mh, "").strip(),
+                                        "qty":      qty,
+                                    })
+                                st.session_state["_nh_in_tem_items"] = items_for_print
+                                st.session_state.pop("_intem_nh_qty", None)
+                                _dlg_in_tem_nh()
 
         # ── Sub-tab: Tạo phiếu ──
         with sub_tao:
@@ -1108,3 +1143,18 @@ def module_nhap_hang():
                         st.cache_data.clear()
                         st.success(f"✓ Đã thêm NCC **{ncc_ten.strip()}** (mã: {auto_ma})"); st.rerun()
                     except Exception as e: st.error(f"Lỗi: {e}")
+
+
+# ════════════════════════════════════════════════════════
+# BARCODE LABEL PRINT (Phase 3 — PLAN_barcode_label_print.md)
+# Reuse _render_dialog_in_tem từ modules.hang_hoa
+# ════════════════════════════════════════════════════════
+
+@st.dialog("🏷️ In tem theo phiếu nhập", width="large")
+def _dlg_in_tem_nh():
+    items = st.session_state.get("_nh_in_tem_items", [])
+    if not items:
+        st.warning("Phiếu rỗng.")
+        return
+    from modules.hang_hoa import _render_dialog_in_tem
+    _render_dialog_in_tem(items, dialog_key="nh")

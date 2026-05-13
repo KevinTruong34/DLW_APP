@@ -43,6 +43,11 @@ def inject_hang_hoa_css() -> None:
     within the same run, and rerun cost is negligible (cached read).
     """
     css = _read_css()
+    # Any literal "</style>" inside the CSS (e.g., inside a CSS comment
+    # that documents the inject pattern) would prematurely close the
+    # wrapping <style> tag in HTML — making the rest of the file leak
+    # out as visible page text. Escape so the HTML parser doesn't match.
+    css = css.replace("</style>", "<\\/style>")
     fonts = (
         '<link rel="preconnect" href="https://fonts.googleapis.com">'
         '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'

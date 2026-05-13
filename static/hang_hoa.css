@@ -1,16 +1,8 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    hang_hoa.css — Production styles for hang_hoa.py redesign (direction A)
    ═══════════════════════════════════════════════════════════════════════════
-   USAGE: inject via st.markdown() once at top of module_hang_hoa().
-   See inject_css.py for the helper, or copy the loader pattern:
-
-      import streamlit as st
-      from pathlib import Path
-      _CSS = Path(__file__).parent.parent / "static" / "hang_hoa.css"
-      st.markdown(f"<style>{_CSS.read_text(encoding='utf-8')}</style>",
-                  unsafe_allow_html=True)
-
-   All classes prefixed `.hh-*` to avoid collision with other modules.
+   USAGE: see utils/hh_style.py → inject_hang_hoa_css().
+   All classes prefixed .hh-* to avoid collision with other modules.
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /* ── DESIGN TOKENS ─────────────────────────────────────────────────────── */

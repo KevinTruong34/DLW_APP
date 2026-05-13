@@ -9,31 +9,82 @@ from utils.db import supabase, log_action, load_hoa_don, load_the_kho, load_hang
     load_khach_hang_list, lookup_khach_hang, _upsert_khach_hang, get_archive_reminder
 from utils.auth import get_user, is_admin, is_ke_toan_or_admin, \
     get_active_branch, get_accessible_branches
+from utils.hh_style import (
+    inject_hang_hoa_css, hh_html, render_caption, render_empty_rail,
+    render_detail_card_open, render_stock_tiles, render_detail_card_close,
+)
 
 from utils.helpers import _normalize
 
 
 def module_hang_hoa():
+    inject_hang_hoa_css()
     try:
         active     = get_active_branch()
         accessible = get_accessible_branches()
 
-        # ── Chi nhánh filter ──
-        if is_ke_toan_or_admin() and len(accessible) > 1:
-            view_branches = st.multiselect(
-                "Chi nhánh:", accessible, default=[active],
-                key="hh_cn", label_visibility="collapsed")
-            if not view_branches: st.warning("Chọn ít nhất một chi nhánh."); return
-        else:
-            view_branches = [active]
-
-        # ── Load data ──
-        master   = load_hang_hoa()
-        the_kho  = load_the_kho(branches_key=tuple(view_branches))
+        # ── Load master first to drive popover filter list ──
+        master = load_hang_hoa()
         has_master = not master.empty
+        cha_list_for_filter = sorted([c for c in master["loai_hang"].dropna().unique() if c]) \
+            if has_master and "loai_hang" in master.columns else []
+
+        # ══════ TOOLBAR (chi nhánh · search · lọc · thêm) ══════
+        hh_html('<div class="hh-toolbar">')
+        tb_cols = st.columns([2, 5, 1, 1])
+
+        # 1. Branch chips wrapper
+        with tb_cols[0]:
+            hh_html('<div class="hh-branches">')
+            if is_ke_toan_or_admin() and len(accessible) > 1:
+                view_branches = st.multiselect(
+                    "Chi nhánh:", accessible, default=[active],
+                    key="hh_cn", label_visibility="collapsed")
+            else:
+                view_branches = [active]
+            hh_html('</div>')
+
+        # 2. Search input
+        with tb_cols[1]:
+            _sc = st.session_state.get("hh_search_cnt", 0)
+            keyword = st.text_input(
+                "", key=f"hh_search_{_sc}",
+                placeholder="Tìm mã hàng, mã vạch hoặc tên…",
+                label_visibility="collapsed")
+
+        # 3. Popover Lọc
+        with tb_cols[2]:
+            with st.popover("⊟ Lọc", use_container_width=True):
+                cha_chon = st.selectbox(
+                    "Nhóm hàng:", ["Tất cả"] + cha_list_for_filter,
+                    key="hh_cha", label_visibility="collapsed")
+                if cha_chon != "Tất cả" and has_master and "thuong_hieu" in master.columns:
+                    con_list = sorted([c for c in
+                        master[master["loai_hang"] == cha_chon]["thuong_hieu"]
+                        .dropna().unique() if c])
+                    con_chon = st.selectbox(
+                        "Nhóm con:", ["Tất cả"] + con_list,
+                        key="hh_con", label_visibility="collapsed")
+                else:
+                    con_chon = "Tất cả"
+
+        # 4. Add button (admin only)
+        with tb_cols[3]:
+            if is_admin():
+                if st.button("➕ Thêm hàng", type="primary",
+                             use_container_width=True, key="hh_add_open"):
+                    _dlg_them_hang()
+        hh_html('</div>')  # /.hh-toolbar
+
+        # Branch validation
+        if not view_branches:
+            st.warning("Chọn ít nhất một chi nhánh.")
+            return
+
+        # ── Load the_kho for selected branches ──
+        the_kho = load_the_kho(branches_key=tuple(view_branches))
 
         if not has_master and the_kho.empty:
-            # Nếu chưa có dữ liệu, vẫn cho admin thêm mới
             if is_admin():
                 st.info("Chưa có dữ liệu hàng hóa.")
                 _render_them_moi()
@@ -71,29 +122,7 @@ def module_hang_hoa():
             lambda x: _normalize(x) if pd.notna(x) else "")
         df["_norm_ten"]  = df["ten_hang"].apply(_normalize)
 
-        # ══════ SEARCH + FILTER ══════
-        cha_list = sorted([c for c in df["_cha"].dropna().unique() if c])
-
-        col_s, col_f = st.columns([5, 1])
-        with col_s:
-            _sc = st.session_state.get("hh_search_cnt", 0)
-            keyword = st.text_input("", key=f"hh_search_{_sc}",
-                placeholder="🔍  Tìm mã hàng, mã vạch hoặc tên...",
-                label_visibility="collapsed")
-        with col_f:
-            with st.popover("⊡ Lọc", use_container_width=True):
-                cha_chon = st.selectbox("Nhóm hàng:", ["Tất cả"] + cha_list,
-                    key="hh_cha", label_visibility="collapsed")
-                if cha_chon != "Tất cả":
-                    con_list = sorted([c for c in
-                        df[df["_cha"]==cha_chon]["_con"].dropna().unique() if c])
-                    con_chon = st.selectbox("Nhóm con:", ["Tất cả"] + con_list,
-                        key="hh_con", label_visibility="collapsed")
-                else:
-                    con_chon = "Tất cả"
-        cha_chon = st.session_state.get("hh_cha", "Tất cả")
-        con_chon = st.session_state.get("hh_con", "Tất cả")
-
+        # ══════ APPLY SEARCH + FILTERS ══════
         filtered = df.copy()
         kw = _normalize(keyword) if keyword.strip() else ""
         if kw:
@@ -109,10 +138,13 @@ def module_hang_hoa():
         filtered = filtered.sort_values("Ton_cuoi", ascending=False).reset_index(drop=True)
 
         if filtered.empty:
-            st.warning("Không tìm thấy hàng hóa phù hợp.")
-            if is_admin():
-                st.markdown("---")
-                _render_them_moi()
+            render_caption(total=0, branches=view_branches,
+                           filter_label=cha_chon if cha_chon != "Tất cả" else None)
+            col_table, col_rail = st.columns([6, 4], gap="medium")
+            with col_table:
+                st.warning("Không tìm thấy hàng hóa phù hợp.")
+            with col_rail:
+                render_empty_rail()
             return
 
         if len(filtered) == 1:
@@ -122,169 +154,13 @@ def module_hang_hoa():
         if ma_chon and ma_chon not in filtered["ma_hang"].values:
             ma_chon = None; st.session_state.pop("hh_ma_chon", None)
 
-        # ══════ DETAIL CARD ══════
-        if ma_chon:
-            row_m = filtered[filtered["ma_hang"] == ma_chon].iloc[0]
-            ma_display = str(row_m["ma_hang"])
-            vach       = str(row_m.get("ma_vach","") or "")
-            nhom_full  = (f"{row_m['_cha']} › {row_m['_con']}"
-                         if row_m.get("_con","") else row_m.get("_cha",""))
-            gb = int(row_m.get("gia_ban", 0) or 0)
+        # ══════ CAPTION ══════
+        render_caption(
+            total=len(filtered), branches=view_branches,
+            filter_label=cha_chon if cha_chon != "Tất cả" else None)
 
-            extra_parts = []
-            if pd.notna(row_m.get("thuong_hieu","")) and str(row_m.get("thuong_hieu","")).strip():
-                extra_parts.append(f"Thương hiệu: {row_m['thuong_hieu']}")
-            if pd.notna(row_m.get("bao_hanh","")) and str(row_m.get("bao_hanh","")).strip():
-                extra_parts.append(f"Bảo hành: {row_m['bao_hanh']}")
-            extra_str = " · ".join(extra_parts)
-
-            vach_str   = f" · {vach}" if vach and vach != ma_display else ""
-            nhom_html  = f"<div style='font-size:0.75rem;color:#aaa;margin-top:1px;'>{nhom_full}</div>" if nhom_full else ""
-            extra_html = f"<div style='font-size:0.78rem;color:#666;margin-top:6px;'>{extra_str}</div>" if extra_str else ""
-            gb_html    = (f"<div style='margin-top:10px;font-size:0.75rem;color:#888;'>Giá bán</div>"
-                         f"<div style='font-size:1.1rem;font-weight:700;color:#1a1a2e;'>"
-                         f"{'—' if not gb else f'{gb:,} đ'}</div>")
-
-            c_card, c_close = st.columns([8, 1])
-            with c_card:
-                st.markdown(
-                    f"<div style='background:#fff;border:1px solid #e0e0e0;"
-                    f"border-radius:12px;padding:14px 16px;'>"
-                    f"<div style='font-weight:700;font-size:1.05rem;color:#1a1a2e;'>"
-                    f"{row_m['ten_hang']}</div>"
-                    f"{nhom_html}"
-                    f"<div style='margin-top:10px;'>"
-                    f"<span style='font-family:monospace;font-size:0.95rem;font-weight:700;"
-                    f"background:#f4f6fa;padding:4px 10px;border-radius:6px;color:#1a1a2e;'>"
-                    f"{ma_display}</span>"
-                    f"<span style='font-size:0.82rem;color:#999;margin-left:8px;'>{vach_str}</span>"
-                    f"</div>"
-                    f"{extra_html}"
-                    f"{gb_html}"
-                    f"</div>",
-                    unsafe_allow_html=True)
-            with c_close:
-                st.markdown("<div style='padding-top:10px;'>", unsafe_allow_html=True)
-                if st.button("✕", key="btn_close", help="Đóng"):
-                    st.session_state.pop("hh_ma_chon", None)
-                    st.session_state["hh_search_cnt"] = st.session_state.get("hh_search_cnt", 0) + 1
-                    st.rerun()
-                st.markdown("</div>", unsafe_allow_html=True)
-
-            # Tồn kho 3 chi nhánh
-            st.markdown(
-                "<div style='font-size:0.82rem;font-weight:600;"
-                "color:#555;margin:10px 0 6px;'>Tồn kho chi nhánh</div>",
-                unsafe_allow_html=True)
-            try:
-                all_kho = load_the_kho(branches_key=tuple(ALL_BRANCHES))
-                branch_tons = {cn: 0 for cn in ALL_BRANCHES}
-                branch_kho_ids = {cn: None for cn in ALL_BRANCHES}
-                if not all_kho.empty:
-                    rows_kho = all_kho[all_kho["Mã hàng"].astype(str).str.strip() == str(ma_chon).strip()]
-                    for _, kr in rows_kho.iterrows():
-                        cn = kr.get("Chi nhánh", "")
-                        if cn in branch_tons:
-                            branch_tons[cn] += int(kr.get("Tồn cuối kì", 0) or 0)
-                            branch_kho_ids[cn] = kr.get("id")
-
-                cn_cols = st.columns(3)
-                for idx, cn_name in enumerate(ALL_BRANCHES):
-                    with cn_cols[idx]:
-                        ton    = branch_tons[cn_name]
-                        is_cur = (cn_name == active)
-                        clr    = "#1a7f37" if ton > 5 else ("#cf4c2c" if ton > 0 else "#aaa")
-                        border = "2px solid #e63946" if is_cur else "1px solid #e8e8e8"
-                        bg     = "#fff8f8" if is_cur else "#fff"
-                        icon   = "📍 " if is_cur else ""
-                        st.markdown(
-                            f"<div style='text-align:center;padding:10px 4px;"
-                            f"border:{border};border-radius:10px;background:{bg};'>"
-                            f"<div style='font-size:0.68rem;color:#777;"
-                            f"overflow:hidden;text-overflow:ellipsis;white-space:nowrap;'>"
-                            f"{icon}{CN_SHORT.get(cn_name, cn_name)}</div>"
-                            f"<div style='font-size:1.4rem;font-weight:700;color:{clr};'>"
-                            f"{ton:,}</div></div>",
-                            unsafe_allow_html=True)
-
-                # ── Chỉnh tồn kho (admin only) ──
-                if is_admin():
-                    with st.expander("✏️ Chỉnh tồn kho", expanded=False):
-                        st.caption("Điều chỉnh trực tiếp tồn kho tại từng chi nhánh. "
-                                   "Thay đổi sẽ ghi thẳng vào the_kho.")
-                        adj_cols = st.columns(3)
-                        adj_vals = {}
-                        for idx, cn_name in enumerate(ALL_BRANCHES):
-                            with adj_cols[idx]:
-                                adj_vals[cn_name] = st.number_input(
-                                    CN_SHORT.get(cn_name, cn_name),
-                                    min_value=0,
-                                    value=branch_tons[cn_name],
-                                    step=1,
-                                    key=f"adj_ton_{ma_chon}_{cn_name}"
-                                )
-                        if st.button("💾 Lưu tồn kho", type="primary",
-                                     use_container_width=True, key=f"save_ton_{ma_chon}"):
-                            try:
-                                changed = []
-                                for cn_name in ALL_BRANCHES:
-                                    new_ton = int(adj_vals[cn_name])
-                                    old_ton = branch_tons[cn_name]
-                                    if new_ton == old_ton:
-                                        continue
-                                    kho_id = branch_kho_ids[cn_name]
-                                    if kho_id:
-                                        # Dòng đã tồn tại → update
-                                        supabase.table("the_kho").update(
-                                            {"Tồn cuối kì": new_ton}
-                                        ).eq("id", kho_id).execute()
-                                    else:
-                                        # Chưa có dòng → insert mới
-                                        supabase.table("the_kho").insert({
-                                            "Mã hàng":    str(ma_chon),
-                                            "Tên hàng":   str(row_m.get("ten_hang", "")),
-                                            "Chi nhánh":  cn_name,
-                                            "Tồn cuối kì": new_ton,
-                                            "Tồn đầu kì":  0,
-                                        }).execute()
-                                    changed.append(
-                                        f"{CN_SHORT.get(cn_name, cn_name)}: "
-                                        f"{old_ton} → {new_ton}"
-                                    )
-                                if changed:
-                                    st.cache_data.clear()
-                                    log_action("KHO_ADJ",
-                                               f"ma={ma_chon} " + ", ".join(changed))
-                                    st.success("✓ Đã cập nhật: " + " · ".join(changed))
-                                    st.rerun()
-                                else:
-                                    st.info("Không có thay đổi.")
-                            except Exception as e:
-                                st.error(f"Lỗi: {e}")
-
-            except Exception:
-                pass
-
-            # ── Admin actions: Sửa thông tin & Ẩn hàng hóa ──
-            if is_admin():
-                with st.expander("✏️ Sửa thông tin hàng hóa", expanded=False):
-                    _render_sua_hang_hoa(row_m)
-
-                st.markdown("---")
-                _render_an_hang_hoa(ma_chon, str(row_m.get("ten_hang", "")))
-
-            st.markdown("<hr style='margin:12px 0 6px;'>", unsafe_allow_html=True)
-
-        # ══════ BẢNG HÀNG HÓA ══════
-        total = len(filtered)
-        filter_label = (f"{cha_chon}" if cha_chon != "Tất cả" else "")
-        st.caption(
-            f"**{total}** sản phẩm"
-            + (f" · {filter_label}" if filter_label else "")
-            + f" · {', '.join(view_branches)}"
-            + (" — lọc thêm để thu hẹp" if total > 100 else "")
-        )
-
+        # ══════ MASTER-DETAIL GRID (60/40) ══════
+        # Build display DataFrame
         disp_cols = {"ten_hang":"Tên hàng","ma_hang":"Mã hàng","Ton_cuoi":"Tồn kho"}
         if "ma_vach" in filtered.columns:
             disp_cols = {"ten_hang":"Tên hàng","ma_hang":"Mã hàng",
@@ -298,79 +174,274 @@ def module_hang_hoa():
         N_ROWS = 10
         tbl_h  = HEADER + N_ROWS * ROW_H
 
-        event = st.dataframe(
-            disp,
-            use_container_width=True,
-            hide_index=True,
-            on_select="rerun",
-            selection_mode="multi-row",
-            key="hh_table",
-            column_config={
-                "Tên hàng": st.column_config.TextColumn("Tên hàng", width="medium"),
-                "Mã hàng":  st.column_config.TextColumn("Mã hàng",  width="medium"),
-                "Mã vạch":  st.column_config.TextColumn("Mã vạch",  width="medium"),
-                "Tồn kho":  st.column_config.NumberColumn("Tồn", width="small", format="%d"),
-            },
-            height=tbl_h,
-        )
+        col_table, col_rail = st.columns([6, 4], gap="medium")
 
-        sel = event.selection.rows if event.selection else []
-
-        # Detail card chỉ hiện khi chọn đúng 1 dòng. Multi-select ẩn card.
-        if len(sel) == 1 and sel[0] < len(disp):
-            new_ma = disp.iloc[sel[0]]["Mã hàng"]
-            if new_ma != ma_chon:
-                st.session_state["hh_ma_chon"] = new_ma
-                st.rerun()
-        elif len(sel) >= 2 and ma_chon:
-            st.session_state.pop("hh_ma_chon", None)
-            st.rerun()
-
-        if not ma_chon and len(sel) == 0:
-            st.caption("↑ Chọn 1 dòng để xem chi tiết, hoặc chọn nhiều dòng để in tem hàng loạt")
-
-        # ══════ NUT IN TEM MÃ VẠCH ══════
-        n_sel = len(sel)
-        col_btn1, _col_btn2 = st.columns([2, 4])
-        with col_btn1:
-            if st.button(
-                f"🏷️ In tem mã vạch{f' ({n_sel})' if n_sel else ''}",
-                disabled=(n_sel == 0),
-                key="hh_btn_in_tem",
+        with col_table:
+            event = st.dataframe(
+                disp,
                 use_container_width=True,
-            ):
-                items_for_print = []
-                for idx in sel:
-                    if idx >= len(disp):
-                        continue
-                    mh = disp.iloc[idx]["Mã hàng"]
-                    row = filtered[filtered["ma_hang"] == mh]
-                    if row.empty:
-                        continue
-                    r = row.iloc[0]
-                    ma_vach_raw = r.get("ma_vach")
-                    ma_vach_clean = "" if pd.isna(ma_vach_raw) else str(ma_vach_raw).strip()
-                    gia_ban_raw = r.get("gia_ban", 0)
-                    gia_ban_clean = 0 if pd.isna(gia_ban_raw) else int(gia_ban_raw or 0)
-                    items_for_print.append({
-                        "ma_hang":  str(r.get("ma_hang", "")),
-                        "ten_hang": str(r.get("ten_hang", "")),
-                        "gia_ban":  gia_ban_clean,
-                        "ma_vach":  ma_vach_clean,
-                        "qty":      1,
-                    })
-                st.session_state["_hh_in_tem_items"] = items_for_print
-                st.session_state.pop("_intem_hh_qty", None)
-                _dlg_in_tem_hh()
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="multi-row",
+                key="hh_table",
+                column_config={
+                    "Tên hàng": st.column_config.TextColumn("Tên hàng", width="medium"),
+                    "Mã hàng":  st.column_config.TextColumn("Mã hàng",  width="medium"),
+                    "Mã vạch":  st.column_config.TextColumn("Mã vạch",  width="medium"),
+                    "Tồn kho":  st.column_config.NumberColumn("Tồn", width="small", format="%d"),
+                },
+                height=tbl_h,
+            )
+            sel = event.selection.rows if event.selection else []
 
-        # ── Nút thêm hàng hóa mới (admin) ──
-        if is_admin():
-            st.markdown("---")
-            with st.expander("➕ Thêm hàng hóa mới", expanded=False):
-                _render_them_moi()
+            hh_html(
+                '<div class="hh-hint-row">'
+                '↑ Chọn 1 dòng để xem chi tiết · chọn nhiều dòng để in tem hàng loạt'
+                '</div>'
+            )
+
+            # Update hh_ma_chon from selection
+            if len(sel) == 1 and sel[0] < len(disp):
+                new_ma = disp.iloc[sel[0]]["Mã hàng"]
+                if new_ma != ma_chon:
+                    st.session_state["hh_ma_chon"] = new_ma
+                    st.rerun()
+            elif len(sel) >= 2 and ma_chon:
+                st.session_state.pop("hh_ma_chon", None)
+                st.rerun()
+
+        with col_rail:
+            if len(sel) >= 2:
+                _render_rail_multi(sel, disp, filtered)
+            elif ma_chon:
+                _render_rail_single(filtered, ma_chon, active)
+            else:
+                render_empty_rail()
 
     except Exception as e:
         st.error(f"Lỗi tải Hàng hóa: {e}")
+
+
+# ════════════════════════════════════════════════════════
+# RAIL RENDERERS — Right column (master-detail)
+# ════════════════════════════════════════════════════════
+
+def _render_rail_single(filtered, ma_chon, active):
+    """Detail card for a single selected item."""
+    row_m = filtered[filtered["ma_hang"] == ma_chon].iloc[0]
+
+    # Close button at top-right of rail (visually adjacent to card header)
+    _, close_col = st.columns([5, 1])
+    with close_col:
+        if st.button("✕", key=f"hh_close_detail_{ma_chon}",
+                     help="Đóng chi tiết", use_container_width=True):
+            st.session_state.pop("hh_ma_chon", None)
+            st.session_state["hh_search_cnt"] = st.session_state.get("hh_search_cnt", 0) + 1
+            st.rerun()
+
+    cha = str(row_m.get("_cha", "") or "")
+    con = str(row_m.get("_con", "") or "")
+    breadcrumb = (f"{cha} › {con}" if con else cha).upper()
+
+    render_detail_card_open(
+        ten_hang=str(row_m.get("ten_hang", "")),
+        breadcrumb=breadcrumb,
+        ma_hang=str(row_m.get("ma_hang", "")),
+        ma_vach=str(row_m.get("ma_vach", "") or ""),
+        thuong_hieu=str(row_m.get("thuong_hieu", "") or ""),
+        loai_sp=str(row_m.get("loai_sp", "") or "Hàng hóa"),
+        bao_hanh=str(row_m.get("bao_hanh", "") or ""),
+        gia_ban=int(row_m.get("gia_ban", 0) or 0),
+    )
+
+    # Stock tiles (3 branches)
+    branch_tons = {cn: 0 for cn in ALL_BRANCHES}
+    branch_kho_ids = {cn: None for cn in ALL_BRANCHES}
+    try:
+        all_kho = load_the_kho(branches_key=tuple(ALL_BRANCHES))
+        if not all_kho.empty:
+            rows_kho = all_kho[
+                all_kho["Mã hàng"].astype(str).str.strip() == str(ma_chon).strip()
+            ]
+            for _, kr in rows_kho.iterrows():
+                cn = kr.get("Chi nhánh", "")
+                if cn in branch_tons:
+                    branch_tons[cn] += int(kr.get("Tồn cuối kì", 0) or 0)
+                    branch_kho_ids[cn] = kr.get("id")
+    except Exception:
+        pass
+
+    render_stock_tiles(
+        branches=list(ALL_BRANCHES),
+        stocks=branch_tons,
+        current=active,
+        short=CN_SHORT,
+    )
+
+    # ── Admin actions ──
+    if is_admin():
+        # "Chỉnh tồn kho" expander
+        with st.expander("✎ Chỉnh tồn kho", expanded=False):
+            st.caption("Điều chỉnh trực tiếp tồn kho tại từng chi nhánh. "
+                       "Thay đổi sẽ ghi thẳng vào the_kho.")
+            adj_cols = st.columns(3)
+            adj_vals = {}
+            for idx, cn_name in enumerate(ALL_BRANCHES):
+                with adj_cols[idx]:
+                    adj_vals[cn_name] = st.number_input(
+                        CN_SHORT.get(cn_name, cn_name),
+                        min_value=0,
+                        value=branch_tons[cn_name],
+                        step=1,
+                        key=f"adj_ton_{ma_chon}_{cn_name}",
+                    )
+            if st.button("💾 Lưu tồn kho", type="primary",
+                         use_container_width=True, key=f"save_ton_{ma_chon}"):
+                try:
+                    changed = []
+                    for cn_name in ALL_BRANCHES:
+                        new_ton = int(adj_vals[cn_name])
+                        old_ton = branch_tons[cn_name]
+                        if new_ton == old_ton:
+                            continue
+                        kho_id = branch_kho_ids[cn_name]
+                        if kho_id:
+                            supabase.table("the_kho").update(
+                                {"Tồn cuối kì": new_ton}
+                            ).eq("id", kho_id).execute()
+                        else:
+                            supabase.table("the_kho").insert({
+                                "Mã hàng":    str(ma_chon),
+                                "Tên hàng":   str(row_m.get("ten_hang", "")),
+                                "Chi nhánh":  cn_name,
+                                "Tồn cuối kì": new_ton,
+                                "Tồn đầu kì":  0,
+                            }).execute()
+                        changed.append(
+                            f"{CN_SHORT.get(cn_name, cn_name)}: "
+                            f"{old_ton} → {new_ton}"
+                        )
+                    if changed:
+                        st.cache_data.clear()
+                        log_action("KHO_ADJ",
+                                   f"ma={ma_chon} " + ", ".join(changed))
+                        st.success("✓ Đã cập nhật: " + " · ".join(changed))
+                        st.rerun()
+                    else:
+                        st.info("Không có thay đổi.")
+                except Exception as e:
+                    st.error(f"Lỗi: {e}")
+
+        # Sửa / Ẩn buttons
+        c_edit, c_hide = st.columns([3, 1])
+        with c_edit:
+            if st.button("✎ Sửa thông tin", use_container_width=True,
+                         key=f"hh_open_edit_{ma_chon}"):
+                _dlg_sua_hang_hoa(row_m)
+        with c_hide:
+            if st.button("🚫", help="Ẩn hàng hóa", use_container_width=True,
+                         key=f"hh_open_hide_{ma_chon}"):
+                st.session_state[f"hh_an_confirm_{ma_chon}"] = True
+                st.rerun()
+
+        # Inline hide-confirm UI (only when confirm flag set)
+        if st.session_state.get(f"hh_an_confirm_{ma_chon}"):
+            _render_an_hang_hoa(str(ma_chon), str(row_m.get("ten_hang", "")))
+
+    # Close card
+    render_detail_card_close()
+
+    # ── Print button (1 SP) ──
+    if st.button("🏷 In tem mã vạch", type="primary",
+                 use_container_width=True, key=f"hh_print_single_{ma_chon}"):
+        _ma_vach = "" if pd.isna(row_m.get("ma_vach")) else str(row_m.get("ma_vach")).strip()
+        st.session_state["_hh_in_tem_items"] = [{
+            "ma_hang":  str(row_m.get("ma_hang", "")),
+            "ten_hang": str(row_m.get("ten_hang", "")),
+            "gia_ban":  int(row_m.get("gia_ban", 0) or 0),
+            "ma_vach":  _ma_vach,
+            "qty":      1,
+        }]
+        st.session_state.pop("_intem_hh_qty", None)
+        _dlg_in_tem_hh()
+
+
+def _render_rail_multi(sel, disp, filtered):
+    """Queue card when multiple rows selected."""
+    n = len(sel)
+
+    items_html = []
+    for idx in sel[:50]:
+        if idx >= len(disp):
+            continue
+        ten = disp.iloc[idx]["Tên hàng"]
+        ma  = disp.iloc[idx]["Mã hàng"]
+        items_html.append(
+            f'<li><span class="ten">{ten}</span>'
+            f'<span class="ma">{ma}</span><span class="rm">×</span></li>'
+        )
+
+    hh_html(
+        f'<div class="hh-card hh-queue">'
+        f'  <div class="hh-card-head">'
+        f'    <div class="row1">'
+        f'      <div>'
+        f'        <h3>Đã chọn {n} sản phẩm</h3>'
+        f'        <div class="breadcrumb">SẴN SÀNG IN TEM</div>'
+        f'      </div>'
+        f'    </div>'
+        f'  </div>'
+        f'  <ul>{"".join(items_html)}</ul>'
+        f'  <div style="padding:10px 12px;border-top:1px solid var(--hh-border);'
+        f'              background:var(--hh-surface-2);'
+        f'              display:flex;align-items:center;justify-content:space-between;'
+        f'              font-size:12.5px">'
+        f'    <span style="color:var(--hh-ink-3)">Tổng số tem: '
+        f'      <b style="color:var(--hh-ink);font-family:var(--hh-mono)">{n}</b></span>'
+        f'    <span class="hh-badge">CODE128</span>'
+        f'  </div>'
+        f'</div>'
+    )
+
+    if st.button(f"🏷 In {n} tem mã vạch", type="primary",
+                 use_container_width=True, key="hh_print_multi"):
+        items_for_print = []
+        for idx in sel:
+            if idx >= len(disp):
+                continue
+            mh = disp.iloc[idx]["Mã hàng"]
+            row = filtered[filtered["ma_hang"] == mh]
+            if row.empty:
+                continue
+            r = row.iloc[0]
+            ma_vach_raw = r.get("ma_vach")
+            ma_vach_clean = "" if pd.isna(ma_vach_raw) else str(ma_vach_raw).strip()
+            gia_ban_raw = r.get("gia_ban", 0)
+            gia_ban_clean = 0 if pd.isna(gia_ban_raw) else int(gia_ban_raw or 0)
+            items_for_print.append({
+                "ma_hang":  str(r.get("ma_hang", "")),
+                "ten_hang": str(r.get("ten_hang", "")),
+                "gia_ban":  gia_ban_clean,
+                "ma_vach":  ma_vach_clean,
+                "qty":      1,
+            })
+        st.session_state["_hh_in_tem_items"] = items_for_print
+        st.session_state.pop("_intem_hh_qty", None)
+        _dlg_in_tem_hh()
+
+
+# ════════════════════════════════════════════════════════
+# DIALOGS — modal wrappers around existing form helpers
+# ════════════════════════════════════════════════════════
+
+@st.dialog("➕ Thêm hàng hóa mới", width="large")
+def _dlg_them_hang():
+    _render_them_moi()
+
+
+@st.dialog("✎ Sửa thông tin hàng hóa", width="large")
+def _dlg_sua_hang_hoa(row_m):
+    _render_sua_hang_hoa(row_m)
 
 
 # ════════════════════════════════════════════════════════
@@ -387,7 +458,7 @@ def _render_them_moi():
 
     cnt = st.session_state.get("hh_them_cnt", 0)
 
-    c1, c2 = st.columns(2)
+    c1, c2 = st.columns(2, gap="medium")
     with c1:
         new_ma   = st.text_input("Mã hàng: *", key=f"hh_new_ma_{cnt}",
                                   placeholder="VD: PDH130")
@@ -466,7 +537,7 @@ def _render_sua_hang_hoa(row_m):
     cur_loai = str(row_m.get("loai_hang") or "")
     cur_th   = str(row_m.get("thuong_hieu") or "")
 
-    c1, c2 = st.columns(2)
+    c1, c2 = st.columns(2, gap="medium")
     with c1:
         new_ten  = st.text_input("Tên hàng:", value=str(row_m.get("ten_hang","")),
                                   key=f"hh_sua_ten_{ma}_{cnt}")

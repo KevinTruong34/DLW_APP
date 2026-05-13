@@ -12,7 +12,7 @@ Usage in modules/hang_hoa.py:
         inject_hang_hoa_css()
         ...
 
-Also exposes `hh_html(html: str)` — a thin wrapper around st.markdown that
+Also exposes hh_html(html: str) — a thin wrapper around st.markdown that
 always sets unsafe_allow_html=True, so call sites stay short.
 """
 
@@ -37,25 +37,27 @@ def _read_css() -> str:
 
 
 def inject_hang_hoa_css() -> None:
-    """Inject hang_hoa.css + Google Fonts into the page <head>.
+    """Inject hang_hoa.css + Google Fonts.
 
-    Safe to call repeatedly: Streamlit dedupes identical st.markdown calls
-    within the same run, and rerun cost is negligible (cached read).
+    Use st.html (Streamlit >= 1.33) instead of st.markdown to bypass the
+    markdown parser / HTML sanitizer that breaks the wrapping <style>
+    block when the CSS contains HTML literals, blank lines, or characters
+    that confuse the parser. Fonts are loaded via @import inside <style>
+    rather than a separate <link> tag (sanitizers commonly strip <link>).
+
+    Fallback to st.markdown for Streamlit < 1.33.
     """
     css = _read_css()
-    # Any literal "</style>" inside the CSS (e.g., inside a CSS comment
-    # that documents the inject pattern) would prematurely close the
-    # wrapping <style> tag in HTML — making the rest of the file leak
-    # out as visible page text. Escape so the HTML parser doesn't match.
-    css = css.replace("</style>", "<\\/style>")
-    fonts = (
-        '<link rel="preconnect" href="https://fonts.googleapis.com">'
-        '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>'
-        '<link href="https://fonts.googleapis.com/css2?'
-        'family=Be+Vietnam+Pro:wght@400;500;600;700&'
-        'family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">'
+    fonts_import = (
+        "@import url('https://fonts.googleapis.com/css2?"
+        "family=Be+Vietnam+Pro:wght@400;500;600;700&"
+        "family=JetBrains+Mono:wght@400;500;600&display=swap');\n"
     )
-    st.markdown(f"{fonts}<style>{css}</style>", unsafe_allow_html=True)
+    block = f"<style>{fonts_import}{css}</style>"
+    if hasattr(st, "html"):
+        st.html(block)
+    else:
+        st.markdown(block, unsafe_allow_html=True)
 
 
 def hh_html(html: str) -> None:
@@ -72,9 +74,7 @@ def hh_html(html: str) -> None:
 def render_caption(total: int, branches: list[str],
                    filter_label: str | None = None,
                    sort_label: str = "Tồn ↓") -> None:
-    """Caption row under the toolbar.
-       e.g. 4 122 sản phẩm · 100 Lê Quý Đôn · [Pin]  |  Sắp xếp: Tồn ↓
-    """
+    """Caption row under the toolbar."""
     branch_str = ", ".join(branches) if branches else "—"
     filter_html = (
         f'<span class="dot">·</span>'
@@ -112,11 +112,7 @@ def render_detail_card_open(ten_hang: str, breadcrumb: str,
                             ma_hang: str, ma_vach: str = "",
                             thuong_hieu: str = "", loai_sp: str = "Hàng hóa",
                             bao_hanh: str = "", gia_ban: int = 0) -> None:
-    """Open the detail card and render header + body up to the stock tiles.
-
-    Caller is responsible for rendering stock tiles and admin actions inside
-    the open card, then calling render_detail_card_close().
-    """
+    """Open the detail card and render header + body up to the stock tiles."""
     vach_html = (
         f'<span class="vach">· Mã vạch: {ma_vach}</span>'
         if ma_vach and ma_vach != ma_hang else ""
@@ -182,12 +178,7 @@ def render_detail_card_close() -> None:
 
 
 def render_fab(n: int) -> None:
-    """Floating action bar for multi-select print.
-
-    The actual click handlers live in Streamlit (st.button); this HTML is
-    purely visual chrome that *wraps* the real Streamlit buttons. See
-    IMPLEMENTATION_GUIDE.md → Section 8 for the full pattern.
-    """
+    """Floating action bar for multi-select print."""
     hh_html(
         f'<div class="hh-fab-wrap"><div class="hh-fab">'
         f'  <span>Đã chọn</span>'

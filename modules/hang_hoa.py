@@ -636,7 +636,6 @@ def _render_dialog_in_tem(items: list[dict], dialog_key: str):
     # 3. Nút Mở trang in
     if st.button("📂 Mở trang in", type="primary",
                  disabled=(total == 0), key=f"_intem_{dialog_key}_go"):
-        from utils.barcode_label import build_label_html
         payload_items = [
             {**it, "qty": st.session_state[qty_key].get(it["ma_hang"], 0)}
             for it in items
@@ -647,25 +646,40 @@ def _render_dialog_in_tem(items: list[dict], dialog_key: str):
 
 
 def _trigger_print_window(html_content: str):
-    """Render hidden component that auto-opens new tab with HTML."""
+    """Mở tab mới qua Blob URL, render HTML tem.
+
+    Dùng Blob URL thay vì document.write để tránh phải embed HTML payload
+    trực tiếp trong <script>. Payload có chứa </script> (từ inner bwip-js
+    script trong _PAGE_TEMPLATE) — nếu inline trong script wrapper sẽ bị
+    HTML parser đóng tag sớm. Escape "</" → "<\\/" trên JSON dump để chuỗi
+    JS literal an toàn.
+    """
     import streamlit.components.v1 as components
     import json
-    # JS-escape via JSON (safe for </script> etc. since we control source)
-    safe = json.dumps(html_content)
+    safe = json.dumps(html_content).replace("</", "<\\/")
     components.html(f"""
         <script>
         (function() {{
           const html = {safe};
-          const w = window.open('', '_blank');
+          let url = null;
+          try {{
+            const blob = new Blob([html], {{type: 'text/html;charset=utf-8'}});
+            url = URL.createObjectURL(blob);
+          }} catch (e) {{
+            document.body.innerHTML = '<div style="color:red;padding:10px;font-family:sans-serif">'
+              + '⚠️ Lỗi tạo blob: ' + e.message + '</div>';
+            return;
+          }}
+          const w = window.open(url, '_blank');
           if (!w) {{
-            document.body.innerHTML = '<div style=\"color:red;padding:10px;font-family:sans-serif\">'
+            URL.revokeObjectURL(url);
+            document.body.innerHTML = '<div style="color:red;padding:10px;font-family:sans-serif">'
               + '⚠️ Trình duyệt chặn popup. Cho phép popup cho trang này rồi thử lại.'
               + '</div>';
             return;
           }}
-          w.document.open();
-          w.document.write(html);
-          w.document.close();
+          // Revoke URL sau 60s (đủ thời gian tab mới load xong)
+          setTimeout(function() {{ URL.revokeObjectURL(url); }}, 60000);
         }})();
         </script>
         <div style="color:#4caf50;font-family:sans-serif;padding:6px">

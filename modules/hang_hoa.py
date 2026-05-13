@@ -81,7 +81,7 @@ def module_hang_hoa():
                 placeholder="🔍  Tìm mã hàng, mã vạch hoặc tên...",
                 label_visibility="collapsed")
         with col_f:
-            with st.popover("⊞ Lọc", use_container_width=True):
+            with st.popover("⊡ Lọc", use_container_width=True):
                 cha_chon = st.selectbox("Nhóm hàng:", ["Tất cả"] + cha_list,
                     key="hh_cha", label_visibility="collapsed")
                 if cha_chon != "Tất cả":
@@ -303,7 +303,7 @@ def module_hang_hoa():
             use_container_width=True,
             hide_index=True,
             on_select="rerun",
-            selection_mode="single-row",
+            selection_mode="multi-row",
             key="hh_table",
             column_config={
                 "Tên hàng": st.column_config.TextColumn("Tên hàng", width="medium"),
@@ -314,15 +314,54 @@ def module_hang_hoa():
             height=tbl_h,
         )
 
-        sel = event.selection.rows
-        if sel and sel[0] < len(disp):
+        sel = event.selection.rows if event.selection else []
+
+        # Detail card chỉ hiện khi chọn đúng 1 dòng. Multi-select ẩn card.
+        if len(sel) == 1 and sel[0] < len(disp):
             new_ma = disp.iloc[sel[0]]["Mã hàng"]
             if new_ma != ma_chon:
                 st.session_state["hh_ma_chon"] = new_ma
                 st.rerun()
+        elif len(sel) >= 2 and ma_chon:
+            st.session_state.pop("hh_ma_chon", None)
+            st.rerun()
 
-        if not ma_chon:
-            st.caption("↑ Chọn một dòng để xem chi tiết sản phẩm")
+        if not ma_chon and len(sel) == 0:
+            st.caption("↑ Chọn 1 dòng để xem chi tiết, hoặc chọn nhiều dòng để in tem hàng loạt")
+
+        # ══════ NUT IN TEM MÃ VẠCH ══════
+        n_sel = len(sel)
+        col_btn1, _col_btn2 = st.columns([2, 4])
+        with col_btn1:
+            if st.button(
+                f"🏷️ In tem mã vạch{f' ({n_sel})' if n_sel else ''}",
+                disabled=(n_sel == 0),
+                key="hh_btn_in_tem",
+                use_container_width=True,
+            ):
+                items_for_print = []
+                for idx in sel:
+                    if idx >= len(disp):
+                        continue
+                    mh = disp.iloc[idx]["Mã hàng"]
+                    row = filtered[filtered["ma_hang"] == mh]
+                    if row.empty:
+                        continue
+                    r = row.iloc[0]
+                    ma_vach_raw = r.get("ma_vach")
+                    ma_vach_clean = "" if pd.isna(ma_vach_raw) else str(ma_vach_raw).strip()
+                    gia_ban_raw = r.get("gia_ban", 0)
+                    gia_ban_clean = 0 if pd.isna(gia_ban_raw) else int(gia_ban_raw or 0)
+                    items_for_print.append({
+                        "ma_hang":  str(r.get("ma_hang", "")),
+                        "ten_hang": str(r.get("ten_hang", "")),
+                        "gia_ban":  gia_ban_clean,
+                        "ma_vach":  ma_vach_clean,
+                        "qty":      1,
+                    })
+                st.session_state["_hh_in_tem_items"] = items_for_print
+                st.session_state.pop("_intem_hh_qty", None)
+                _dlg_in_tem_hh()
 
         # ── Nút thêm hàng hóa mới (admin) ──
         if is_admin():
@@ -334,9 +373,9 @@ def module_hang_hoa():
         st.error(f"Lỗi tải Hàng hóa: {e}")
 
 
-# ══════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════
 # ADMIN HELPERS
-# ══════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════
 
 def _render_them_moi():
     """Form thêm hàng hóa mới vào master."""
@@ -517,3 +556,119 @@ def _render_an_hang_hoa(ma: str, ten: str):
             if st.button("Hủy", use_container_width=True, key=f"hh_an_cancel_{ma}"):
                 st.session_state.pop(confirm_key, None)
                 st.rerun()
+
+
+# ════════════════════════════════════════════════════════
+# BARCODE LABEL PRINT (Phase 2 — PLAN_barcode_label_print.md)
+# ════════════════════════════════════════════════════════
+
+@st.dialog("🏷️ In tem mã vạch", width="large")
+def _dlg_in_tem_hh():
+    items = st.session_state.get("_hh_in_tem_items", [])
+    if not items:
+        st.warning("Chưa chọn sản phẩm nào.")
+        return
+    _render_dialog_in_tem(items, dialog_key="hh")
+
+
+def _render_dialog_in_tem(items: list[dict], dialog_key: str):
+    """Shared dialog cho cả hang_hoa và nhap_hang."""
+    from utils.barcode_label import build_label_html, SYMBOLOGY_OPTIONS, get_barcode_value
+
+    # 1. Dropdown symbology
+    symb_key = f"_intem_{dialog_key}_symb"
+    symb = st.selectbox(
+        "Loại mã vạch",
+        options=list(SYMBOLOGY_OPTIONS.keys()),
+        format_func=lambda k: SYMBOLOGY_OPTIONS[k],
+        index=0,
+        key=symb_key,
+    )
+
+    # 2. Bảng SL tem
+    st.caption(f"Tổng {len(items)} SP đã chọn. Chỉnh SL tem cho từng SP:")
+    qty_key = f"_intem_{dialog_key}_qty"
+    if qty_key not in st.session_state:
+        st.session_state[qty_key] = {}
+    # Add new items with default qty, preserve existing
+    for it in items:
+        if it["ma_hang"] not in st.session_state[qty_key]:
+            st.session_state[qty_key][it["ma_hang"]] = int(it.get("qty", 1) or 1)
+
+    # Cảnh báo SP không có mã
+    no_code = [it for it in items if not get_barcode_value(it)]
+    if no_code:
+        st.error(f"❌ {len(no_code)} SP không có Mã vạch lẫn Mã hàng — sẽ bị bỏ qua: " +
+                 ", ".join((it.get("ten_hang", "?") or "?")[:25] for it in no_code[:5]))
+
+    # Editable qty grid
+    rows = []
+    for it in items:
+        mh = it["ma_hang"]
+        rows.append({
+            "Mã hàng":  mh,
+            "Tên":      (it.get("ten_hang") or "")[:40],
+            "Giá":      int(it.get("gia_ban") or 0),
+            "Mã vạch":  it.get("ma_vach") or "(dùng mã hàng)",
+            "SL tem":   st.session_state[qty_key].get(mh, 1),
+        })
+    df_q = pd.DataFrame(rows)
+    edited = st.data_editor(
+        df_q,
+        column_config={
+            "SL tem": st.column_config.NumberColumn(min_value=0, max_value=999, step=1),
+            "Giá":    st.column_config.NumberColumn(format="%d"),
+        },
+        disabled=["Mã hàng", "Tên", "Giá", "Mã vạch"],
+        hide_index=True,
+        key=f"_intem_{dialog_key}_editor",
+        use_container_width=True,
+    )
+    # Save back
+    for _, r in edited.iterrows():
+        st.session_state[qty_key][r["Mã hàng"]] = int(r["SL tem"] or 0)
+
+    total = sum(st.session_state[qty_key].get(it["ma_hang"], 0) for it in items)
+    st.info(f"📋 Tổng số tem sẽ in: **{total}**")
+    if total > 500:
+        st.warning("⚠️ Số tem lớn, browser có thể chậm khi render.")
+
+    # 3. Nút Mở trang in
+    if st.button("📂 Mở trang in", type="primary",
+                 disabled=(total == 0), key=f"_intem_{dialog_key}_go"):
+        from utils.barcode_label import build_label_html
+        payload_items = [
+            {**it, "qty": st.session_state[qty_key].get(it["ma_hang"], 0)}
+            for it in items
+            if st.session_state[qty_key].get(it["ma_hang"], 0) > 0
+        ]
+        html_content = build_label_html(payload_items, symbology=symb)
+        _trigger_print_window(html_content)
+
+
+def _trigger_print_window(html_content: str):
+    """Render hidden component that auto-opens new tab with HTML."""
+    import streamlit.components.v1 as components
+    import json
+    # JS-escape via JSON (safe for </script> etc. since we control source)
+    safe = json.dumps(html_content)
+    components.html(f"""
+        <script>
+        (function() {{
+          const html = {safe};
+          const w = window.open('', '_blank');
+          if (!w) {{
+            document.body.innerHTML = '<div style=\"color:red;padding:10px;font-family:sans-serif\">'
+              + '⚠️ Trình duyệt chặn popup. Cho phép popup cho trang này rồi thử lại.'
+              + '</div>';
+            return;
+          }}
+          w.document.open();
+          w.document.write(html);
+          w.document.close();
+        }})();
+        </script>
+        <div style="color:#4caf50;font-family:sans-serif;padding:6px">
+          ✅ Đã mở tab in. Kiểm tra tab mới.
+        </div>
+    """, height=40)

@@ -5,9 +5,9 @@
    All classes prefixed .hh-* to avoid collision with other modules.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-/* ── DESIGN TOKENS ─────────────────────────────────────────────────────── */
+/* DESIGN TOKENS */
 :root{
-  /* Surfaces & ink */
+  /* Surfaces and ink */
   --hh-bg:          #f7f7f8;
   --hh-surface:     #ffffff;
   --hh-surface-2:   #fafafa;
@@ -36,63 +36,14 @@
   --hh-shadow-sm:   0 1px 2px rgba(24,24,27,.04), 0 0 0 1px var(--hh-border);
   --hh-shadow-md:   0 4px 14px -2px rgba(24,24,27,.08), 0 0 0 1px var(--hh-border);
 
-  /* Fonts (loaded externally — see inject_css.py for @import) */
+  /* Fonts (loaded via @import inside style block in utils/hh_style.py) */
   --hh-font:        'Be Vietnam Pro', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --hh-mono:        'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
 }
 
-/* ── 1. TOOLBAR (sticky, 1 row) ────────────────────────────────────────── */
-/*  Wrap children in: <div class="hh-toolbar"> branches | search | filter | add </div>
-    Streamlit pattern: 4-column row with custom HTML wrapper. */
+/* 1. TOOLBAR widgets (per-widget styling; no outer wrapper frame) */
 
-.hh-toolbar{
-  position:sticky; top:0; z-index:30;
-  background:var(--hh-surface);
-  border:1px solid var(--hh-border);
-  border-radius:var(--hh-radius);
-  padding:8px 10px;
-  margin-bottom:10px;
-  display:grid;
-  grid-template-columns:auto 1fr auto auto;
-  gap:8px; align-items:center;
-  box-shadow:var(--hh-shadow-sm);
-}
-
-/* Branch chips group */
-.hh-branches{
-  display:flex; gap:4px; align-items:center;
-  padding-right:6px; border-right:1px solid var(--hh-border);
-  min-height:34px;
-}
-.hh-chip{
-  display:inline-flex; align-items:center; gap:6px;
-  font-size:12.5px; font-weight:500;
-  padding:5px 10px 5px 11px; border-radius:999px;
-  background:var(--hh-accent); color:#fff;
-  border:1px solid var(--hh-accent);
-  letter-spacing:-.1px;
-}
-.hh-chip.muted{
-  background:var(--hh-surface-2);
-  color:var(--hh-ink-2);
-  border-color:var(--hh-border);
-}
-.hh-chip .x{
-  display:inline-grid; place-items:center;
-  width:14px; height:14px; border-radius:50%;
-  background:rgba(255,255,255,.22);
-  cursor:pointer; font-size:11px; line-height:1;
-}
-.hh-chip.muted .x{ background:rgba(0,0,0,.06); color:var(--hh-ink-2); }
-.hh-chip .plus{
-  width:24px; height:24px; border-radius:50%;
-  display:inline-grid; place-items:center;
-  background:var(--hh-surface); color:var(--hh-ink-3);
-  border:1px dashed var(--hh-border-2);
-  font-size:14px; cursor:pointer;
-}
-
-/* Search input */
+/* Search input style helper (currently unused) */
 .hh-search{
   display:flex; align-items:center; gap:8px;
   background:var(--hh-surface-2);
@@ -117,7 +68,7 @@
   border-radius:4px; background:var(--hh-surface);
 }
 
-/* Buttons */
+/* Buttons (helper classes for any hh-html chrome) */
 .hh-btn{
   display:inline-flex; align-items:center; gap:6px;
   height:36px; padding:0 14px; border-radius:var(--hh-radius-sm);
@@ -138,7 +89,7 @@
 .hh-btn.xs{ height:26px; padding:0 8px; font-size:12px; border-radius:5px; }
 .hh-btn .ico{ font-size:14px; line-height:1; }
 
-/* ── 2. CAPTION ROW ────────────────────────────────────────────────────── */
+/* 2. CAPTION ROW */
 .hh-caption{
   display:flex; align-items:center; justify-content:space-between;
   font-size:12.5px; color:var(--hh-ink-3);
@@ -147,8 +98,7 @@
 .hh-caption b{ color:var(--hh-ink); font-weight:600; }
 .hh-caption .dot{ margin:0 8px; color:var(--hh-ink-4); }
 
-/* ── 3. MASTER-DETAIL GRID ─────────────────────────────────────────────── */
-/*  Outer container; in Streamlit use st.columns([6,4]) and wrap.   */
+/* 3. MASTER-DETAIL GRID (decorative helper class) */
 .hh-grid{
   display:grid; grid-template-columns:minmax(0,1fr) 380px;
   gap:16px; align-items:start;
@@ -157,14 +107,7 @@
   .hh-grid{ grid-template-columns:1fr; }
 }
 
-/* ── 4. DATA TABLE ─────────────────────────────────────────────────────── */
-/*  In Streamlit, st.dataframe(...) renders via st-aggrid-like DOM. We can:
-    (a) Use st.dataframe with on_select="rerun" + selection_mode="multi-row"
-        and apply a global CSS that targets .stDataFrame for borders/colors.
-    (b) Or render a custom HTML table for fixed look (current spec).
-    Phase 1 = stick with st.dataframe + CSS override. Phase 2 (optional) =
-    swap to HTML table when row-click needs richer markup. */
-
+/* 4. DATA TABLE */
 .hh-table-wrap{
   background:var(--hh-surface);
   border:1px solid var(--hh-border);
@@ -222,17 +165,16 @@
   background:var(--hh-surface-2); border-top:1px solid var(--hh-border);
 }
 
-/* ── Streamlit dataframe override (when keeping st.dataframe) ──────────── */
-/*  These selectors target Streamlit's native dataframe wrapper.  */
-[data-testid="stDataFrame"]{
+/* Streamlit dataframe override (scoped to main content area) */
+.main [data-testid="stDataFrame"]{
   border:1px solid var(--hh-border) !important;
   border-radius:var(--hh-radius) !important;
   overflow:hidden;
   box-shadow:var(--hh-shadow-sm) !important;
 }
-[data-testid="stDataFrame"] .glide-cell{ font-family:var(--hh-font) !important; }
+.main [data-testid="stDataFrame"] .glide-cell{ font-family:var(--hh-font) !important; }
 
-/* ── 5. DETAIL RAIL ────────────────────────────────────────────────────── */
+/* 5. DETAIL RAIL */
 .hh-rail{ position:sticky; top:60px; }
 
 .hh-card{
@@ -314,7 +256,7 @@
   margin:6px 0 8px;
 }
 
-/* ── 6. STOCK TILES (3 branches) ───────────────────────────────────────── */
+/* 6. STOCK TILES (3 branches) */
 .hh-stocks{
   display:grid; grid-template-columns:repeat(3,1fr); gap:6px;
   margin-bottom:14px;
@@ -343,7 +285,7 @@
 .hh-stock .v.low{ color:var(--hh-warn); }
 .hh-stock .v.zero{ color:var(--hh-zero); }
 
-/* ── 7. ADMIN ACTION ROW ───────────────────────────────────────────────── */
+/* 7. ADMIN ACTION ROW */
 .hh-actions{ display:flex; flex-direction:column; gap:6px; }
 
 .hh-action-btn{
@@ -373,7 +315,7 @@
 }
 .hh-action-btn.danger .ico{ background:#fff5f4; color:var(--hh-warn); }
 
-/* ── 8. EMPTY-STATE HINT (no row selected) ─────────────────────────────── */
+/* 8. EMPTY-STATE HINT (no row selected) */
 .hh-empty{
   background:var(--hh-surface);
   border:1px dashed var(--hh-border-2);
@@ -393,7 +335,7 @@
   margin:0; font-size:12.5px; color:var(--hh-ink-3); line-height:1.5;
 }
 
-/* ── 9. MULTI-SELECT QUEUE CARD ────────────────────────────────────────── */
+/* 9. MULTI-SELECT QUEUE CARD */
 .hh-queue h4{ margin:0 0 8px; font-size:14px; font-weight:600; }
 .hh-queue ul{ margin:0; padding:0; list-style:none; max-height:280px; overflow:auto; }
 .hh-queue li{
@@ -414,7 +356,7 @@
 }
 .hh-queue li .rm:hover{ background:var(--hh-surface-2); color:var(--hh-warn); }
 
-/* ── 10. FAB (floating action — multi-select print) ────────────────────── */
+/* 10. FAB (floating action — multi-select print) */
 .hh-fab-wrap{
   position:fixed; bottom:18px; left:50%; transform:translateX(-50%);
   z-index:40; pointer-events:none;
@@ -455,7 +397,7 @@
   color:#fff; background:rgba(255,255,255,.08);
 }
 
-/* ── 11. INLINE COLLAPSE (Chỉnh tồn kho expander look) ─────────────────── */
+/* 11. INLINE COLLAPSE (Chỉnh tồn kho expander look) */
 .hh-collapse{
   border:1px solid var(--hh-border);
   border-radius:var(--hh-radius-sm);
@@ -478,18 +420,18 @@
   padding:4px 12px 14px; border-top:1px solid var(--hh-border);
 }
 
-/* Streamlit native expander override (if reused) */
-[data-testid="stExpander"]{
+/* Streamlit native expander override (scoped) */
+.main [data-testid="stExpander"]{
   border:1px solid var(--hh-border) !important;
   border-radius:var(--hh-radius-sm) !important;
   box-shadow:none !important;
 }
-[data-testid="stExpander"] summary{
+.main [data-testid="stExpander"] summary{
   font-size:13px !important;
   font-weight:500 !important;
 }
 
-/* ── 12. FORM FIELDS (Thêm hàng modal + Chỉnh tồn) ─────────────────────── */
+/* 12. FORM FIELDS (Thêm hàng modal + Chỉnh tồn) */
 .hh-form-grid{
   display:grid; grid-template-columns:1fr 1fr;
   gap:12px 16px;
@@ -542,9 +484,9 @@
   box-shadow:inset 0 0 0 2px var(--hh-accent);
 }
 
-/* Streamlit text input / number input / selectbox overrides */
-[data-testid="stTextInput"] input,
-[data-testid="stNumberInput"] input{
+/* Streamlit text input / number input / selectbox overrides (scoped) */
+.main [data-testid="stTextInput"] input,
+.main [data-testid="stNumberInput"] input{
   border:1px solid var(--hh-border) !important;
   border-radius:var(--hh-radius-sm) !important;
   font-family:var(--hh-font) !important;
@@ -553,12 +495,12 @@
   color:var(--hh-ink) !important;
   background:var(--hh-surface) !important;
 }
-[data-testid="stTextInput"] input:focus,
-[data-testid="stNumberInput"] input:focus{
+.main [data-testid="stTextInput"] input:focus,
+.main [data-testid="stNumberInput"] input:focus{
   border-color:var(--hh-ink) !important;
   box-shadow:none !important;
 }
-[data-testid="stSelectbox"] div[data-baseweb="select"] > div{
+.main [data-testid="stSelectbox"] div[data-baseweb="select"] > div{
   border:1px solid var(--hh-border) !important;
   border-radius:var(--hh-radius-sm) !important;
   background:var(--hh-surface) !important;
@@ -566,8 +508,8 @@
   font-family:var(--hh-font) !important;
 }
 
-/* Streamlit button override (st.button) — apply primary look via type="primary" */
-[data-testid="stButton"] > button{
+/* Streamlit button override (scoped) */
+.main [data-testid="stButton"] > button{
   border:1px solid var(--hh-border) !important;
   border-radius:var(--hh-radius-sm) !important;
   background:var(--hh-surface) !important;
@@ -580,21 +522,21 @@
   transition:background .12s, border-color .12s !important;
   box-shadow:none !important;
 }
-[data-testid="stButton"] > button:hover{
+.main [data-testid="stButton"] > button:hover{
   background:var(--hh-surface-2) !important;
   border-color:var(--hh-border-2) !important;
 }
-[data-testid="stButton"] > button[kind="primary"]{
+.main [data-testid="stButton"] > button[kind="primary"]{
   background:var(--hh-accent) !important;
   border-color:var(--hh-accent) !important;
   color:#fff !important;
 }
-[data-testid="stButton"] > button[kind="primary"]:hover{
+.main [data-testid="stButton"] > button[kind="primary"]:hover{
   background:var(--hh-accent-d) !important;
   border-color:var(--hh-accent-d) !important;
 }
 
-/* ── 13. UTIL ──────────────────────────────────────────────────────────── */
+/* 13. UTIL */
 .hh-spacer{ height:8px; }
 .hh-divider{ height:1px; background:var(--hh-border); margin:10px 0; }
 .hh-badge{
@@ -609,7 +551,5 @@
   border-color:#f8c8cd;
 }
 
-/* ── 14. STREAMLIT-LEVEL PAGE SPACING TIGHTENING ───────────────────────── */
-/* Reduce the giant block gap Streamlit uses between every element.       */
+/* 14. STREAMLIT-LEVEL PAGE SPACING TIGHTENING */
 .main .block-container{ padding-top:1rem; padding-bottom:5rem; max-width:1200px; }
-[data-testid="stVerticalBlock"] > div:has(> .hh-toolbar){ margin-bottom:0 !important; }

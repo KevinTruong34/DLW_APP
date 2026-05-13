@@ -30,19 +30,16 @@ def module_hang_hoa():
             if has_master and "loai_hang" in master.columns else []
 
         # ══════ TOOLBAR (chi nhánh · search · lọc · thêm) ══════
-        hh_html('<div class="hh-toolbar">')
         tb_cols = st.columns([2, 5, 1, 1])
 
-        # 1. Branch chips wrapper
+        # 1. Branch multiselect
         with tb_cols[0]:
-            hh_html('<div class="hh-branches">')
             if is_ke_toan_or_admin() and len(accessible) > 1:
                 view_branches = st.multiselect(
                     "Chi nhánh:", accessible, default=[active],
                     key="hh_cn", label_visibility="collapsed")
             else:
                 view_branches = [active]
-            hh_html('</div>')
 
         # 2. Search input
         with tb_cols[1]:
@@ -74,7 +71,6 @@ def module_hang_hoa():
                 if st.button("➕ Thêm hàng", type="primary",
                              use_container_width=True, key="hh_add_open"):
                     _dlg_them_hang()
-        hh_html('</div>')  # /.hh-toolbar
 
         # Branch validation
         if not view_branches:

@@ -140,7 +140,11 @@ def module_hang_hoa():
         if filtered.empty:
             render_caption(total=0, branches=view_branches,
                            filter_label=cha_chon if cha_chon != "Tất cả" else None)
-            st.warning("Không tìm thấy hàng hóa phù hợp.")
+            col_table, col_rail = st.columns([6, 4], gap="medium")
+            with col_table:
+                st.warning("Không tìm thấy hàng hóa phù hợp.")
+            with col_rail:
+                render_empty_rail()
             return
 
         if len(filtered) == 1:
@@ -225,6 +229,15 @@ def module_hang_hoa():
 def _render_rail_single(filtered, ma_chon, active):
     """Detail card for a single selected item."""
     row_m = filtered[filtered["ma_hang"] == ma_chon].iloc[0]
+
+    # Close button at top-right of rail (visually adjacent to card header)
+    _, close_col = st.columns([5, 1])
+    with close_col:
+        if st.button("✕", key=f"hh_close_detail_{ma_chon}",
+                     help="Đóng chi tiết", use_container_width=True):
+            st.session_state.pop("hh_ma_chon", None)
+            st.session_state["hh_search_cnt"] = st.session_state.get("hh_search_cnt", 0) + 1
+            st.rerun()
 
     cha = str(row_m.get("_cha", "") or "")
     con = str(row_m.get("_con", "") or "")
@@ -351,12 +364,6 @@ def _render_rail_single(filtered, ma_chon, active):
         }]
         st.session_state.pop("_intem_hh_qty", None)
         _dlg_in_tem_hh()
-
-    # ── Close-detail button ──
-    if st.button("✕ Đóng chi tiết", use_container_width=True, key="hh_close_detail"):
-        st.session_state.pop("hh_ma_chon", None)
-        st.session_state["hh_search_cnt"] = st.session_state.get("hh_search_cnt", 0) + 1
-        st.rerun()
 
 
 def _render_rail_multi(sel, disp, filtered):

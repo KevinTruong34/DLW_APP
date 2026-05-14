@@ -12,8 +12,9 @@ Usage in modules/hang_hoa.py:
         inject_hang_hoa_css()
         ...
 
-Also exposes hh_html(html: str) — a thin wrapper around st.markdown that
-always sets unsafe_allow_html=True, so call sites stay short.
+Also exposes hh_html(html: str) which renders HTML via st.html so that
+class attributes (and other non-allowlisted attrs) survive — st.markdown
+runs content through bleach and strips them.
 """
 
 from __future__ import annotations
@@ -61,14 +62,22 @@ def inject_hang_hoa_css() -> None:
 
 
 def hh_html(html: str) -> None:
-    """Shortcut: st.markdown(html, unsafe_allow_html=True)."""
-    st.markdown(html, unsafe_allow_html=True)
+    """Render HTML inline, preserving class attributes.
+
+    Use st.html (no bleach sanitizer) instead of st.markdown — st.markdown
+    with unsafe_allow_html=True still pipes content through bleach which
+    strips the class attribute, so .hh-* selectors stop matching.
+    """
+    if hasattr(st, "html"):
+        st.html(html)
+    else:
+        st.markdown(html, unsafe_allow_html=True)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────
 # Reusable HTML builders for components that are pure presentation.
 # These keep call sites in hang_hoa.py readable.
-# ─────────────────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────
 
 
 def render_caption(total: int, branches: list[str],

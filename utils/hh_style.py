@@ -74,10 +74,10 @@ def hh_html(html: str) -> None:
         st.markdown(html, unsafe_allow_html=True)
 
 
-# ──────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 # Reusable HTML builders for components that are pure presentation.
 # These keep call sites in hang_hoa.py readable.
-# ──────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
 
 
 def render_caption(total: int, branches: list[str],

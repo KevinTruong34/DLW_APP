@@ -30,6 +30,12 @@ def module_hang_hoa():
             if has_master and "loai_hang" in master.columns else []
 
         # ══════ TOOLBAR (chi nhánh · search · lọc · xóa lọc · thêm) ══════
+        # _fc is a counter baked into the filter widgets' keys. Bumping it on
+        # "Xóa lọc" forces those widgets to remount with their defaults —
+        # st.session_state[hh_cn|hh_cha|hh_con] cannot be reassigned directly
+        # after the widgets are instantiated in the same run.
+        _fc = st.session_state.get("hh_filter_cnt", 0)
+
         tb_cols = st.columns([1.3, 4.5, 1.8, 1.2, 1.2])
 
         # 1. Branch multiselect
@@ -37,7 +43,7 @@ def module_hang_hoa():
             if is_ke_toan_or_admin() and len(accessible) > 1:
                 view_branches = st.multiselect(
                     "Chi nhánh:", accessible, default=[active],
-                    key="hh_cn", label_visibility="collapsed")
+                    key=f"hh_cn_{_fc}", label_visibility="collapsed")
             else:
                 view_branches = [active]
 
@@ -54,14 +60,14 @@ def module_hang_hoa():
             with st.popover("⊟ Lọc", use_container_width=True):
                 cha_chon = st.selectbox(
                     "Nhóm hàng:", ["Tất cả"] + cha_list_for_filter,
-                    key="hh_cha", label_visibility="collapsed")
+                    key=f"hh_cha_{_fc}", label_visibility="collapsed")
                 if cha_chon != "Tất cả" and has_master and "thuong_hieu" in master.columns:
                     con_list = sorted([c for c in
                         master[master["loai_hang"] == cha_chon]["thuong_hieu"]
                         .dropna().unique() if c])
                     con_chon = st.selectbox(
                         "Nhóm con:", ["Tất cả"] + con_list,
-                        key="hh_con", label_visibility="collapsed")
+                        key=f"hh_con_{_fc}", label_visibility="collapsed")
                 else:
                     con_chon = "Tất cả"
 
@@ -72,10 +78,8 @@ def module_hang_hoa():
                          key="hh_clear_filters"):
                 st.session_state["hh_search_cnt"] = st.session_state.get("hh_search_cnt", 0) + 1
                 st.session_state["hh_table_cnt"]  = st.session_state.get("hh_table_cnt", 0) + 1
+                st.session_state["hh_filter_cnt"] = _fc + 1
                 st.session_state.pop("hh_ma_chon", None)
-                st.session_state.pop("hh_cha", None)
-                st.session_state.pop("hh_con", None)
-                st.session_state["hh_cn"] = [active]
                 st.rerun()
 
         # 5. Add button (admin only)

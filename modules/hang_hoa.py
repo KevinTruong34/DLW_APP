@@ -29,8 +29,8 @@ def module_hang_hoa():
         cha_list_for_filter = sorted([c for c in master["loai_hang"].dropna().unique() if c]) \
             if has_master and "loai_hang" in master.columns else []
 
-        # ══════ TOOLBAR (chi nhánh · search · lọc · thêm) ══════
-        tb_cols = st.columns([2, 5, 1, 1])
+        # ══════ TOOLBAR (chi nhánh · search · lọc · xóa lọc · thêm) ══════
+        tb_cols = st.columns([1.3, 4.5, 1.8, 1.2, 1.2])
 
         # 1. Branch multiselect
         with tb_cols[0]:
@@ -65,8 +65,21 @@ def module_hang_hoa():
                 else:
                     con_chon = "Tất cả"
 
-        # 4. Add button (admin only)
+        # 4. Xóa lọc — reset search, filters, table selection, branch back to active
         with tb_cols[3]:
+            if st.button("🔄 Xóa lọc", use_container_width=True,
+                         help="Xóa toàn bộ lọc, chọn hàng và đưa chi nhánh về mặc định",
+                         key="hh_clear_filters"):
+                st.session_state["hh_search_cnt"] = st.session_state.get("hh_search_cnt", 0) + 1
+                st.session_state["hh_table_cnt"]  = st.session_state.get("hh_table_cnt", 0) + 1
+                st.session_state.pop("hh_ma_chon", None)
+                st.session_state.pop("hh_cha", None)
+                st.session_state.pop("hh_con", None)
+                st.session_state["hh_cn"] = [active]
+                st.rerun()
+
+        # 5. Add button (admin only)
+        with tb_cols[4]:
             if is_admin():
                 if st.button("➕ Thêm hàng", type="primary",
                              use_container_width=True, key="hh_add_open"):
@@ -173,13 +186,14 @@ def module_hang_hoa():
         col_table, col_rail = st.columns([6, 4], gap="medium")
 
         with col_table:
+            _tc = st.session_state.get("hh_table_cnt", 0)
             event = st.dataframe(
                 disp,
                 use_container_width=True,
                 hide_index=True,
                 on_select="rerun",
                 selection_mode="multi-row",
-                key="hh_table",
+                key=f"hh_table_{_tc}",
                 column_config={
                     "Tên hàng": st.column_config.TextColumn("Tên hàng", width="medium"),
                     "Mã hàng":  st.column_config.TextColumn("Mã hàng",  width="medium"),
@@ -218,9 +232,9 @@ def module_hang_hoa():
         st.error(f"Lỗi tải Hàng hóa: {e}")
 
 
-# ═════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════
 # RAIL RENDERERS — Right column (master-detail)
-# ═════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════
 
 def _render_rail_single(filtered, ma_chon, active):
     """Detail card for a single selected item."""
@@ -253,7 +267,11 @@ def _render_rail_single(filtered, ma_chon, active):
         if st.button("✕", key=f"hh_close_detail_{ma_chon}",
                      help="Đóng chi tiết", use_container_width=True):
             st.session_state.pop("hh_ma_chon", None)
+            # Remount dataframe so its selection state is cleared — otherwise
+            # the row still appears selected and on the next rerun the
+            # selection handler re-sets hh_ma_chon.
             st.session_state["hh_search_cnt"] = st.session_state.get("hh_search_cnt", 0) + 1
+            st.session_state["hh_table_cnt"]  = st.session_state.get("hh_table_cnt", 0) + 1
             st.rerun()
 
     # ── Detail card (frame via st.container) ──
@@ -400,9 +418,9 @@ def _render_rail_multi(sel, disp, filtered):
         _dlg_in_tem_hh()
 
 
-# ═════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════
 # DIALOGS — modal wrappers around existing form helpers
-# ═════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════
 
 @st.dialog("➕ Thêm hàng hóa mới", width="large")
 def _dlg_them_hang():
@@ -414,9 +432,9 @@ def _dlg_sua_hang_hoa(row_m):
     _render_sua_hang_hoa(row_m)
 
 
-# ═════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════
 # ADMIN HELPERS
-# ═════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════
 
 def _render_them_moi():
     """Form thêm hàng hóa mới vào master."""
@@ -599,9 +617,9 @@ def _render_an_hang_hoa(ma: str, ten: str):
                 st.rerun()
 
 
-# ═════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════
 # BARCODE LABEL PRINT (Phase 2 — PLAN_barcode_label_print.md)
-# ═════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════
 
 @st.dialog("🏷️ In tem mã vạch", width="large")
 def _dlg_in_tem_hh():

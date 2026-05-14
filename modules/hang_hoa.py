@@ -11,7 +11,7 @@ from utils.auth import get_user, is_admin, is_ke_toan_or_admin, \
     get_active_branch, get_accessible_branches
 from utils.hh_style import (
     inject_hang_hoa_css, hh_html, render_caption, render_empty_rail,
-    render_detail_card_open, render_stock_tiles, render_detail_card_close,
+    render_detail_visual,
 )
 
 from utils.helpers import _normalize
@@ -51,7 +51,7 @@ def module_hang_hoa():
 
         # 3. Popover Lọc
         with tb_cols[2]:
-            with st.popover("⊟ Lọc", use_container_width=True):
+            with st.popover("⊡ Lọc", use_container_width=True):
                 cha_chon = st.selectbox(
                     "Nhóm hàng:", ["Tất cả"] + cha_list_for_filter,
                     key="hh_cha", label_visibility="collapsed")
@@ -218,39 +218,15 @@ def module_hang_hoa():
         st.error(f"Lỗi tải Hàng hóa: {e}")
 
 
-# ════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════
 # RAIL RENDERERS — Right column (master-detail)
-# ════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════
 
 def _render_rail_single(filtered, ma_chon, active):
     """Detail card for a single selected item."""
     row_m = filtered[filtered["ma_hang"] == ma_chon].iloc[0]
 
-    # Close button at top-right of rail (visually adjacent to card header)
-    _, close_col = st.columns([5, 1])
-    with close_col:
-        if st.button("✕", key=f"hh_close_detail_{ma_chon}",
-                     help="Đóng chi tiết", use_container_width=True):
-            st.session_state.pop("hh_ma_chon", None)
-            st.session_state["hh_search_cnt"] = st.session_state.get("hh_search_cnt", 0) + 1
-            st.rerun()
-
-    cha = str(row_m.get("_cha", "") or "")
-    con = str(row_m.get("_con", "") or "")
-    breadcrumb = (f"{cha} › {con}" if con else cha).upper()
-
-    render_detail_card_open(
-        ten_hang=str(row_m.get("ten_hang", "")),
-        breadcrumb=breadcrumb,
-        ma_hang=str(row_m.get("ma_hang", "")),
-        ma_vach=str(row_m.get("ma_vach", "") or ""),
-        thuong_hieu=str(row_m.get("thuong_hieu", "") or ""),
-        loai_sp=str(row_m.get("loai_sp", "") or "Hàng hóa"),
-        bao_hanh=str(row_m.get("bao_hanh", "") or ""),
-        gia_ban=int(row_m.get("gia_ban", 0) or 0),
-    )
-
-    # Stock tiles (3 branches)
+    # ── Load branch stocks UPFRONT (needed for both visual and "Chỉnh tồn kho") ──
     branch_tons = {cn: 0 for cn in ALL_BRANCHES}
     branch_kho_ids = {cn: None for cn in ALL_BRANCHES}
     try:
@@ -267,87 +243,107 @@ def _render_rail_single(filtered, ma_chon, active):
     except Exception:
         pass
 
-    render_stock_tiles(
-        branches=list(ALL_BRANCHES),
-        stocks=branch_tons,
-        current=active,
-        short=CN_SHORT,
-    )
+    cha = str(row_m.get("_cha", "") or "")
+    con = str(row_m.get("_con", "") or "")
+    breadcrumb = (f"{cha} › {con}" if con else cha).upper()
 
-    # ── Admin actions ──
-    if is_admin():
-        # "Chỉnh tồn kho" expander
-        with st.expander("✎ Chỉnh tồn kho", expanded=False):
-            st.caption("Điều chỉnh trực tiếp tồn kho tại từng chi nhánh. "
-                       "Thay đổi sẽ ghi thẳng vào the_kho.")
-            adj_cols = st.columns(3)
-            adj_vals = {}
-            for idx, cn_name in enumerate(ALL_BRANCHES):
-                with adj_cols[idx]:
-                    adj_vals[cn_name] = st.number_input(
-                        CN_SHORT.get(cn_name, cn_name),
-                        min_value=0,
-                        value=branch_tons[cn_name],
-                        step=1,
-                        key=f"adj_ton_{ma_chon}_{cn_name}",
-                    )
-            if st.button("💾 Lưu tồn kho", type="primary",
-                         use_container_width=True, key=f"save_ton_{ma_chon}"):
-                try:
-                    changed = []
-                    for cn_name in ALL_BRANCHES:
-                        new_ton = int(adj_vals[cn_name])
-                        old_ton = branch_tons[cn_name]
-                        if new_ton == old_ton:
-                            continue
-                        kho_id = branch_kho_ids[cn_name]
-                        if kho_id:
-                            supabase.table("the_kho").update(
-                                {"Tồn cuối kì": new_ton}
-                            ).eq("id", kho_id).execute()
-                        else:
-                            supabase.table("the_kho").insert({
-                                "Mã hàng":    str(ma_chon),
-                                "Tên hàng":   str(row_m.get("ten_hang", "")),
-                                "Chi nhánh":  cn_name,
-                                "Tồn cuối kì": new_ton,
-                                "Tồn đầu kì":  0,
-                            }).execute()
-                        changed.append(
-                            f"{CN_SHORT.get(cn_name, cn_name)}: "
-                            f"{old_ton} → {new_ton}"
+    # ── Close button (above frame, right-aligned) ──
+    _, close_col = st.columns([5, 1])
+    with close_col:
+        if st.button("✕", key=f"hh_close_detail_{ma_chon}",
+                     help="Đóng chi tiết", use_container_width=True):
+            st.session_state.pop("hh_ma_chon", None)
+            st.session_state["hh_search_cnt"] = st.session_state.get("hh_search_cnt", 0) + 1
+            st.rerun()
+
+    # ── Detail card (frame via st.container) ──
+    with st.container(border=True):
+        # All visual HTML in ONE st.html call (preserves nesting)
+        render_detail_visual(
+            ten_hang=str(row_m.get("ten_hang", "")),
+            breadcrumb=breadcrumb,
+            ma_hang=str(row_m.get("ma_hang", "")),
+            ma_vach=str(row_m.get("ma_vach", "") or ""),
+            thuong_hieu=str(row_m.get("thuong_hieu", "") or ""),
+            loai_sp=str(row_m.get("loai_sp", "") or "Hàng hóa"),
+            bao_hanh=str(row_m.get("bao_hanh", "") or ""),
+            gia_ban=int(row_m.get("gia_ban", 0) or 0),
+            branches=list(ALL_BRANCHES),
+            stocks=branch_tons,
+            current=active,
+            short=CN_SHORT,
+        )
+
+        # ── Admin actions (Streamlit widgets, render INSIDE the container) ──
+        if is_admin():
+            with st.expander("✎ Chỉnh tồn kho", expanded=False):
+                st.caption("Điều chỉnh trực tiếp tồn kho tại từng chi nhánh. "
+                           "Thay đổi sẽ ghi thẳng vào the_kho.")
+                adj_cols = st.columns(3)
+                adj_vals = {}
+                for idx, cn_name in enumerate(ALL_BRANCHES):
+                    with adj_cols[idx]:
+                        adj_vals[cn_name] = st.number_input(
+                            CN_SHORT.get(cn_name, cn_name),
+                            min_value=0,
+                            value=branch_tons[cn_name],
+                            step=1,
+                            key=f"adj_ton_{ma_chon}_{cn_name}",
                         )
-                    if changed:
-                        st.cache_data.clear()
-                        log_action("KHO_ADJ",
-                                   f"ma={ma_chon} " + ", ".join(changed))
-                        st.success("✓ Đã cập nhật: " + " · ".join(changed))
-                        st.rerun()
-                    else:
-                        st.info("Không có thay đổi.")
-                except Exception as e:
-                    st.error(f"Lỗi: {e}")
+                if st.button("💾 Lưu tồn kho", type="primary",
+                             use_container_width=True, key=f"save_ton_{ma_chon}"):
+                    try:
+                        changed = []
+                        for cn_name in ALL_BRANCHES:
+                            new_ton = int(adj_vals[cn_name])
+                            old_ton = branch_tons[cn_name]
+                            if new_ton == old_ton:
+                                continue
+                            kho_id = branch_kho_ids[cn_name]
+                            if kho_id:
+                                supabase.table("the_kho").update(
+                                    {"Tồn cuối kì": new_ton}
+                                ).eq("id", kho_id).execute()
+                            else:
+                                supabase.table("the_kho").insert({
+                                    "Mã hàng":    str(ma_chon),
+                                    "Tên hàng":   str(row_m.get("ten_hang", "")),
+                                    "Chi nhánh":  cn_name,
+                                    "Tồn cuối kì": new_ton,
+                                    "Tồn đầu kì":  0,
+                                }).execute()
+                            changed.append(
+                                f"{CN_SHORT.get(cn_name, cn_name)}: "
+                                f"{old_ton} → {new_ton}"
+                            )
+                        if changed:
+                            st.cache_data.clear()
+                            log_action("KHO_ADJ",
+                                       f"ma={ma_chon} " + ", ".join(changed))
+                            st.success("✓ Đã cập nhật: " + " · ".join(changed))
+                            st.rerun()
+                        else:
+                            st.info("Không có thay đổi.")
+                    except Exception as e:
+                        st.error(f"Lỗi: {e}")
 
-        # Sửa / Ẩn buttons
-        c_edit, c_hide = st.columns([3, 1])
-        with c_edit:
-            if st.button("✎ Sửa thông tin", use_container_width=True,
-                         key=f"hh_open_edit_{ma_chon}"):
-                _dlg_sua_hang_hoa(row_m)
-        with c_hide:
-            if st.button("🚫", help="Ẩn hàng hóa", use_container_width=True,
-                         key=f"hh_open_hide_{ma_chon}"):
-                st.session_state[f"hh_an_confirm_{ma_chon}"] = True
-                st.rerun()
+            # Sửa / Ẩn buttons
+            c_edit, c_hide = st.columns([3, 1])
+            with c_edit:
+                if st.button("✎ Sửa thông tin", use_container_width=True,
+                             key=f"hh_open_edit_{ma_chon}"):
+                    _dlg_sua_hang_hoa(row_m)
+            with c_hide:
+                if st.button("🚫", help="Ẩn hàng hóa", use_container_width=True,
+                             key=f"hh_open_hide_{ma_chon}"):
+                    st.session_state[f"hh_an_confirm_{ma_chon}"] = True
+                    st.rerun()
 
-        # Inline hide-confirm UI (only when confirm flag set)
-        if st.session_state.get(f"hh_an_confirm_{ma_chon}"):
-            _render_an_hang_hoa(str(ma_chon), str(row_m.get("ten_hang", "")))
+            # Inline hide-confirm
+            if st.session_state.get(f"hh_an_confirm_{ma_chon}"):
+                _render_an_hang_hoa(str(ma_chon), str(row_m.get("ten_hang", "")))
 
-    # Close card
-    render_detail_card_close()
-
-    # ── Print button (1 SP) ──
+    # ── Print button OUTSIDE container ──
     if st.button("🏷 In tem mã vạch", type="primary",
                  use_container_width=True, key=f"hh_print_single_{ma_chon}"):
         _ma_vach = "" if pd.isna(row_m.get("ma_vach")) else str(row_m.get("ma_vach")).strip()
@@ -426,9 +422,9 @@ def _render_rail_multi(sel, disp, filtered):
         _dlg_in_tem_hh()
 
 
-# ════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════
 # DIALOGS — modal wrappers around existing form helpers
-# ════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════
 
 @st.dialog("➕ Thêm hàng hóa mới", width="large")
 def _dlg_them_hang():
@@ -440,9 +436,9 @@ def _dlg_sua_hang_hoa(row_m):
     _render_sua_hang_hoa(row_m)
 
 
-# ════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════
 # ADMIN HELPERS
-# ════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════
 
 def _render_them_moi():
     """Form thêm hàng hóa mới vào master."""
@@ -625,9 +621,9 @@ def _render_an_hang_hoa(ma: str, ten: str):
                 st.rerun()
 
 
-# ════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════
 # BARCODE LABEL PRINT (Phase 2 — PLAN_barcode_label_print.md)
-# ════════════════════════════════════════════════════════
+# ═══════════════════════════════════════════════════════
 
 @st.dialog("🏷️ In tem mã vạch", width="large")
 def _dlg_in_tem_hh():

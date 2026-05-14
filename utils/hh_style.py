@@ -12,8 +12,9 @@ Usage in modules/hang_hoa.py:
         inject_hang_hoa_css()
         ...
 
-Also exposes hh_html(html: str) — a thin wrapper around st.markdown that
-always sets unsafe_allow_html=True, so call sites stay short.
+Also exposes hh_html(html: str) which renders HTML via st.html so that
+class attributes (and other non-allowlisted attrs) survive — st.markdown
+runs content through bleach and strips them.
 """
 
 from __future__ import annotations
@@ -61,8 +62,16 @@ def inject_hang_hoa_css() -> None:
 
 
 def hh_html(html: str) -> None:
-    """Shortcut: st.markdown(html, unsafe_allow_html=True)."""
-    st.markdown(html, unsafe_allow_html=True)
+    """Render HTML inline, preserving class attributes.
+
+    Use st.html (no bleach sanitizer) instead of st.markdown — st.markdown
+    with unsafe_allow_html=True still pipes content through bleach which
+    strips the class attribute, so .hh-* selectors stop matching.
+    """
+    if hasattr(st, "html"):
+        st.html(html)
+    else:
+        st.markdown(html, unsafe_allow_html=True)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -108,15 +117,41 @@ def render_empty_rail() -> None:
     )
 
 
-def render_detail_card_open(ten_hang: str, breadcrumb: str,
-                            ma_hang: str, ma_vach: str = "",
-                            thuong_hieu: str = "", loai_sp: str = "Hàng hóa",
-                            bao_hanh: str = "", gia_ban: int = 0) -> None:
-    """Open the detail card and render header + body up to the stock tiles."""
+def render_detail_visual(
+    ten_hang: str,
+    breadcrumb: str,
+    ma_hang: str,
+    ma_vach: str,
+    thuong_hieu: str,
+    loai_sp: str,
+    bao_hanh: str,
+    gia_ban: int,
+    branches: list[str],
+    stocks: dict[str, int],
+    current: str,
+    short: dict[str, str],
+) -> None:
+    """Render the whole detail-card visual block in ONE st.html call.
+
+    Previously split into render_detail_card_open + render_stock_tiles +
+    render_detail_card_close — that pattern broke nesting because each
+    Streamlit call (markdown/html) becomes a separate DOM block. An opening
+    <div> in call N cannot wrap content in call N+1, so selectors like
+    .hh-card-head h3 or .hh-meta dt never matched.
+
+    Building the full body and emitting it in a single call keeps the
+    parent/child structure intact, so the CSS in static/hang_hoa.css
+    actually applies. The outer .hh-card frame is provided separately by
+    st.container(border=True) at the call site, because Streamlit widgets
+    rendered after this function still need to live inside the same frame.
+    """
+    # Code pill + barcode
     vach_html = (
         f'<span class="vach">· Mã vạch: {ma_vach}</span>'
         if ma_vach and ma_vach != ma_hang else ""
     )
+
+    # Meta rows
     meta_rows = []
     if thuong_hieu:
         meta_rows.append(f'<dt>Thương hiệu</dt><dd>{thuong_hieu}</dd>')
@@ -127,35 +162,11 @@ def render_detail_card_open(ten_hang: str, breadcrumb: str,
         f'<dl class="hh-meta">{"".join(meta_rows)}</dl>'
         if meta_rows else ""
     )
+
+    # Price
     price_str = f"{gia_ban:,}".replace(",", " ") if gia_ban else "—"
 
-    hh_html(
-        f'<div class="hh-card">'
-        f'  <div class="hh-card-head">'
-        f'    <div class="row1">'
-        f'      <div>'
-        f'        <h3>{ten_hang}</h3>'
-        f'        <div class="breadcrumb">{breadcrumb}</div>'
-        f'      </div>'
-        f'    </div>'
-        f'  </div>'
-        f'  <div class="hh-card-body">'
-        f'    <div class="hh-codes">'
-        f'      <span class="hh-code-pill">{ma_hang}</span>'
-        f'      {vach_html}'
-        f'    </div>'
-        f'    {meta_html}'
-        f'    <div class="hh-price-box">'
-        f'      <span class="lbl">Giá bán</span>'
-        f'      <span class="val">{price_str}<span class="u"> ₫</span></span>'
-        f'    </div>'
-        f'    <div class="hh-section-lbl">Tồn kho 3 chi nhánh</div>'
-    )
-
-
-def render_stock_tiles(branches: list[str], stocks: dict[str, int],
-                       current: str, short: dict[str, str]) -> None:
-    """3-branch stock tiles (current branch highlighted in red)."""
+    # Stock tiles
     tiles = []
     for cn in branches:
         ton = int(stocks.get(cn, 0) or 0)
@@ -169,12 +180,33 @@ def render_stock_tiles(branches: list[str], stocks: dict[str, int],
             f'  <div class="v {lvl}">{ton:,}</div>'
             f'</div>'
         )
-    hh_html(f'<div class="hh-stocks">{"".join(tiles)}</div>')
+    stocks_html = f'<div class="hh-stocks">{"".join(tiles)}</div>'
 
-
-def render_detail_card_close() -> None:
-    """Close the .hh-card-body and .hh-card divs."""
-    hh_html('  </div></div>')
+    # ONE call — keep nesting for selectors like .hh-card-head h3, .hh-meta dt,
+    # .hh-stocks > .hh-stock.
+    hh_html(
+        f'<div class="hh-card-head">'
+        f'  <div class="row1">'
+        f'    <div>'
+        f'      <h3>{ten_hang}</h3>'
+        f'      <div class="breadcrumb">{breadcrumb}</div>'
+        f'    </div>'
+        f'  </div>'
+        f'</div>'
+        f'<div class="hh-card-body">'
+        f'  <div class="hh-codes">'
+        f'    <span class="hh-code-pill">{ma_hang}</span>'
+        f'    {vach_html}'
+        f'  </div>'
+        f'  {meta_html}'
+        f'  <div class="hh-price-box">'
+        f'    <span class="lbl">Giá bán</span>'
+        f'    <span class="val">{price_str}<span class="u"> ₫</span></span>'
+        f'  </div>'
+        f'  <div class="hh-section-lbl">Tồn kho 3 chi nhánh</div>'
+        f'  {stocks_html}'
+        f'</div>'
+    )
 
 
 def render_fab(n: int) -> None:

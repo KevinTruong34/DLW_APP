@@ -597,8 +597,10 @@ def module_sua_chua():
                                 "don_gia":   int(gia_input),
                             })
                             st.rerun()
-        elif ma_tim.strip():
+        elif ma_tim.strip() and is_admin():
             # Fallback: manual entry trong 1 bordered card riêng
+            # Admin-only — staff nhân viên KHÔNG được nhập mục custom
+            # (mã/tên tự do), phải dùng mã hàng có sẵn trong master.
             st.caption("⚠️ Không tìm thấy — nhập tay bên dưới")
             with st.container(border=True):
                 ten_tay = st.text_input(
@@ -636,6 +638,13 @@ def module_sua_chua():
                             "don_gia": int(gia_tay),
                         })
                         st.rerun()
+        elif ma_tim.strip():
+            # Non-admin: không cho phép thêm mục tự nhập.
+            st.caption(
+                "⚠️ Không tìm thấy mã/tên phù hợp. "
+                "Chỉ Admin mới có quyền thêm mục tự nhập — vui lòng "
+                "yêu cầu Admin tạo mã hàng trong module Hàng hóa trước."
+            )
 
     def _hien_thi_items(items_key: str):
         items = st.session_state.get(items_key, [])

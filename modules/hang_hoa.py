@@ -11,7 +11,7 @@ from utils.auth import get_user, is_admin, is_ke_toan_or_admin, \
     get_active_branch, get_accessible_branches
 from utils.hh_style import (
     inject_hang_hoa_css, hh_html, render_caption, render_empty_rail,
-    render_detail_visual,
+    render_detail_visual, render_multi_queue,
 )
 
 from utils.helpers import _normalize
@@ -51,7 +51,7 @@ def module_hang_hoa():
 
         # 3. Popover Lọc
         with tb_cols[2]:
-            with st.popover("⊡ Lọc", use_container_width=True):
+            with st.popover("⊟ Lọc", use_container_width=True):
                 cha_chon = st.selectbox(
                     "Nhóm hàng:", ["Tất cả"] + cha_list_for_filter,
                     key="hh_cha", label_visibility="collapsed")
@@ -218,9 +218,9 @@ def module_hang_hoa():
         st.error(f"Lỗi tải Hàng hóa: {e}")
 
 
-# ═══════════════════════════════════════════════════════
+# ═════════════════════════════════════════════════════════
 # RAIL RENDERERS — Right column (master-detail)
-# ═══════════════════════════════════════════════════════
+# ═════════════════════════════════════════════════════════
 
 def _render_rail_single(filtered, ma_chon, active):
     """Detail card for a single selected item."""
@@ -362,38 +362,16 @@ def _render_rail_multi(sel, disp, filtered):
     """Queue card when multiple rows selected."""
     n = len(sel)
 
-    items_html = []
+    items_for_queue = []
     for idx in sel[:50]:
         if idx >= len(disp):
             continue
-        ten = disp.iloc[idx]["Tên hàng"]
-        ma  = disp.iloc[idx]["Mã hàng"]
-        items_html.append(
-            f'<li><span class="ten">{ten}</span>'
-            f'<span class="ma">{ma}</span><span class="rm">×</span></li>'
-        )
+        items_for_queue.append({
+            "ten_hang": disp.iloc[idx]["Tên hàng"],
+            "ma_hang":  disp.iloc[idx]["Mã hàng"],
+        })
 
-    hh_html(
-        f'<div class="hh-card hh-queue">'
-        f'  <div class="hh-card-head">'
-        f'    <div class="row1">'
-        f'      <div>'
-        f'        <h3>Đã chọn {n} sản phẩm</h3>'
-        f'        <div class="breadcrumb">SẴN SÀNG IN TEM</div>'
-        f'      </div>'
-        f'    </div>'
-        f'  </div>'
-        f'  <ul>{"".join(items_html)}</ul>'
-        f'  <div style="padding:10px 12px;border-top:1px solid var(--hh-border);'
-        f'              background:var(--hh-surface-2);'
-        f'              display:flex;align-items:center;justify-content:space-between;'
-        f'              font-size:12.5px">'
-        f'    <span style="color:var(--hh-ink-3)">Tổng số tem: '
-        f'      <b style="color:var(--hh-ink);font-family:var(--hh-mono)">{n}</b></span>'
-        f'    <span class="hh-badge">CODE128</span>'
-        f'  </div>'
-        f'</div>'
-    )
+    render_multi_queue(items_for_queue, n)
 
     if st.button(f"🏷 In {n} tem mã vạch", type="primary",
                  use_container_width=True, key="hh_print_multi"):
@@ -422,9 +400,9 @@ def _render_rail_multi(sel, disp, filtered):
         _dlg_in_tem_hh()
 
 
-# ═══════════════════════════════════════════════════════
+# ═════════════════════════════════════════════════════════
 # DIALOGS — modal wrappers around existing form helpers
-# ═══════════════════════════════════════════════════════
+# ═════════════════════════════════════════════════════════
 
 @st.dialog("➕ Thêm hàng hóa mới", width="large")
 def _dlg_them_hang():
@@ -436,9 +414,9 @@ def _dlg_sua_hang_hoa(row_m):
     _render_sua_hang_hoa(row_m)
 
 
-# ═══════════════════════════════════════════════════════
+# ═════════════════════════════════════════════════════════
 # ADMIN HELPERS
-# ═══════════════════════════════════════════════════════
+# ═════════════════════════════════════════════════════════
 
 def _render_them_moi():
     """Form thêm hàng hóa mới vào master."""
@@ -621,9 +599,9 @@ def _render_an_hang_hoa(ma: str, ten: str):
                 st.rerun()
 
 
-# ═══════════════════════════════════════════════════════
+# ═════════════════════════════════════════════════════════
 # BARCODE LABEL PRINT (Phase 2 — PLAN_barcode_label_print.md)
-# ═══════════════════════════════════════════════════════
+# ═════════════════════════════════════════════════════════
 
 @st.dialog("🏷️ In tem mã vạch", width="large")
 def _dlg_in_tem_hh():

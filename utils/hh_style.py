@@ -1,20 +1,15 @@
 """
-utils/hh_style.py  — CSS injection helper for the hang_hoa redesign.
+utils/hh_style.py — Helper cho hang_hoa redesign.
 
-Call inject_hang_hoa_css() ONCE at the top of module_hang_hoa().
-The CSS file is cached after first read; rerunning is cheap.
+Lịch sử fix:
+- v1: đổi inject_hang_hoa_css() dùng st.html (bypass markdown sanitizer)
+- v2: đổi hh_html() dùng st.html (giữ class attribute)
+- v3: dùng inline styles trong render_*() vì st.html() có CSS isolation —
+      global <style> không vươn vào được content do st.html() render
 
-Usage in modules/hang_hoa.py:
-
-    from utils.hh_style import inject_hang_hoa_css, hh_html
-
-    def module_hang_hoa():
-        inject_hang_hoa_css()
-        ...
-
-Also exposes hh_html(html: str) which renders HTML via st.html so that
-class attributes (and other non-allowlisted attrs) survive — st.markdown
-runs content through bleach and strips them.
+Cho tương lai: nếu cần đổi visual, sửa inline styles trong các hàm render_*
+dưới đây, KHÔNG sửa static/hang_hoa.css (file CSS chỉ dùng cho Streamlit
+native overrides — buttons, dataframe, fonts).
 """
 
 from __future__ import annotations
@@ -38,15 +33,15 @@ def _read_css() -> str:
 
 
 def inject_hang_hoa_css() -> None:
-    """Inject hang_hoa.css + Google Fonts.
+    """Inject hang_hoa.css + Google Fonts vào page <head>.
 
-    Use st.html (Streamlit >= 1.33) instead of st.markdown to bypass the
-    markdown parser / HTML sanitizer that breaks the wrapping <style>
-    block when the CSS contains HTML literals, blank lines, or characters
-    that confuse the parser. Fonts are loaded via @import inside <style>
-    rather than a separate <link> tag (sanitizers commonly strip <link>).
+    CSS này chỉ apply được cho:
+    - Streamlit native widgets (qua selector .main [data-testid="..."])
+    - Font family chung cho cả trang
+    - Streamlit dataframe styling
 
-    Fallback to st.markdown for Streamlit < 1.33.
+    KHÔNG apply được cho content render qua st.html() (do isolation behavior).
+    Visual của detail card phải dùng inline styles — xem render_detail_visual().
     """
     css = _read_css()
     fonts_import = (
@@ -54,66 +49,104 @@ def inject_hang_hoa_css() -> None:
         "family=Be+Vietnam+Pro:wght@400;500;600;700&"
         "family=JetBrains+Mono:wght@400;500;600&display=swap');\n"
     )
-    block = f"<style>{fonts_import}{css}</style>"
-    if hasattr(st, "html"):
-        st.html(block)
-    else:
-        st.markdown(block, unsafe_allow_html=True)
+    st.html(f"<style>{fonts_import}{css}</style>")
 
 
 def hh_html(html: str) -> None:
-    """Render HTML inline, preserving class attributes.
-
-    Use st.html (no bleach sanitizer) instead of st.markdown — st.markdown
-    with unsafe_allow_html=True still pipes content through bleach which
-    strips the class attribute, so .hh-* selectors stop matching.
+    """Render HTML inline. Lưu ý CSS isolation: chỉ apply được inline styles
+    trên element trực tiếp, hoặc <style> nhúng ngay trong cùng html string.
     """
-    if hasattr(st, "html"):
-        st.html(html)
-    else:
-        st.markdown(html, unsafe_allow_html=True)
+    st.html(html)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Reusable HTML builders for components that are pure presentation.
-# These keep call sites in hang_hoa.py readable.
-# ─────────────────────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────────────────────
+# DESIGN TOKENS — hard-coded vào inline styles
+# Lý do hardcoded thay vì dùng CSS variables: CSS variables cần CSS rule trong
+# scope, mà scope của st.html() bị isolated → variables không resolve được.
+# ──────────────────────────────────────────────────────────────────────────
 
+_TOKENS = {
+    "bg":          "#f7f7f8",
+    "surface":     "#ffffff",
+    "surface_2":   "#fafafa",
+    "border":      "#e7e7ea",
+    "border_2":    "#d8d8dc",
+    "ink":         "#18181b",
+    "ink_2":       "#3f3f46",
+    "ink_3":       "#71717a",
+    "ink_4":       "#a1a1aa",
+    "accent":      "#e63946",
+    "accent_d":    "#c1121f",
+    "accent_soft": "#fdecee",
+    "good":        "#1a7f37",
+    "warn":        "#cf4c2c",
+    "zero":        "#a1a1aa",
+    "font":        "'Be Vietnam Pro', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif",
+    "mono":        "'JetBrains Mono', ui-monospace, SFMono-Regular, monospace",
+}
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Component builders — toàn bộ dùng inline styles
+# ──────────────────────────────────────────────────────────────────────────
 
 def render_caption(total: int, branches: list[str],
                    filter_label: str | None = None,
                    sort_label: str = "Tồn ↓") -> None:
-    """Caption row under the toolbar."""
+    """Caption row dưới toolbar."""
     branch_str = ", ".join(branches) if branches else "—"
-    filter_html = (
-        f'<span class="dot">·</span>'
-        f'<span class="hh-badge red">{filter_label}</span>'
-        if filter_label else ""
-    )
-    hint = ' <span class="dot">·</span> lọc thêm để thu hẹp' if total > 100 else ""
-    hh_html(
-        f'<div class="hh-caption">'
-        f'  <div><b>{total:,}</b> sản phẩm '
-        f'<span class="dot">·</span> {branch_str}{filter_html}{hint}</div>'
-        f'  <div>Sắp xếp: <b>{sort_label}</b></div>'
+    T = _TOKENS
+
+    filter_html = ""
+    if filter_label:
+        filter_html = (
+            f'<span style="margin:0 8px;color:{T["ink_4"]}">·</span>'
+            f'<span style="display:inline-flex;align-items:center;gap:4px;'
+            f'font-size:11px;font-weight:600;padding:2px 7px;border-radius:999px;'
+            f'background:{T["accent_soft"]};color:{T["accent_d"]};'
+            f'border:1px solid #f8c8cd">{filter_label}</span>'
+        )
+
+    hint = ""
+    if total > 100:
+        hint = (
+            f'<span style="margin:0 8px;color:{T["ink_4"]}">·</span>'
+            f'lọc thêm để thu hẹp'
+        )
+
+    st.html(
+        f'<div style="display:flex;align-items:center;justify-content:space-between;'
+        f'font-family:{T["font"]};font-size:12.5px;color:{T["ink_3"]};'
+        f'padding:2px 4px 8px">'
+        f'  <div><b style="color:{T["ink"]};font-weight:600">{total:,}</b> sản phẩm '
+        f'    <span style="margin:0 8px;color:{T["ink_4"]}">·</span> {branch_str}{filter_html}{hint}'
+        f'  </div>'
+        f'  <div>Sắp xếp: <b style="color:{T["ink"]};font-weight:600">{sort_label}</b></div>'
         f'</div>'
     )
 
 
 def render_empty_rail() -> None:
-    """The 'no row selected' card shown in the right rail."""
-    hh_html(
-        '<div class="hh-empty">'
-        '  <div class="ico">'
-        '    <svg width="20" height="20" viewBox="0 0 24 24" fill="none">'
-        '      <path d="M4 7h16M4 12h10M4 17h6" stroke="currentColor" '
-        '       stroke-width="1.7" stroke-linecap="round"/>'
-        '    </svg>'
-        '  </div>'
-        '  <h4>Chưa chọn hàng hóa</h4>'
-        '  <p>Bấm vào 1 dòng trong bảng để xem chi tiết, tồn kho 3 chi nhánh '
-        '   và thao tác chỉnh sửa. Chọn nhiều dòng để in tem hàng loạt.</p>'
-        '</div>'
+    """Empty state cho rail phải khi chưa chọn dòng nào."""
+    T = _TOKENS
+    st.html(
+        f'<div style="background:{T["surface"]};border:1px dashed {T["border_2"]};'
+        f'border-radius:10px;padding:24px 18px;text-align:center;'
+        f'font-family:{T["font"]}">'
+        f'  <div style="width:40px;height:40px;border-radius:50%;'
+        f'        background:{T["surface_2"]};display:inline-grid;place-items:center;'
+        f'        color:{T["ink_3"]};margin-bottom:10px;font-size:18px">'
+        f'    <svg width="20" height="20" viewBox="0 0 24 24" fill="none">'
+        f'      <path d="M4 7h16M4 12h10M4 17h6" stroke="currentColor" '
+        f'       stroke-width="1.7" stroke-linecap="round"/>'
+        f'    </svg>'
+        f'  </div>'
+        f'  <h4 style="margin:0 0 4px;font-size:14px;font-weight:600;'
+        f'        color:{T["ink"]}">Chưa chọn hàng hóa</h4>'
+        f'  <p style="margin:0;font-size:12.5px;color:{T["ink_3"]};line-height:1.5">'
+        f'    Bấm vào 1 dòng trong bảng để xem chi tiết, tồn kho 3 chi nhánh '
+        f'    và thao tác chỉnh sửa. Chọn nhiều dòng để in tem hàng loạt.</p>'
+        f'</div>'
     )
 
 
@@ -131,90 +164,194 @@ def render_detail_visual(
     current: str,
     short: dict[str, str],
 ) -> None:
-    """Render the whole detail-card visual block in ONE st.html call.
+    """Render visual của detail card thành 1 st.html call với inline styles.
 
-    Previously split into render_detail_card_open + render_stock_tiles +
-    render_detail_card_close — that pattern broke nesting because each
-    Streamlit call (markdown/html) becomes a separate DOM block. An opening
-    <div> in call N cannot wrap content in call N+1, so selectors like
-    .hh-card-head h3 or .hh-meta dt never matched.
-
-    Building the full body and emitting it in a single call keeps the
-    parent/child structure intact, so the CSS in static/hang_hoa.css
-    actually applies. The outer .hh-card frame is provided separately by
-    st.container(border=True) at the call site, because Streamlit widgets
-    rendered after this function still need to live inside the same frame.
+    Bypass CSS isolation: mọi style nằm trên element trực tiếp.
     """
-    # Code pill + barcode
-    vach_html = (
-        f'<span class="vach">· Mã vạch: {ma_vach}</span>'
-        if ma_vach and ma_vach != ma_hang else ""
+    T = _TOKENS
+
+    # ── Header (title + breadcrumb) ──
+    header_html = (
+        f'<div style="padding:14px 16px 10px;border-bottom:1px solid {T["border"]}">'
+        f'  <h3 style="margin:0;font-size:17px;line-height:1.25;font-weight:600;'
+        f'        color:{T["ink"]};letter-spacing:-.1px;'
+        f'        font-family:{T["font"]}">{ten_hang}</h3>'
+        f'  <div style="margin-top:3px;font-size:11px;font-family:{T["mono"]};'
+        f'        letter-spacing:.4px;color:{T["ink_3"]};text-transform:uppercase">'
+        f'    {breadcrumb}'
+        f'  </div>'
+        f'</div>'
     )
 
-    # Meta rows
-    meta_rows = []
+    # ── Code pill + barcode ──
+    vach_html = ""
+    if ma_vach and ma_vach != ma_hang:
+        vach_html = (
+            f'<span style="font-family:{T["mono"]};font-size:11.5px;'
+            f'color:{T["ink_3"]}">· Mã vạch: {ma_vach}</span>'
+        )
+    codes_html = (
+        f'<div style="display:flex;align-items:center;gap:8px;'
+        f'margin-bottom:8px;flex-wrap:wrap">'
+        f'  <span style="display:inline-flex;align-items:center;gap:6px;'
+        f'        font-family:{T["mono"]};font-size:12px;font-weight:600;'
+        f'        background:{T["surface_2"]};border:1px solid {T["border"]};'
+        f'        color:{T["ink"]};padding:3px 9px;border-radius:5px">'
+        f'    {ma_hang}'
+        f'  </span>'
+        f'  {vach_html}'
+        f'</div>'
+    )
+
+    # ── Meta dl (grid 2 cột) ──
+    meta_rows_html = ""
+    rows = []
     if thuong_hieu:
-        meta_rows.append(f'<dt>Thương hiệu</dt><dd>{thuong_hieu}</dd>')
-    meta_rows.append(f'<dt>Loại SP</dt><dd>{loai_sp}</dd>')
+        rows.append(("Thương hiệu", thuong_hieu))
+    rows.append(("Loại SP", loai_sp or "Hàng hóa"))
     if bao_hanh:
-        meta_rows.append(f'<dt>Bảo hành</dt><dd>{bao_hanh}</dd>')
-    meta_html = (
-        f'<dl class="hh-meta">{"".join(meta_rows)}</dl>'
-        if meta_rows else ""
+        rows.append(("Bảo hành", bao_hanh))
+
+    if rows:
+        items = "".join(
+            f'<dt style="color:{T["ink_3"]};font-weight:500;margin:0">{label}</dt>'
+            f'<dd style="margin:0;color:{T["ink"]}">{value}</dd>'
+            for label, value in rows
+        )
+        meta_rows_html = (
+            f'<dl style="display:grid;grid-template-columns:max-content 1fr;'
+            f'      column-gap:10px;row-gap:4px;font-size:12.5px;'
+            f'      color:{T["ink_2"]};margin:0 0 12px;'
+            f'      font-family:{T["font"]}">{items}</dl>'
+        )
+
+    # ── Price box ──
+    price_str = f"{gia_ban:,}".replace(",", " ") if gia_ban else "—"
+    price_html = (
+        f'<div style="background:{T["surface_2"]};border:1px solid {T["border"]};'
+        f'border-radius:6px;padding:8px 12px;display:flex;align-items:baseline;'
+        f'justify-content:space-between;margin-bottom:14px">'
+        f'  <span style="font-size:11px;letter-spacing:.5px;color:{T["ink_3"]};'
+        f'        text-transform:uppercase;font-weight:600;'
+        f'        font-family:{T["font"]}">Giá bán</span>'
+        f'  <span style="font-family:{T["mono"]};font-size:18px;font-weight:600;'
+        f'        color:{T["ink"]};letter-spacing:-.3px">'
+        f'    {price_str}<span style="font-size:13px;font-weight:500;'
+        f'      color:{T["ink_3"]};margin-left:2px"> ₫</span>'
+        f'  </span>'
+        f'</div>'
     )
 
-    # Price
-    price_str = f"{gia_ban:,}".replace(",", " ") if gia_ban else "—"
+    # ── Section label "Tồn kho 3 chi nhánh" ──
+    section_lbl_html = (
+        f'<div style="font-size:11px;letter-spacing:.5px;color:{T["ink_3"]};'
+        f'text-transform:uppercase;font-weight:600;margin:6px 0 8px;'
+        f'font-family:{T["font"]}">Tồn kho 3 chi nhánh</div>'
+    )
 
-    # Stock tiles
+    # ── Stock tiles (grid 3 cột) ──
     tiles = []
     for cn in branches:
         ton = int(stocks.get(cn, 0) or 0)
         is_cur = (cn == current)
-        lvl = "" if ton > 5 else ("low" if ton > 0 else "zero")
-        cls = "hh-stock curr" if is_cur else "hh-stock"
-        pin = "📍 " if is_cur else ""
+
+        # Color cho số tồn
+        if ton > 5:
+            v_color = T["good"]
+        elif ton > 0:
+            v_color = T["warn"]
+        else:
+            v_color = T["zero"]
+
+        # Style cho tile + name
+        if is_cur:
+            tile_style = (
+                f'border:1px solid {T["accent"]};background:{T["accent_soft"]};'
+                f'box-shadow:inset 0 0 0 1px {T["accent"]}'
+            )
+            name_color = T["accent_d"]
+            pin = "📍 "
+        else:
+            tile_style = f'border:1px solid {T["border"]};background:{T["surface"]}'
+            name_color = T["ink_3"]
+            pin = ""
+
         tiles.append(
-            f'<div class="{cls}">'
-            f'  <div class="name">{pin}{short.get(cn, cn)}</div>'
-            f'  <div class="v {lvl}">{ton:,}</div>'
+            f'<div style="text-align:center;padding:8px 4px 9px;border-radius:6px;'
+            f'      {tile_style}">'
+            f'  <div style="font-size:11px;color:{name_color};font-weight:500;'
+            f'        white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'
+            f'        font-family:{T["font"]}">{pin}{short.get(cn, cn)}</div>'
+            f'  <div style="font-family:{T["mono"]};font-size:18px;font-weight:600;'
+            f'        font-variant-numeric:tabular-nums;color:{v_color};'
+            f'        margin-top:2px;letter-spacing:-.3px">{ton:,}</div>'
             f'</div>'
         )
-    stocks_html = f'<div class="hh-stocks">{"".join(tiles)}</div>'
 
-    # ONE call — keep nesting for selectors like .hh-card-head h3, .hh-meta dt,
-    # .hh-stocks > .hh-stock.
-    hh_html(
-        f'<div class="hh-card-head">'
-        f'  <div class="row1">'
-        f'    <div>'
-        f'      <h3>{ten_hang}</h3>'
-        f'      <div class="breadcrumb">{breadcrumb}</div>'
-        f'    </div>'
-        f'  </div>'
-        f'</div>'
-        f'<div class="hh-card-body">'
-        f'  <div class="hh-codes">'
-        f'    <span class="hh-code-pill">{ma_hang}</span>'
-        f'    {vach_html}'
-        f'  </div>'
-        f'  {meta_html}'
-        f'  <div class="hh-price-box">'
-        f'    <span class="lbl">Giá bán</span>'
-        f'    <span class="val">{price_str}<span class="u"> ₫</span></span>'
-        f'  </div>'
-        f'  <div class="hh-section-lbl">Tồn kho 3 chi nhánh</div>'
+    stocks_html = (
+        f'<div style="display:grid;grid-template-columns:repeat(3,1fr);'
+        f'gap:6px;margin-bottom:6px">{"".join(tiles)}</div>'
+    )
+
+    # ── Render TẤT CẢ trong 1 st.html call ──
+    st.html(
+        header_html +
+        f'<div style="padding:12px 16px 4px">'
+        f'  {codes_html}'
+        f'  {meta_rows_html}'
+        f'  {price_html}'
+        f'  {section_lbl_html}'
         f'  {stocks_html}'
         f'</div>'
     )
 
 
-def render_fab(n: int) -> None:
-    """Floating action bar for multi-select print."""
-    hh_html(
-        f'<div class="hh-fab-wrap"><div class="hh-fab">'
-        f'  <span>Đã chọn</span>'
-        f'  <span class="ct">{n} SP</span>'
-        f'  <span class="sep"></span>'
-        f'</div></div>'
+def render_multi_queue(items: list[dict], n: int) -> None:
+    """Queue card cho multi-select.
+
+    items: list of dict với keys 'ten_hang', 'ma_hang'
+    n: tổng số items (có thể > len(items) nếu cap display)
+    """
+    T = _TOKENS
+
+    items_li = []
+    for it in items[:50]:
+        ten = it.get("ten_hang", "?")
+        ma = it.get("ma_hang", "?")
+        items_li.append(
+            f'<li style="display:flex;align-items:center;gap:8px;padding:8px 10px;'
+            f'      border-bottom:1px solid {T["border"]};font-size:12.5px">'
+            f'  <span style="flex:1;color:{T["ink"]};font-weight:500;'
+            f'        overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{ten}</span>'
+            f'  <span style="font-family:{T["mono"]};font-size:11.5px;'
+            f'        color:{T["ink_3"]}">{ma}</span>'
+            f'</li>'
+        )
+
+    st.html(
+        f'<div style="background:{T["surface"]};border:1px solid {T["border"]};'
+        f'border-radius:10px;box-shadow:0 1px 2px rgba(24,24,27,.04);'
+        f'font-family:{T["font"]}">'
+        f'  <div style="padding:14px 16px 10px;border-bottom:1px solid {T["border"]}">'
+        f'    <h3 style="margin:0;font-size:17px;line-height:1.25;font-weight:600;'
+        f'          color:{T["ink"]};letter-spacing:-.1px">Đã chọn {n} sản phẩm</h3>'
+        f'    <div style="margin-top:3px;font-size:11px;font-family:{T["mono"]};'
+        f'          letter-spacing:.4px;color:{T["ink_3"]};text-transform:uppercase">'
+        f'      SẴN SÀNG IN TEM'
+        f'    </div>'
+        f'  </div>'
+        f'  <ul style="margin:0;padding:0;list-style:none;max-height:280px;'
+        f'        overflow:auto">{"".join(items_li)}</ul>'
+        f'  <div style="padding:10px 12px;border-top:1px solid {T["border"]};'
+        f'        background:{T["surface_2"]};display:flex;align-items:center;'
+        f'        justify-content:space-between;font-size:12.5px">'
+        f'    <span style="color:{T["ink_3"]}">Tổng số tem: '
+        f'      <b style="color:{T["ink"]};font-family:{T["mono"]}">{n}</b>'
+        f'    </span>'
+        f'    <span style="display:inline-flex;align-items:center;gap:4px;'
+        f'          font-size:11px;font-weight:600;padding:2px 7px;border-radius:999px;'
+        f'          background:{T["surface_2"]};color:{T["ink_2"]};'
+        f'          border:1px solid {T["border"]}">CODE128</span>'
+        f'  </div>'
+        f'</div>'
     )

@@ -520,7 +520,7 @@ def module_hoa_don():
                             st.rerun()
 
         with col_rail:
-            with st.container(key="hd_rail"):
+            with st.container(key="hd_rail", border=True):
                 if sel_ma:
                     sel_inv = next((i for i in invoices if i["ma"] == sel_ma), None)
                     if sel_inv:

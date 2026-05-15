@@ -7,9 +7,16 @@ from utils.config import ALL_BRANCHES, CN_SHORT, IN_APP_MARKER, ARCHIVED_MARKER
 from utils.db import supabase, log_action, load_hoa_don, load_hoa_don_unified, \
     load_the_kho, load_hang_hoa, \
     load_phieu_chuyen_kho, load_phieu_kiem_ke, get_gia_ban_map, load_stock_deltas, \
-    load_khach_hang_list, lookup_khach_hang, _upsert_khach_hang, get_archive_reminder
+    load_khach_hang_list, lookup_khach_hang, _upsert_khach_hang, get_archive_reminder, \
+    load_psc_for_apsc
 from utils.auth import get_user, is_admin, is_ke_toan_or_admin, \
     get_active_branch, get_accessible_branches
+from utils.hd_style import (
+    inject_hoa_don_css,
+    list_card_html, detail_rail_html, empty_rail_html,
+    smart_search_predicate,
+    fmt_money, short_time,
+)
 
 # Prefix helpers — import pattern giống bao_cao.py
 PDT_PREFIXES = ["AHDD"]
@@ -32,314 +39,293 @@ def _is_apsc_hd(ma: str) -> bool:
     return any(str(ma).startswith(p) for p in APSC_PREFIXES)
 
 
-def module_hoa_don():
-    # Các tên cột có thể chứa "người bán" trong KiotViet
-    NGUOI_BAN_COLS = ["Người bán", "Nhân viên bán", "Người tạo", "Nhân viên"]
-    # Các tên cột tương ứng với 4 phương thức thanh toán (AQ-AT trong file KiotViet)
-    PAYMENT_COLS = [
-        ("Tiền mặt",      "💵"),
-        ("Thẻ",           "💳"),
-        ("Ví",            "📱"),
-        ("Chuyển khoản",  "🏦"),
-    ]
+NGUOI_BAN_COLS = ["Người bán", "Nhân viên bán", "Người tạo", "Nhân viên"]
 
-    def _loai_label(ma_hd: str) -> str:
-        """Trả về badge text cho loại chứng từ."""
-        if _is_pdt_hd(ma_hd):  return "↔ Đổi/Trả"
-        if _is_apsc_hd(ma_hd): return "🔧 Sửa chữa"
-        if _is_pos_hd(ma_hd):  return "🛒 POS"
-        return ""  # KiotViet — không label
 
-    def render_invoice(inv_df, code):
-        row    = inv_df.iloc[0]
-        status = row.get("Trạng thái","N/A")
-        color  = "#1a7f37" if status=="Hoàn thành" else "#cf4c2c"
-        is_pdt = _is_pdt_hd(code)
+def _items_from_rows(rows: pd.DataFrame) -> list[dict]:
+    out = []
+    for _, r in rows.iterrows():
+        out.append({
+            "ma":  str(r.get("Mã hàng", "") or ""),
+            "ten": str(r.get("Tên hàng", "") or ""),
+            "sl":  int(r.get("Số lượng", 0) or 0),
+            "dg":  int(r.get("Đơn giá", 0) or 0),
+            "tt":  int(r.get("Thành tiền", 0) or 0),
+        })
+    return out
 
-        # Lấy người bán nếu có
-        nguoi_ban = ""
-        for col in NGUOI_BAN_COLS:
-            if col in inv_df.columns:
-                val = row.get(col, "")
-                if val and str(val).strip() and str(val).strip().lower() != "nan":
-                    nguoi_ban = str(val).strip()
-                    break
 
-        # Lấy phương thức thanh toán — chỉ hiện cái > 0
-        payments = []
-        for col, icon in PAYMENT_COLS:
-            if col in inv_df.columns:
-                try:
-                    val = float(row.get(col, 0) or 0)
-                    if val > 0:
-                        payments.append(f"{icon} {col}: <b>{val:,.0f}đ</b>".replace(",","."))
-                except (ValueError, TypeError):
-                    pass
+def _build_invoice_dicts(df: pd.DataFrame) -> list[dict]:
+    """Group dataframe theo Mã hóa đơn → list inv dicts cho list_card_html
+    và detail_rail_html. inv["psc"] là dict|None (1:1)."""
+    if df.empty:
+        return []
 
-        # Cọc PTTT chi tiết (chỉ hiện nếu HĐ từ phiếu đặt hàng)
-        coc_payments = []
-        COC_COLS = [("Cọc tiền mặt", "💵"), ("Cọc chuyển khoản", "🏦"), ("Cọc thẻ", "💳")]
-        for col, icon in COC_COLS:
-            if col in inv_df.columns:
-                try:
-                    val = float(row.get(col, 0) or 0)
-                    if val > 0:
-                        coc_payments.append(f"{icon} {col.replace('Cọc ', '')}: <b>{val:,.0f}đ</b>".replace(",","."))
-                except (ValueError, TypeError):
-                    pass
+    nb_col = None
+    for col in NGUOI_BAN_COLS:
+        if col in df.columns:
+            nb_col = col
+            break
 
-        sdt_hd = str(row.get("Điện thoại","") or "").strip()
-        if sdt_hd.lower() in ("nan","none",""): sdt_hd = ""
+    out = []
+    for ma, grp in df.groupby("Mã hóa đơn", sort=False):
+        head = grp.iloc[0]
+        is_pdt = _is_pdt_hd(ma)
+        is_apsc = _is_apsc_hd(ma)
+        kenh = str(head.get("Kênh bán", "") or ("POS" if str(ma).startswith("AHD") else ""))
+        loai = "Đổi/Trả" if is_pdt else ("Sửa chữa" if is_apsc else "")
 
-        ten_kh = row.get("Tên khách hàng","Khách lẻ") or "Khách lẻ"
-        loai_lbl = _loai_label(code)
-        prefix = f"[{loai_lbl}] " if loai_lbl else ""
-        title_parts = [f"{prefix}{code}", str(row.get("Thời gian","")), ten_kh]
-        if sdt_hd:
-            title_parts.append(f"SĐT: {sdt_hd}")
+        pttt = {}
+        for src, key in [("Tiền mặt", "tm"), ("Chuyển khoản", "ck"),
+                         ("Thẻ", "the"), ("Ví", "vi")]:
+            if src in grp.columns:
+                v = float(head.get(src, 0) or 0)
+                if v > 0:
+                    pttt[key] = v
 
-        with st.expander("  ·  ".join(title_parts), expanded=True):
-            # Status badge + Người bán
-            header_html = (
-                f'<span style="background:{color};color:#fff;padding:3px 12px;'
-                f'border-radius:20px;font-size:.8rem;font-weight:600;">{status}</span>'
-            )
-            if loai_lbl:
-                header_html += (
-                    f'<span style="margin-left:8px;background:#f0f0f0;color:#555;'
-                    f'padding:3px 10px;border-radius:20px;font-size:.8rem;">'
-                    f'{loai_lbl}</span>'
-                )
-            if nguoi_ban:
-                header_html += (
-                    f'<span style="margin-left:10px;font-size:0.82rem;color:#555;">'
-                    f'👤 <b>{nguoi_ban}</b></span>'
-                )
-            st.markdown(header_html, unsafe_allow_html=True)
-            st.markdown("<br>", unsafe_allow_html=True)
+        inv = {
+            "ma": ma,
+            "tg": str(head.get("Thời gian", "")),
+            "kenh": kenh, "loai": loai,
+            "status": str(head.get("Trạng thái", "Hoàn thành")),
+            "khach": str(head.get("Tên khách hàng", "") or "Khách lẻ"),
+            "sdt":   str(head.get("Điện thoại", "") or "").strip(),
+            "nv":    str(head.get(nb_col, "") or "").strip() if nb_col else "",
+            "pttt":  pttt,
+            "tong":  int(head.get("Tổng tiền hàng", 0) or 0),
+            "giam":  int(head.get("Giảm giá hóa đơn", 0) or 0),
+            "tra":   int(head.get("Khách đã trả", 0) or 0),
+        }
 
-            if is_pdt:
-                # Phiếu đổi/trả: hiện chênh lệch thay vì các cột HĐ thông thường
-                chenh_lech = int(row.get("_pdt_chenh_lech", row.get("Khách đã trả", 0)) or 0)
-                loai_phieu = str(row.get("_pdt_loai", row.get("Ghi chú", "")) or "")
-                ma_hd_goc  = str(row.get("_pdt_ma_hd_goc", "") or "")
-
-                c1, c2, c3 = st.columns([4, 3, 3])
-                if chenh_lech > 0:
-                    c1.metric("Khách bù thêm", f"{chenh_lech:,.0f}đ".replace(",","."))
-                elif chenh_lech < 0:
-                    c1.metric("Cửa hàng hoàn", f"{abs(chenh_lech):,.0f}đ".replace(",","."))
-                else:
-                    c1.metric("Chênh lệch", "0đ")
-                c2.metric("Loại phiếu", loai_phieu or "—")
-                c3.metric("HĐ gốc", ma_hd_goc or "—")
-
-                if payments:
-                    st.markdown(
-                        f"<div style='background:#f8fafc;border-radius:6px;"
-                        f"padding:8px 12px;margin:6px 0;font-size:0.85rem;color:#333;'>"
-                        f"<b>Phương thức:</b> "
-                        + " · ".join(payments) + "</div>",
-                        unsafe_allow_html=True
-                    )
-
-                # Items: tách tra vs moi
-                items_tra = inv_df[inv_df.get("_pdt_kieu", pd.Series(dtype=str)) == "tra"] \
-                    if "_pdt_kieu" in inv_df.columns else pd.DataFrame()
-                items_moi = inv_df[inv_df.get("_pdt_kieu", pd.Series(dtype=str)) == "moi"] \
-                    if "_pdt_kieu" in inv_df.columns else pd.DataFrame()
-
-                cols_item = ["Mã hàng","Tên hàng","Số lượng","Đơn giá"]
-
-                if not items_tra.empty:
-                    with st.expander("📦 Khách trả lại", expanded=False):
-                        dv = items_tra[[c for c in cols_item if c in items_tra.columns]].copy()
-                        if "Đơn giá" in dv.columns:
-                            dv["Đơn giá"] = dv["Đơn giá"].apply(
-                                lambda x: f"{x:,.0f}".replace(",","."))
-                        st.dataframe(dv, use_container_width=True, hide_index=True)
-
-                if not items_moi.empty:
-                    with st.expander("🛒 Khách mua mới", expanded=False):
-                        dv = items_moi[[c for c in cols_item if c in items_moi.columns]].copy()
-                        if "Đơn giá" in dv.columns:
-                            dv["Đơn giá"] = dv["Đơn giá"].apply(
-                                lambda x: f"{x:,.0f}".replace(",","."))
-                        st.dataframe(dv, use_container_width=True, hide_index=True)
-
-                if items_tra.empty and items_moi.empty:
-                    # Fallback: không có _pdt_kieu (dữ liệu cũ hoặc edge case)
-                    cols = ["Mã hàng","Tên hàng","Số lượng","Đơn giá","Thành tiền"]
-                    dv = inv_df[[c for c in cols if c in inv_df.columns]].copy()
-                    with st.expander("Chi tiết", expanded=False):
-                        st.dataframe(dv, use_container_width=True, hide_index=True)
-
-            else:
-                # HĐ bán thường (KiotViet / POS / APSC)
-                c1, c2, c3 = st.columns([4, 3, 3])
-                c1.metric("Tổng tiền hàng", f"{row.get('Tổng tiền hàng',0):,.0f}đ".replace(",","."))
-                gg = float(row.get("Giảm giá hóa đơn", 0) or 0)
-                if gg > 0:
-                    c2.metric("Giảm giá HĐ", f"{gg:,.0f}đ".replace(",","."))
-                else:
-                    c2.metric("Giảm giá HĐ", "0đ")
-                c3.metric("Khách đã trả", f"{row.get('Khách đã trả',0):,.0f}đ".replace(",","."))
-
-                if payments:
-                    st.markdown(
-                        f"<div style='background:#f8fafc;border-radius:6px;"
-                        f"padding:8px 12px;margin:6px 0;font-size:0.85rem;color:#333;'>"
-                        f"<b>Phương thức thanh toán:</b> "
-                        + " · ".join(payments) + "</div>",
-                        unsafe_allow_html=True
-                    )
-
-                # Cọc PTTT chi tiết (HĐ từ phiếu đặt hàng)
-                tien_coc = float(row.get("Tiền cọc", 0) or 0)
-                if tien_coc > 0:
-                    coc_detail = " · ".join(coc_payments) if coc_payments \
-                        else f"(tổng {int(tien_coc):,}đ)".replace(",", ".")
-                    st.markdown(
-                        "<div style='background:#fff8e0;border-radius:6px;"
-                        "padding:8px 12px;margin:6px 0;font-size:0.85rem;color:#856404;'>"
-                        f"🪙 <b>Tiền cọc đã thu ({int(tien_coc):,}đ)</b>: ".replace(",", ".")
-                        + coc_detail + "</div>",
-                        unsafe_allow_html=True
-                    )
-
-                cols = ["Mã hàng","Tên hàng","Số lượng","Đơn giá","Thành tiền","Ghi chú hàng hóa"]
-                dv = inv_df[[c for c in cols if c in inv_df.columns]].copy()
-                for c in ["Đơn giá","Thành tiền"]:
-                    if c in dv.columns:
-                        dv[c] = dv[c].apply(lambda x: f"{x:,.0f}".replace(",","."))
-                with st.expander("Chi tiết hàng hóa", expanded=False):
-                    st.dataframe(dv, use_container_width=True, hide_index=True)
-
-    def render_list(res):
-        ok  = res[res["Trạng thái"] != "Đã hủy"]
-        huy = res[res["Trạng thái"] == "Đã hủy"]
-        for code in ok["Mã hóa đơn"].unique():
-            render_invoice(ok[ok["Mã hóa đơn"]==code], code)
-        if not huy.empty:
-            with st.expander(f"Hóa đơn đã hủy ({huy['Mã hóa đơn'].nunique()})", expanded=False):
-                for code in huy["Mã hóa đơn"].unique():
-                    render_invoice(huy[huy["Mã hóa đơn"]==code], code)
-
-    def _render_recent(data, n=6):
-        """Hiển thị n chứng từ gần nhất theo thời gian (chưa bấm tìm)."""
-        if "_ngay" in data.columns:
-            recent_codes = (
-                data.dropna(subset=["_ngay"])
-                    .sort_values("_ngay", ascending=False)
-                    ["Mã hóa đơn"].drop_duplicates().head(n).tolist()
-            )
-            res = data[data["Mã hóa đơn"].isin(recent_codes)]
-            if not res.empty:
-                order = {ma: i for i, ma in enumerate(recent_codes)}
-                res = res.assign(_order=res["Mã hóa đơn"].map(order)) \
-                         .sort_values("_order").drop(columns="_order")
-                st.caption(f"📋 {len(recent_codes)} chứng từ gần nhất:")
-                render_list(res)
-            else:
-                st.caption("Chưa có chứng từ.")
+        if is_pdt:
+            inv["chenh"] = int(head.get("_pdt_chenh_lech", head.get("Khách đã trả", 0)) or 0)
+            tra_rows = grp[grp.get("_pdt_kieu", pd.Series(dtype=str)) == "tra"] \
+                       if "_pdt_kieu" in grp.columns else pd.DataFrame()
+            moi_rows = grp[grp.get("_pdt_kieu", pd.Series(dtype=str)) == "moi"] \
+                       if "_pdt_kieu" in grp.columns else pd.DataFrame()
+            inv["items_tra"] = _items_from_rows(tra_rows)
+            inv["items_moi"] = _items_from_rows(moi_rows)
         else:
-            st.caption("Chưa có dữ liệu.")
+            inv["items"] = _items_from_rows(grp)
+
+        if is_apsc:
+            ma_ycsc = str(head.get("Mã YCSC", "") or "").strip()
+            inv["psc"] = load_psc_for_apsc(ma_ycsc) if ma_ycsc else None
+
+        out.append(inv)
+
+    if "_ngay" in df.columns:
+        order_map = dict(zip(df["Mã hóa đơn"],
+                              pd.to_datetime(df["Thời gian"], dayfirst=True, errors="coerce")))
+        out.sort(key=lambda x: order_map.get(x["ma"]) or pd.Timestamp.min, reverse=True)
+    return out
+
+
+def _trigger_print_invoice(inv: dict):
+    st.toast("🖨 TODO: triển khai in HĐ ở phase 3", icon="🚧")
+
+
+def _copy_invoice_to_clipboard(inv: dict):
+    text = f"{inv['ma']} · {inv['tg']}\n{inv.get('khach', '')} · {inv.get('sdt', '')}\n"
+    text += f"Tổng: {fmt_money(inv.get('tra', 0))}\n"
+    for it in inv.get("items", []):
+        text += f"  - {it['ten']} × {it['sl']} = {fmt_money(it['tt'])}\n"
+    st.session_state["_hd_clipboard"] = text
+    st.toast("📋 Đã sao chép HĐ (clipboard JS triển khai sau)", icon="✅")
+
+
+def module_hoa_don():
+    inject_hoa_don_css()
 
     try:
         active = get_active_branch()
         accessible = get_accessible_branches()
 
-        # Admin/kế toán có thể lọc theo CN; nhân viên chỉ thấy CN hiện tại
+        # ── Branch picker (giữ nguyên logic) ─────────────────────────
         if is_ke_toan_or_admin() and len(accessible) > 1:
             cn_filter = st.selectbox(
                 "Chi nhánh:", ["Tất cả"] + accessible,
                 index=(accessible.index(active) + 1) if active in accessible else 0,
-                key="hd_cn", label_visibility="collapsed"
+                key="hd_cn", label_visibility="collapsed",
             )
             load_cns = tuple(accessible) if cn_filter == "Tất cả" else (cn_filter,)
         else:
             load_cns = (active,)
             st.caption(f"📍 {active}")
 
-        # load_hoa_don_unified đã gộp KiotViet + POS + AHDD
+        # ── Load data (giữ nguyên) ───────────────────────────────────
         raw = load_hoa_don_unified(branches_key=load_cns)
         if raw.empty:
             st.info("Chưa có dữ liệu hóa đơn."); return
 
-        if st.session_state.get("so_dong_trung",0) > 0:
+        if st.session_state.get("so_dong_trung", 0) > 0:
             st.caption(f"⚠ {st.session_state['so_dong_trung']} dòng trùng đã lọc.")
 
         data = raw.copy()
-        data["SĐT_Search"] = data["Điện thoại"].fillna("").str.replace(r"\D+","",regex=True)
+        data["SĐT_Search"] = data["Điện thoại"].fillna("").str.replace(r"\D+", "", regex=True)
 
-        t1,t2,t3 = st.tabs(["Số điện thoại","Mã hóa đơn","Ngày tháng"])
-        with t1:
-            phone = st.text_input("Số điện thoại:", key="in_phone",
-                                  placeholder="Nhập số điện thoại...")
-            if phone:
-                res = data[data["SĐT_Search"].str.contains(
-                    phone.replace(" ",""), na=False)]
-                if not res.empty:
-                    st.caption(
-                        f"Khách hàng: **{res.iloc[0].get('Tên khách hàng','Khách lẻ')}**")
-                    render_list(res)
-                else:
-                    st.warning("Không tìm thấy số điện thoại.")
-            else:
-                _render_recent(data, 6)
+        # ── Distinct NV list ─────────────────────────────────────────
+        nv_options = ["Tất cả NV"]
+        for col in NGUOI_BAN_COLS:
+            if col in data.columns:
+                nv_options += sorted([n for n in data[col].dropna().astype(str).unique()
+                                      if n.strip() and n.strip().lower() != "nan"])
+                break
 
-        with t2:
-            inv = st.text_input("Mã hóa đơn:", key="in_inv",
-                                placeholder="VD: 1007, HD011007, AHDD000001...")
-            if inv:
-                inv_clean = inv.strip().upper()
-                # Tìm exact match hoặc endswith (giống KiotViet)
-                mask_exact   = data["Mã hóa đơn"].str.upper() == inv_clean
-                mask_endswith = data["Mã hóa đơn"].str.upper().str.endswith(
-                    inv_clean, na=False)
-                res = data[mask_exact | mask_endswith]
-                if not res.empty:
-                    render_list(res)
-                else:
-                    st.warning("Không tìm thấy mã hóa đơn.")
-            else:
-                _render_recent(data, 6)
+        # ── Title row ────────────────────────────────────────────────
+        import datetime as _dt
+        _wd = ["Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy", "Chủ Nhật"]
+        _now = _dt.datetime.now()
+        title_l, title_r = st.columns([3, 1])
+        with title_l:
+            st.html(
+                f'<h2 style="font-size:22px;font-weight:600;letter-spacing:-.2px;'
+                f'margin:0 0 10px;font-family:Be Vietnam Pro,system-ui,sans-serif;">'
+                f'Hoá đơn · {_wd[_now.weekday()]} {_now.strftime("%d/%m/%Y")}</h2>'
+            )
+        with title_r:
+            st.caption(f"{data['Mã hóa đơn'].nunique()} chứng từ")
 
-        with t3:
-            # Date range picker — cùng 1 hàng
-            import datetime as _dt
-            _today = _dt.date.today()
-            _col_f, _col_t, _col_go = st.columns([2, 2, 1])
-            with _col_f:
-                d_from = st.date_input("Từ:", value=_today, key="in_date_from",
-                                       label_visibility="collapsed", format="DD/MM/YYYY")
-            with _col_t:
-                d_to = st.date_input("Đến:", value=_today, key="in_date_to",
-                                     label_visibility="collapsed", format="DD/MM/YYYY")
-            with _col_go:
-                do_filter = st.button("Lọc", key="in_date_go", use_container_width=True)
-
-            if do_filter or st.session_state.get("in_date_active"):
-                if do_filter:
-                    st.session_state["in_date_active"] = True
-                if "_date" in data.columns:
-                    res = data[data["_date"].between(d_from, d_to)]
-                else:
-                    _ngay = pd.to_datetime(
-                        data["Thời gian"], dayfirst=True, errors="coerce"
-                    ).dt.date
-                    res = data[_ngay.between(d_from, d_to)]
-                if not res.empty:
-                    st.caption(
-                        f"{d_from.strftime('%d/%m')} → {d_to.strftime('%d/%m/%Y')} "
-                        f"· {res['Mã hóa đơn'].nunique()} chứng từ"
+        # ── Filter container (thay 3 sub-tab cũ) ─────────────────────
+        with st.container(border=True):
+            c1, c2, c3, c4, c5 = st.columns([3, 1, 1, 1, 1])
+            with c1:
+                keyword = st.text_input(
+                    "Tìm kiếm", key="hd_search",
+                    placeholder="Tìm mã HĐ, số điện thoại, tên khách… (số→SĐT, chữ→tên)",
+                    label_visibility="collapsed",
+                )
+            with c2:
+                with st.popover("📅 Khoảng ngày", use_container_width=True):
+                    d_from = st.date_input(
+                        "Từ:", value=_now.date() - _dt.timedelta(days=7),
+                        key="hd_date_from", format="DD/MM/YYYY",
                     )
-                    render_list(res)
-                else:
-                    st.warning("Không có dữ liệu trong khoảng ngày này.")
+                    d_to = st.date_input(
+                        "Đến:", value=_now.date(),
+                        key="hd_date_to", format="DD/MM/YYYY",
+                    )
+            with c3:
+                sel_nv = st.selectbox("NV", nv_options, key="hd_filter_nv",
+                                      label_visibility="collapsed")
+            with c4:
+                sel_pttt = st.selectbox(
+                    "PTTT", ["Tất cả PTTT", "Tiền mặt", "CK", "Thẻ", "Ví"],
+                    key="hd_filter_pttt", label_visibility="collapsed",
+                )
+            with c5:
+                sel_loai = st.selectbox(
+                    "Loại", ["Tất cả loại", "POS", "Đổi/Trả", "Sửa chữa", "KiotViet"],
+                    key="hd_filter_loai", label_visibility="collapsed",
+                )
+
+            # Status segmented (radio horizontal — CSS biến thành seg)
+            n_all    = data["Mã hóa đơn"].nunique()
+            n_ok     = data[data["Trạng thái"] == "Hoàn thành"]["Mã hóa đơn"].nunique()
+            n_cancel = data[data["Trạng thái"] == "Đã hủy"]["Mã hóa đơn"].nunique()
+            n_pdt    = data[data["Mã hóa đơn"].apply(_is_pdt_hd)]["Mã hóa đơn"].nunique()
+            n_apsc   = data[data["Mã hóa đơn"].apply(_is_apsc_hd)]["Mã hóa đơn"].nunique()
+            sel_status = st.radio(
+                "Trạng thái",
+                [f"Tất cả ({n_all})", f"● Hoàn thành ({n_ok})", f"✕ Đã hủy ({n_cancel})",
+                 f"↔ Đổi/Trả ({n_pdt})", f"🔧 Sửa chữa ({n_apsc})"],
+                horizontal=True, label_visibility="collapsed", key="hd_filter_status",
+            )
+
+        # ── Apply filters ───────────────────────────────────────────
+        filt = data.copy()
+
+        if "_date" in filt.columns:
+            filt = filt[filt["_date"].between(d_from, d_to)]
+        else:
+            _ngay = pd.to_datetime(filt["Thời gian"], dayfirst=True, errors="coerce").dt.date
+            filt = filt[_ngay.between(d_from, d_to)]
+
+        if keyword:
+            pred = smart_search_predicate(keyword)
+            mask = filt.apply(pred, axis=1)
+            filt = filt[mask]
+
+        if sel_nv != "Tất cả NV":
+            for col in NGUOI_BAN_COLS:
+                if col in filt.columns:
+                    filt = filt[filt[col].astype(str).str.strip() == sel_nv]
+                    break
+
+        pttt_col_map = {"Tiền mặt": "Tiền mặt", "CK": "Chuyển khoản",
+                        "Thẻ": "Thẻ", "Ví": "Ví"}
+        if sel_pttt != "Tất cả PTTT" and sel_pttt in pttt_col_map:
+            col = pttt_col_map[sel_pttt]
+            if col in filt.columns:
+                filt = filt[pd.to_numeric(filt[col], errors="coerce").fillna(0) > 0]
+
+        if sel_loai == "POS":
+            mask_kenh_pos = filt["Kênh bán"].fillna("") == "POS" \
+                if "Kênh bán" in filt.columns else pd.Series(False, index=filt.index)
+            filt = filt[mask_kenh_pos &
+                        (~filt["Mã hóa đơn"].apply(_is_pdt_hd)) &
+                        (~filt["Mã hóa đơn"].apply(_is_apsc_hd))]
+        elif sel_loai == "Đổi/Trả":
+            filt = filt[filt["Mã hóa đơn"].apply(_is_pdt_hd)]
+        elif sel_loai == "Sửa chữa":
+            filt = filt[filt["Mã hóa đơn"].apply(_is_apsc_hd)]
+        elif sel_loai == "KiotViet":
+            mask_kenh_pos = filt["Kênh bán"].fillna("") == "POS" \
+                if "Kênh bán" in filt.columns else pd.Series(False, index=filt.index)
+            filt = filt[(~mask_kenh_pos) & (~filt["Mã hóa đơn"].apply(_is_pdt_hd))]
+
+        if "Hoàn thành" in sel_status:
+            filt = filt[filt["Trạng thái"] == "Hoàn thành"]
+        elif "Đã hủy" in sel_status:
+            filt = filt[filt["Trạng thái"] == "Đã hủy"]
+        elif "Đổi/Trả" in sel_status:
+            filt = filt[filt["Mã hóa đơn"].apply(_is_pdt_hd)]
+        elif "Sửa chữa" in sel_status:
+            filt = filt[filt["Mã hóa đơn"].apply(_is_apsc_hd)]
+
+        # ── Master-detail grid ──────────────────────────────────────
+        if filt.empty:
+            st.warning("🔍 Không tìm thấy chứng từ phù hợp")
+            return
+
+        invoices = _build_invoice_dicts(filt)
+        sel_ma = st.session_state.get("hd_sel_ma")
+        if sel_ma and sel_ma not in {i["ma"] for i in invoices}:
+            sel_ma = None
+            st.session_state.pop("hd_sel_ma", None)
+
+        col_list, col_rail = st.columns([6, 4], gap="medium")
+        with col_list:
+            for inv in invoices:
+                is_sel = inv["ma"] == sel_ma
+                st.html(list_card_html(inv, selected=is_sel))
+                if st.button("Xem chi tiết →", key=f"hd_open_{inv['ma']}",
+                             use_container_width=True,
+                             type="primary" if is_sel else "secondary"):
+                    st.session_state["hd_sel_ma"] = inv["ma"]
+                    st.rerun()
+
+        with col_rail:
+            if sel_ma:
+                sel_inv = next((i for i in invoices if i["ma"] == sel_ma), None)
+                if sel_inv:
+                    st.html(detail_rail_html(sel_inv))
+                    b1, b2, b3 = st.columns(3)
+                    with b1:
+                        if st.button("🖨 In lại", key=f"hd_print_{sel_ma}",
+                                     use_container_width=True, type="primary"):
+                            _trigger_print_invoice(sel_inv)
+                    with b2:
+                        if st.button("⎘ Sao chép", key=f"hd_copy_{sel_ma}",
+                                     use_container_width=True):
+                            _copy_invoice_to_clipboard(sel_inv)
+                    with b3:
+                        if st.button("⤴ Phiếu kho", key=f"hd_kho_{sel_ma}",
+                                     use_container_width=True):
+                            st.toast("TODO: link to phiếu kho", icon="🚧")
             else:
-                st.caption("Chọn khoảng ngày rồi bấm **Lọc**")
-                _render_recent(data, 6)
+                st.html(empty_rail_html())
+
     except Exception as e:
         st.error(f"Lỗi: {e}")
 

@@ -1,13 +1,14 @@
-"""Module Chấm công nhân viên — DLW Phase 2 + 4.
+"""Module Chấm công nhân viên — DLW Phase 2 + 4 + 5.
 
 Tabs trong "👥 Nhân viên":
   - ⚙️ Cấu hình (Phase 2): 3 sub-tabs Mạng / Lương / Ca làm việc
   - 📅 Lịch làm việc (Phase 2): calendar tuần + CRUD schedule
   - 📊 Bảng công (Phase 4): sessions theo date range + summary per NV
+    + ✏️ Sửa công (Phase 5, admin only): dialog edit session với audit history
 
-Phase 5+ sẽ thêm: ✏️ Sửa công, 💰 Tính lương, 📥 Export.
+Phase 6+ sẽ thêm: 💰 Tính lương, 📥 Export.
 
-Refs: PLAN_CHAM_CONG.md sections 7 + 9.
+Refs: PLAN_CHAM_CONG.md sections 7 + 9 + 10.
 """
 from __future__ import annotations
 
@@ -851,6 +852,10 @@ def _render_bang_cong():
     df = _sessions_to_df(sessions)
     _render_bang_cong_table(df)
 
+    # ✏️ Sửa session — admin only (Phase 5)
+    if is_admin():
+        _render_session_edit_picker(sessions)
+
     st.markdown("---")
     st.markdown("##### 📊 Tổng kết theo nhân viên")
     _render_bang_cong_summary(df)
@@ -1128,3 +1133,326 @@ def _render_bang_cong_summary(df: pd.DataFrame):
     col2.metric("Tổng worked", _format_minutes(total_worked))
     col3.metric("Tổng OT", _format_minutes(total_ot))
     col4.metric("Late count", total_late)
+
+
+# ============================================================
+# ✏️ SỬA CÔNG (Phase 5) — admin only, audit qua admin_edit_history
+# ============================================================
+
+def _render_session_edit_picker(sessions: list[dict]):
+    """Sub-section dưới bảng công: chọn session để mở dialog sửa."""
+    st.markdown("---")
+    st.markdown("##### ✏️ Sửa công")
+    st.caption(
+        "Sửa giờ vào/ra + ghi chú cho 1 session. Mọi thay đổi được log vào "
+        "`admin_edit_history` với lý do bắt buộc."
+    )
+
+    editable = [s for s in sessions if s.get("session_id")]
+    if not editable:
+        st.info(
+            "Không có session nào để sửa. Schedule chưa build session "
+            "(bấm '🔄 Cập nhật sessions') hoặc chỉ có row leave_* (chưa có session)."
+        )
+        return
+
+    labels = []
+    for s in editable:
+        try:
+            wd = datetime.strptime(s["work_date"], "%Y-%m-%d").date()
+            ngay = wd.strftime("%d/%m")
+        except Exception:
+            ngay = s.get("work_date", "?")
+        labels.append(
+            f"#{s['session_id']} · {ngay} · {s['ho_ten']} · "
+            f"{s['shift_label']} ({(s.get('branch_name') or '')[:10]}) · "
+            f"{_STATUS_LABEL_VN.get(s.get('status',''), s.get('status',''))}"
+        )
+
+    col_pick, col_edit = st.columns([4, 1])
+    with col_pick:
+        picked_label = st.selectbox(
+            "Chọn session cần sửa",
+            options=labels,
+            key="cc_bc_edit_pick",
+            label_visibility="collapsed",
+        )
+    with col_edit:
+        if st.button("✏️ Sửa", use_container_width=True, key="cc_bc_edit_btn"):
+            idx = labels.index(picked_label)
+            _session_edit_dialog(editable[idx])
+
+
+@st.dialog("✏️ Sửa session chấm công")
+def _session_edit_dialog(session_data: dict):
+    """Sửa check_in_at, check_out_at, note của 1 session.
+
+    Pattern: RPC update_session_admin snapshot vào admin_edit_history.
+    BẮT BUỘC: lý do + gõ "XÁC NHẬN" trước khi Save.
+    """
+    if not is_admin():
+        st.error("⛔ Chỉ admin được sửa session.")
+        return
+
+    s_id = session_data.get("session_id")
+    sched_id = session_data.get("schedule_id")
+    if not s_id or not sched_id:
+        st.error("Session không hợp lệ.")
+        return
+
+    # Read-only header
+    status_lbl = _STATUS_LABEL_VN.get(
+        session_data.get("status", ""), session_data.get("status", "")
+    )
+    st.markdown(
+        f"**Session:** `#{s_id}`  \n"
+        f"**NV:** {session_data['ho_ten']}  \n"
+        f"**Ngày:** {session_data['work_date']}  \n"
+        f"**Ca:** {session_data['shift_label']} ({session_data['branch_name']})  \n"
+        f"**Status hiện tại:** {status_lbl}"
+    )
+
+    # Load scheduled bounds để gợi ý input + recompute reference
+    sched_res = supabase.table("attendance_work_schedules").select(
+        "scheduled_start_at, scheduled_end_at"
+    ).eq("id", sched_id).limit(1).execute()
+    sched = (sched_res.data or [{}])[0]
+    sched_start_iso = sched.get("scheduled_start_at")
+    sched_end_iso = sched.get("scheduled_end_at")
+
+    sched_start_dt = (datetime.fromisoformat(sched_start_iso).astimezone(VN_TZ)
+                      if sched_start_iso else None)
+    sched_end_dt = (datetime.fromisoformat(sched_end_iso).astimezone(VN_TZ)
+                    if sched_end_iso else None)
+
+    if sched_start_dt and sched_end_dt:
+        st.caption(
+            f"📅 Ca scheduled: **{sched_start_dt.strftime('%d/%m %H:%M')}** "
+            f"→ **{sched_end_dt.strftime('%H:%M')}**"
+        )
+
+    st.markdown("---")
+
+    # Editable inputs — preserve current values, fallback to scheduled
+    curr_in_iso = session_data.get("check_in_at")
+    curr_out_iso = session_data.get("check_out_at")
+    curr_note = session_data.get("note") or ""
+
+    if curr_in_iso:
+        curr_in_dt = datetime.fromisoformat(curr_in_iso).astimezone(VN_TZ)
+    elif sched_start_dt:
+        curr_in_dt = sched_start_dt
+    else:
+        curr_in_dt = datetime.now(VN_TZ).replace(microsecond=0)
+
+    if curr_out_iso:
+        curr_out_dt = datetime.fromisoformat(curr_out_iso).astimezone(VN_TZ)
+    elif sched_end_dt:
+        curr_out_dt = sched_end_dt
+    else:
+        curr_out_dt = curr_in_dt + timedelta(hours=7)
+
+    st.markdown("**Giờ vào (check_in_at):**")
+    col_in_d, col_in_t = st.columns([1, 1])
+    with col_in_d:
+        new_in_date = st.date_input(
+            "Ngày vào",
+            value=curr_in_dt.date(),
+            key=f"cc_edit_in_d_{s_id}",
+            label_visibility="collapsed",
+        )
+    with col_in_t:
+        new_in_time = st.time_input(
+            "Giờ vào",
+            value=curr_in_dt.time().replace(microsecond=0),
+            key=f"cc_edit_in_t_{s_id}",
+            label_visibility="collapsed",
+            step=60,
+        )
+
+    st.markdown("**Giờ ra (check_out_at):**")
+    col_out_d, col_out_t = st.columns([1, 1])
+    with col_out_d:
+        new_out_date = st.date_input(
+            "Ngày ra",
+            value=curr_out_dt.date(),
+            key=f"cc_edit_out_d_{s_id}",
+            label_visibility="collapsed",
+        )
+    with col_out_t:
+        new_out_time = st.time_input(
+            "Giờ ra",
+            value=curr_out_dt.time().replace(microsecond=0),
+            key=f"cc_edit_out_t_{s_id}",
+            label_visibility="collapsed",
+            step=60,
+        )
+
+    new_note = st.text_area(
+        "Ghi chú session",
+        value=curr_note,
+        key=f"cc_edit_note_{s_id}",
+        height=68,
+    )
+
+    new_in_dt = datetime.combine(new_in_date, new_in_time, tzinfo=VN_TZ)
+    new_out_dt = datetime.combine(new_out_date, new_out_time, tzinfo=VN_TZ)
+
+    if new_out_dt <= new_in_dt:
+        st.error("⛔ Giờ ra phải sau giờ vào.")
+        return
+
+    # Compute diff preview
+    def _fmt_dt_diff(dt):
+        return dt.astimezone(VN_TZ).strftime("%d/%m %H:%M") if dt else "—"
+
+    diffs = []
+    if curr_in_iso:
+        old_in_dt = datetime.fromisoformat(curr_in_iso)
+        if abs((new_in_dt - old_in_dt).total_seconds()) > 30:
+            diffs.append(("check_in_at",
+                          _fmt_dt_diff(old_in_dt), _fmt_dt_diff(new_in_dt)))
+    else:
+        diffs.append(("check_in_at", "—", _fmt_dt_diff(new_in_dt)))
+
+    if curr_out_iso:
+        old_out_dt = datetime.fromisoformat(curr_out_iso)
+        if abs((new_out_dt - old_out_dt).total_seconds()) > 30:
+            diffs.append(("check_out_at",
+                          _fmt_dt_diff(old_out_dt), _fmt_dt_diff(new_out_dt)))
+    else:
+        diffs.append(("check_out_at", "—", _fmt_dt_diff(new_out_dt)))
+
+    if (new_note or "") != (curr_note or ""):
+        diffs.append(("note",
+                      curr_note or "(rỗng)", new_note or "(rỗng)"))
+
+    if not diffs:
+        st.info("ℹ️ Chưa có thay đổi nào.")
+    else:
+        with st.container(border=True):
+            st.markdown("**📝 Preview thay đổi:**")
+            for field, old_v, new_v in diffs:
+                st.caption(f"• `{field}`: ~~{old_v}~~ → **{new_v}**")
+
+    st.markdown("---")
+
+    # Lý do (BẮT BUỘC) + confirm typing
+    reason = st.text_area(
+        "**Lý do sửa** (bắt buộc)",
+        key=f"cc_edit_reason_{s_id}",
+        height=68,
+        placeholder="vd: Máy chấm công lỗi, NV quên chấm ra...",
+    )
+
+    confirm_text = st.text_input(
+        "Gõ `XÁC NHẬN` để bật nút Save",
+        key=f"cc_edit_confirm_{s_id}",
+        placeholder="XÁC NHẬN",
+    )
+
+    has_changes = bool(diffs)
+    reason_ok = bool(reason.strip())
+    confirm_ok = confirm_text.strip().upper() == "XÁC NHẬN"
+    can_save = has_changes and reason_ok and confirm_ok
+
+    if not has_changes:
+        st.caption("💡 Không có thay đổi để lưu.")
+    elif not reason_ok:
+        st.caption("💡 Nhập lý do để bật nút Save.")
+    elif not confirm_ok:
+        st.caption("💡 Gõ chính xác `XÁC NHẬN` (in hoa) để bật nút Save.")
+
+    if st.button(
+        "💾 Lưu thay đổi",
+        type="primary",
+        use_container_width=True,
+        disabled=not can_save,
+        key=f"cc_edit_save_{s_id}",
+    ):
+        try:
+            user = get_user()
+            res = call_rpc("update_session_admin", {
+                "p_session_id": s_id,
+                "p_check_in_at": new_in_dt.isoformat(),
+                "p_check_out_at": new_out_dt.isoformat(),
+                "p_note": new_note or None,
+                "p_reason": reason.strip(),
+                "p_admin_id": user["id"],
+            })
+            if isinstance(res, dict) and res.get("ok"):
+                fields = res.get("fields_changed", []) or []
+                st.toast(
+                    f"✓ Đã sửa session — {len(fields)} field(s) changed",
+                    icon="✅",
+                )
+                st.rerun()
+            else:
+                err = (res or {}).get("error", "Lỗi RPC")
+                st.error(f"❌ {err}")
+        except Exception as e:
+            st.error(f"Lỗi: {e}")
+
+    # History viewer
+    st.markdown("---")
+    with st.expander("📜 Lịch sử chỉnh sửa", expanded=False):
+        _render_session_edit_history(s_id)
+
+
+def _render_session_edit_history(session_id: int):
+    """Load admin_edit_history cho 1 session, render dạng list."""
+    try:
+        res = supabase.table("admin_edit_history").select(
+            "id, snapshot_before, snapshot_after, fields_changed, "
+            "edited_by_name, edit_reason, edited_at"
+        ).eq("table_name", "attendance_sessions") \
+         .eq("record_id", str(session_id)) \
+         .order("edited_at", desc=True) \
+         .execute()
+        rows = res.data or []
+    except Exception as e:
+        st.error(f"Lỗi load lịch sử: {e}")
+        return
+
+    if not rows:
+        st.caption("Chưa có lịch sử sửa cho session này.")
+        return
+
+    for r in rows:
+        edited_at = r.get("edited_at", "")
+        try:
+            edited_at_dt = datetime.fromisoformat(edited_at).astimezone(VN_TZ)
+            edited_at_str = edited_at_dt.strftime("%d/%m/%Y %H:%M")
+        except Exception:
+            edited_at_str = edited_at
+
+        fields = r.get("fields_changed") or []
+        reason = r.get("edit_reason") or "(không ghi lý do)"
+        edited_by = r.get("edited_by_name") or "?"
+
+        with st.container(border=True):
+            st.markdown(
+                f"**{edited_by}** · {edited_at_str}  \n"
+                f"📝 *{reason}*"
+            )
+
+            before = r.get("snapshot_before") or {}
+            after = r.get("snapshot_after") or {}
+
+            if fields:
+                rows_diff = []
+                for f in fields:
+                    old_v = before.get(f)
+                    new_v = after.get(f)
+                    rows_diff.append({
+                        "Field": f,
+                        "Trước": "—" if old_v is None else str(old_v),
+                        "Sau": "—" if new_v is None else str(new_v),
+                    })
+                st.dataframe(
+                    pd.DataFrame(rows_diff),
+                    hide_index=True,
+                    use_container_width=True,
+                )
+            else:
+                st.caption("(không có field nào đổi — chỉ có note)")

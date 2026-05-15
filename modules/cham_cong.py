@@ -1,14 +1,15 @@
-"""Module Chấm công nhân viên — DLW Phase 2 + 4 + 5.
+"""Module Chấm công nhân viên — DLW Phase 2 + 4 + 5 + 6.
 
 Tabs trong "👥 Nhân viên":
   - ⚙️ Cấu hình (Phase 2): 3 sub-tabs Mạng / Lương / Ca làm việc
   - 📅 Lịch làm việc (Phase 2): calendar tuần + CRUD schedule
   - 📊 Bảng công (Phase 4): sessions theo date range + summary per NV
     + ✏️ Sửa công (Phase 5, admin only): dialog edit session với audit history
+  - 💰 Tính lương (Phase 6): CRUD kỳ lương / bảng lương / phụ cấp-thưởng
 
-Phase 6+ sẽ thêm: 💰 Tính lương, 📥 Export.
+Phase 7+ sẽ thêm: 📥 Export Excel, 🌐 POS view "Lương của tôi" (Phase 8).
 
-Refs: PLAN_CHAM_CONG.md sections 7 + 9 + 10.
+Refs: PLAN_CHAM_CONG.md sections 7 + 9 + 10 + 11.
 """
 from __future__ import annotations
 
@@ -42,6 +43,7 @@ def module_cham_cong():
         "⚙️ Cấu hình",
         "📅 Lịch làm việc",
         "📊 Bảng công",
+        "💰 Tính lương",
     ])
     with tabs[0]:
         _render_config()
@@ -49,6 +51,8 @@ def module_cham_cong():
         _render_schedule()
     with tabs[2]:
         _render_bang_cong()
+    with tabs[3]:
+        _render_payroll()
 
 
 # ============================================================
@@ -1469,3 +1473,458 @@ def _render_session_edit_history(session_id: int):
                 )
             else:
                 st.caption("(không có field nào đổi — chỉ có note)")
+
+
+# ============================================================
+# 💰 TÍNH LƯƠNG (Phase 6) — admin only CRUD, ke_toan xem
+# ============================================================
+
+_ADJUSTMENT_TYPE_LABEL = {
+    "bonus_holiday":  "🎁 Thưởng lễ",
+    "allowance_meal": "🍱 Phụ cấp ăn",
+    "penalty":        "⚠️ Phạt",
+    "other":          "📝 Khác",
+}
+
+_ITEM_TYPE_LABEL = {
+    "shift":         "🕐 Ca làm",
+    "monthly_fixed": "📅 Cố định tháng",
+    "leave_paid":    "🌴 Nghỉ phép",
+}
+
+
+def _render_payroll():
+    """Tab Tính lương: 3 sub-tabs — admin full, ke_toan xem."""
+    if not is_ke_toan_or_admin():
+        st.error("⛔ Chỉ admin và kế toán.")
+        return
+
+    sub = st.tabs([
+        "📅 Kỳ lương",
+        "💰 Bảng lương",
+        "🎁 Phụ cấp / Thưởng",
+    ])
+    with sub[0]:
+        _payroll_periods()
+    with sub[1]:
+        _payroll_bang_luong()
+    with sub[2]:
+        _payroll_adjustments()
+
+
+def _load_payroll_periods() -> list[dict]:
+    """List tất cả kỳ lương + items_count + total cho UI."""
+    res = supabase.table("attendance_payroll_periods").select("*") \
+        .order("start_date", desc=True).execute()
+    periods = res.data or []
+    if not periods:
+        return []
+
+    # Aggregate items count + total per period (single query)
+    pids = [p["id"] for p in periods]
+    items_res = supabase.table("attendance_payroll_items") \
+        .select("period_id, salary_amount") \
+        .in_("period_id", pids).execute()
+    by_period_count: dict[int, int] = {}
+    by_period_total: dict[int, int] = {}
+    for r in (items_res.data or []):
+        pid = r["period_id"]
+        by_period_count[pid] = by_period_count.get(pid, 0) + 1
+        by_period_total[pid] = by_period_total.get(pid, 0) + int(r.get("salary_amount") or 0)
+
+    for p in periods:
+        p["items_count"] = by_period_count.get(p["id"], 0)
+        p["total_amount"] = by_period_total.get(p["id"], 0)
+    return periods
+
+
+def _payroll_periods():
+    """Sub-tab Kỳ lương — CRUD + compute + finalize."""
+    is_admin_user = is_admin()
+
+    if is_admin_user:
+        with st.expander("➕ Tạo kỳ lương mới", expanded=False):
+            today = datetime.now(VN_TZ).date()
+            first = today.replace(day=1)
+            col_label, col_from, col_to = st.columns([3, 2, 2])
+            with col_label:
+                new_label = st.text_input(
+                    "Tên kỳ", placeholder=f"vd: Tháng {today.month}/{today.year}",
+                    key="cc_pr_new_label",
+                )
+            with col_from:
+                new_from = st.date_input(
+                    "Từ ngày", value=first, key="cc_pr_new_from"
+                )
+            with col_to:
+                new_to = st.date_input(
+                    "Đến ngày", value=today, key="cc_pr_new_to"
+                )
+            if st.button("💾 Tạo kỳ", type="primary",
+                         disabled=not new_label.strip() or new_from > new_to,
+                         key="cc_pr_new_save"):
+                user = get_user()
+                try:
+                    supabase.table("attendance_payroll_periods").insert({
+                        "label": new_label.strip(),
+                        "start_date": new_from.isoformat(),
+                        "end_date": new_to.isoformat(),
+                        "created_by": user["id"],
+                    }).execute()
+                    log_action("ATT_PAYROLL_PERIOD_CREATE",
+                               f"{new_label}: {new_from} → {new_to}")
+                    st.toast(f"✓ Đã tạo kỳ '{new_label}'", icon="✅")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Lỗi: {e}")
+    else:
+        st.caption("ℹ️ Chỉ admin được tạo/tính/chốt kỳ. Bạn xem read-only.")
+
+    periods = _load_payroll_periods()
+    if not periods:
+        st.info("📭 Chưa có kỳ lương nào. Admin tạo kỳ trước.")
+        return
+
+    st.markdown("---")
+    for p in periods:
+        pid = p["id"]
+        is_finalized = p.get("status") == "finalized"
+        status_badge = "🔒 Đã chốt" if is_finalized else "📂 Mở"
+        items_count = p.get("items_count", 0)
+        total = p.get("total_amount", 0)
+
+        with st.container(border=True):
+            col_info, col_meta, col_act = st.columns([3, 2, 2])
+            with col_info:
+                st.markdown(
+                    f"**{p['label']}**  \n"
+                    f"📅 {p['start_date']} → {p['end_date']}"
+                )
+            with col_meta:
+                st.markdown(
+                    f"{status_badge}  \n"
+                    f"📋 {items_count} items · 💵 {total:,}đ"
+                )
+            with col_act:
+                if is_admin_user and not is_finalized:
+                    if st.button("💵 Tính lương",
+                                 key=f"cc_pr_compute_{pid}",
+                                 use_container_width=True,
+                                 type="primary"):
+                        _compute_period(pid)
+                    if items_count > 0 and st.button(
+                        "🔒 Chốt kỳ",
+                        key=f"cc_pr_finalize_btn_{pid}",
+                        use_container_width=True,
+                    ):
+                        _finalize_period_dialog(p)
+                elif is_finalized:
+                    finalized_at = p.get("finalized_at") or "?"
+                    try:
+                        ft = datetime.fromisoformat(finalized_at).astimezone(VN_TZ)
+                        finalized_str = ft.strftime("%d/%m/%Y %H:%M")
+                    except Exception:
+                        finalized_str = finalized_at
+                    st.caption(f"Chốt: {finalized_str}")
+
+
+def _compute_period(period_id: int):
+    """Trigger RPC compute_payroll_period."""
+    try:
+        res = call_rpc("compute_payroll_period", {"p_period_id": period_id})
+        if isinstance(res, dict) and res.get("ok"):
+            n = res.get("items_count", 0)
+            total = res.get("total_amount", 0)
+            st.toast(
+                f"✓ Đã tính: {n} items · {total:,}đ",
+                icon="✅",
+            )
+            st.rerun()
+        else:
+            err = (res or {}).get("error", "Lỗi RPC")
+            st.error(f"❌ {err}")
+    except Exception as e:
+        st.error(f"Lỗi: {e}")
+
+
+@st.dialog("🔒 Chốt kỳ lương")
+def _finalize_period_dialog(period: dict):
+    """Confirm dialog before finalize."""
+    pid = period["id"]
+    st.warning(
+        f"⚠️ Sau khi chốt, kỳ lương **{period['label']}** sẽ **không tính lại được**. "
+        "Mọi adjustments/items sẽ bị lock."
+    )
+    st.markdown(
+        f"**Kỳ:** {period['label']}  \n"
+        f"**Range:** {period['start_date']} → {period['end_date']}  \n"
+        f"**Items:** {period.get('items_count', 0)}  \n"
+        f"**Tổng:** {period.get('total_amount', 0):,}đ"
+    )
+    confirm = st.text_input(
+        "Gõ `XÁC NHẬN` để chốt",
+        key=f"cc_pr_fin_confirm_{pid}",
+        placeholder="XÁC NHẬN",
+    )
+    can_finalize = confirm.strip().upper() == "XÁC NHẬN"
+
+    if st.button("🔒 Chốt kỳ", type="primary", use_container_width=True,
+                 disabled=not can_finalize,
+                 key=f"cc_pr_fin_save_{pid}"):
+        try:
+            user = get_user()
+            res = call_rpc("finalize_payroll_period", {
+                "p_period_id": pid,
+                "p_admin_id": user["id"],
+            })
+            if isinstance(res, dict) and res.get("ok"):
+                st.toast(f"✓ Đã chốt kỳ '{period['label']}'", icon="🔒")
+                st.rerun()
+            else:
+                err = (res or {}).get("error", "Lỗi RPC")
+                st.error(f"❌ {err}")
+        except Exception as e:
+            st.error(f"Lỗi: {e}")
+
+
+def _payroll_bang_luong():
+    """Sub-tab Bảng lương — chọn period, xem breakdown per NV."""
+    periods = _load_payroll_periods()
+    if not periods:
+        st.info("📭 Chưa có kỳ lương nào. Admin tạo + tính trước.")
+        return
+
+    options = {
+        f"{p['label']} ({p['start_date']} → {p['end_date']}) — "
+        f"{'🔒' if p.get('status') == 'finalized' else '📂'}": p
+        for p in periods
+    }
+    picked_label = st.selectbox(
+        "Chọn kỳ lương", list(options.keys()), key="cc_pr_bl_pick"
+    )
+    period = options[picked_label]
+    pid = period["id"]
+
+    if period.get("items_count", 0) == 0:
+        st.warning(
+            f"⚠️ Kỳ '{period['label']}' chưa được tính lương. "
+            "Quay lại tab 'Kỳ lương' bấm '💵 Tính lương'."
+        )
+        return
+
+    # Role filter
+    visible_nv_ids = _visible_nv_ids()
+
+    # Load items + adjustments
+    q_items = supabase.table("attendance_payroll_items").select("*").eq("period_id", pid)
+    if visible_nv_ids is not None:
+        if not visible_nv_ids:
+            st.info("Không có NV nào thuộc quyền xem.")
+            return
+        q_items = q_items.in_("nhan_vien_id", visible_nv_ids)
+    items = q_items.execute().data or []
+
+    q_adj = supabase.table("attendance_adjustments").select("*").eq("period_id", pid)
+    if visible_nv_ids is not None:
+        q_adj = q_adj.in_("nhan_vien_id", visible_nv_ids)
+    adjustments = q_adj.execute().data or []
+
+    if not items:
+        st.info("Không có dữ liệu lương cho quyền xem hiện tại.")
+        return
+
+    # Load NV info
+    nv_ids = list({i["nhan_vien_id"] for i in items} | {a["nhan_vien_id"] for a in adjustments})
+    nv_res = supabase.table("nhan_vien").select("id, ho_ten, role") \
+        .in_("id", nv_ids).execute()
+    nv_map = {n["id"]: n for n in (nv_res.data or [])}
+
+    # Aggregate per NV
+    rows = []
+    nv_summary: dict[int, dict] = {}
+    for it in items:
+        nv_id = it["nhan_vien_id"]
+        if nv_id not in nv_summary:
+            nv_summary[nv_id] = {
+                "shift_minutes": 0, "ot_minutes": 0, "leave_minutes": 0,
+                "luong_ca": 0, "rate": 0, "salary_type": "",
+            }
+        s = nv_summary[nv_id]
+        s["luong_ca"] += int(it.get("salary_amount") or 0)
+        s["rate"] = int(it.get("rate_snapshot") or 0)
+        if it.get("item_type") == "shift":
+            s["shift_minutes"] += int(it.get("worked_minutes") or 0)
+            s["ot_minutes"] += int(it.get("ot_minutes") or 0)
+            s["salary_type"] = "hourly"
+        elif it.get("item_type") == "leave_paid":
+            s["leave_minutes"] += int(it.get("worked_minutes") or 0)
+            s["salary_type"] = "hourly"
+        elif it.get("item_type") == "monthly_fixed":
+            s["salary_type"] = "monthly_fixed"
+
+    adj_sum: dict[int, int] = {}
+    for a in adjustments:
+        nv_id = a["nhan_vien_id"]
+        adj_sum[nv_id] = adj_sum.get(nv_id, 0) + int(a.get("amount") or 0)
+
+    for nv_id, s in nv_summary.items():
+        nv = nv_map.get(nv_id, {})
+        adj = adj_sum.get(nv_id, 0)
+        total = s["luong_ca"] + adj
+        salary_type_lbl = "⏰ Theo giờ" if s["salary_type"] == "hourly" else "📅 Cố định"
+        rate_str = (f"{s['rate']:,}đ/giờ" if s["salary_type"] == "hourly"
+                    else f"{s['rate']:,}đ/tháng")
+        rows.append({
+            "NV": nv.get("ho_ten", "?"),
+            "Loại": salary_type_lbl,
+            "Giờ làm": _format_minutes(s["shift_minutes"]) if s["salary_type"] == "hourly" else "—",
+            "Giờ OT": _format_minutes(s["ot_minutes"]) if s["ot_minutes"] else "—",
+            "Nghỉ phép": _format_minutes(s["leave_minutes"]) if s["leave_minutes"] else "—",
+            "Đơn giá": rate_str,
+            "Lương ca": f"{s['luong_ca']:,}đ",
+            "Phụ cấp / Phạt": f"{adj:+,}đ" if adj else "—",
+            "**Tổng cộng**": f"**{total:,}đ**",
+            "_total": total,
+        })
+
+    if not rows:
+        st.info("Không có data.")
+        return
+
+    df = pd.DataFrame(rows).sort_values("NV").reset_index(drop=True)
+    display_cols = ["NV", "Loại", "Giờ làm", "Giờ OT", "Nghỉ phép",
+                    "Đơn giá", "Lương ca", "Phụ cấp / Phạt", "**Tổng cộng**"]
+    st.dataframe(df[display_cols], hide_index=True, use_container_width=True)
+
+    # Overall metric
+    grand_total = int(df["_total"].sum())
+    st.metric("💵 Tổng lương kỳ này", f"{grand_total:,}đ")
+
+
+def _payroll_adjustments():
+    """Sub-tab Phụ cấp / Thưởng — CRUD adjustments per period."""
+    is_admin_user = is_admin()
+    periods = _load_payroll_periods()
+    if not periods:
+        st.info("📭 Chưa có kỳ lương nào.")
+        return
+
+    options = {
+        f"{p['label']} ({p['start_date']} → {p['end_date']}) — "
+        f"{'🔒' if p.get('status') == 'finalized' else '📂'}": p
+        for p in periods
+    }
+    picked_label = st.selectbox(
+        "Chọn kỳ lương", list(options.keys()), key="cc_pr_adj_pick"
+    )
+    period = options[picked_label]
+    pid = period["id"]
+    is_finalized = period.get("status") == "finalized"
+
+    if is_admin_user and not is_finalized:
+        with st.expander("➕ Thêm phụ cấp/thưởng", expanded=False):
+            nv_list = load_all_nhan_vien(include_inactive=False)
+            nv_options = {f"{n['ho_ten']} ({n.get('role','')})": n["id"]
+                          for n in nv_list}
+            col_nv, col_type = st.columns([3, 2])
+            with col_nv:
+                nv_lbl = st.selectbox(
+                    "Nhân viên", list(nv_options.keys()),
+                    key="cc_pr_adj_new_nv",
+                )
+            with col_type:
+                adj_type = st.selectbox(
+                    "Loại",
+                    list(_ADJUSTMENT_TYPE_LABEL.keys()),
+                    format_func=lambda k: _ADJUSTMENT_TYPE_LABEL[k],
+                    key="cc_pr_adj_new_type",
+                )
+            amount = st.number_input(
+                "Số tiền (đ) — âm = trừ lương (vd: phạt)",
+                value=0, step=10000,
+                key="cc_pr_adj_new_amount",
+            )
+            note = st.text_input(
+                "Ghi chú", key="cc_pr_adj_new_note",
+                placeholder="vd: Thưởng Tết 2026",
+            )
+            if st.button("💾 Thêm",
+                         type="primary",
+                         disabled=(amount == 0),
+                         key="cc_pr_adj_new_save"):
+                try:
+                    user = get_user()
+                    supabase.table("attendance_adjustments").insert({
+                        "period_id": pid,
+                        "nhan_vien_id": nv_options[nv_lbl],
+                        "adjustment_type": adj_type,
+                        "amount": int(amount),
+                        "note": note or None,
+                        "created_by": user["id"],
+                    }).execute()
+                    log_action("ATT_PAYROLL_ADJUSTMENT_ADD",
+                               f"period={pid} nv={nv_options[nv_lbl]} "
+                               f"type={adj_type} amount={amount}")
+                    st.toast("✓ Đã thêm adjustment", icon="✅")
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"Lỗi: {e}")
+    elif is_finalized:
+        st.caption("🔒 Kỳ đã chốt — không thêm/xóa adjustments.")
+    else:
+        st.caption("ℹ️ Chỉ admin được thêm/xóa adjustments.")
+
+    # List adjustments (role-aware)
+    visible_nv_ids = _visible_nv_ids()
+    q = supabase.table("attendance_adjustments").select("*").eq("period_id", pid)
+    if visible_nv_ids is not None:
+        if not visible_nv_ids:
+            st.info("Không có adjustment nào thuộc quyền xem.")
+            return
+        q = q.in_("nhan_vien_id", visible_nv_ids)
+    rows = q.order("created_at", desc=True).execute().data or []
+
+    if not rows:
+        st.info("📭 Chưa có phụ cấp/thưởng nào cho kỳ này.")
+        return
+
+    nv_ids = list({a["nhan_vien_id"] for a in rows})
+    nv_res = supabase.table("nhan_vien").select("id, ho_ten").in_("id", nv_ids).execute()
+    nv_map = {n["id"]: n["ho_ten"] for n in (nv_res.data or [])}
+
+    for r in rows:
+        adj_id = r["id"]
+        type_lbl = _ADJUSTMENT_TYPE_LABEL.get(
+            r["adjustment_type"], r["adjustment_type"]
+        )
+        nv_name = nv_map.get(r["nhan_vien_id"], "?")
+        amount = int(r.get("amount") or 0)
+        sign = "+" if amount > 0 else ""
+        with st.container(border=True):
+            col_info, col_amount, col_del = st.columns([4, 2, 1])
+            with col_info:
+                st.markdown(
+                    f"**{nv_name}** · {type_lbl}  \n"
+                    f"📝 {r.get('note') or '(không note)'}"
+                )
+            with col_amount:
+                color = "#1a7f37" if amount > 0 else "#cf4c2c"
+                st.markdown(
+                    f"<div style='font-size:1.1rem;font-weight:700;color:{color};'>"
+                    f"{sign}{amount:,}đ</div>",
+                    unsafe_allow_html=True,
+                )
+            with col_del:
+                if is_admin_user and not is_finalized:
+                    if st.button("🗑", key=f"cc_pr_adj_del_{adj_id}",
+                                 use_container_width=True,
+                                 help="Xóa adjustment"):
+                        try:
+                            supabase.table("attendance_adjustments") \
+                                .delete().eq("id", adj_id).execute()
+                            log_action("ATT_PAYROLL_ADJUSTMENT_DELETE",
+                                       f"id={adj_id}")
+                            st.toast("🗑 Đã xóa", icon="🗑")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Lỗi: {e}")

@@ -995,9 +995,14 @@ def load_schedules_for_week(start_monday, branch: str = None) -> list[dict]:
     """
     from datetime import timedelta as _td
     end_sunday = start_monday + _td(days=6)
+    # Disambiguate FK: attendance_work_schedules có 2 FK đến nhan_vien
+    # (nhan_vien_id + created_by) → PostgREST fail nếu không hint.
     q = (
         supabase.table("attendance_work_schedules")
-        .select("*, shift_templates(*), nhan_vien(ho_ten, role)")
+        .select(
+            "*, shift_templates(*), "
+            "nhan_vien!attendance_work_schedules_nhan_vien_id_fkey(ho_ten, role)"
+        )
         .gte("work_date", start_monday.isoformat())
         .lte("work_date", end_sunday.isoformat())
         .neq("status", "cancelled")

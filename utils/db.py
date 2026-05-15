@@ -188,6 +188,57 @@ def search_sc_for_edit(
     return res.data or []
 
 
+@st.cache_data(ttl=120, show_spinner=False)
+def load_psc_for_apsc(ma_ycsc: str) -> dict | None:
+    """Load phiếu sửa chữa liên đới với 1 HĐ APSC (quan hệ 1:1).
+
+    Liên kết: hoa_don."Mã YCSC" → phieu_sua_chua.ma_phieu (1:1).
+    Trả về dict normalized cho detail_rail_html / list_card_html, hoặc None
+    nếu ma_ycsc rỗng / không tìm thấy / lỗi DB.
+    """
+    if not ma_ycsc or not str(ma_ycsc).strip():
+        return None
+    try:
+        res = (supabase.table("phieu_sua_chua")
+               .select("ma_phieu, hieu_dong_ho, loai_yeu_cau, mo_ta_loi, "
+                       "trang_thai, ngay_hen_tra, nguoi_tiep_nhan, created_at")
+               .eq("ma_phieu", str(ma_ycsc).strip())
+               .limit(1)
+               .execute())
+    except Exception:
+        return None
+
+    rows = res.data or []
+    if not rows:
+        return None
+
+    r = rows[0]
+
+    ngay_nhan = "—"
+    try:
+        ca = r.get("created_at")
+        if ca:
+            dt = pd.to_datetime(ca, errors="coerce", utc=True)
+            if pd.notna(dt):
+                dt_vn = dt.tz_convert("Asia/Ho_Chi_Minh")
+                ngay_nhan = dt_vn.strftime("%d/%m/%Y")
+    except Exception:
+        pass
+
+    san_pham = (r.get("hieu_dong_ho") or r.get("loai_yeu_cau")
+                or r.get("mo_ta_loi") or "—")
+    san_pham = str(san_pham).strip()[:80] or "—"
+
+    return {
+        "ma":         r.get("ma_phieu", "—"),
+        "san_pham":   san_pham,
+        "ngay_nhan":  ngay_nhan,
+        "ngay_tra":   r.get("ngay_hen_tra") or "—",
+        "tinh_trang": r.get("trang_thai") or "—",
+        "kt_vien":    r.get("nguoi_tiep_nhan") or "—",
+    }
+
+
 def has_active_pdt_for_hd(ma_hd: str) -> int:
     """Đếm số phiếu đổi/trả active (KHÔNG bao gồm 'Đã hủy') ref đến ma_hd này."""
     res = (

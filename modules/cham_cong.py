@@ -1,4 +1,4 @@
-"""Module Chấm công nhân viên — DLW Phase 2 + 4 + 5 + 6.
+"""Module Chấm công nhân viên — DLW Phase 2 + 4 + 5 + 6 + 7.
 
 Tabs trong "👥 Nhân viên":
   - ⚙️ Cấu hình (Phase 2): 3 sub-tabs Mạng / Lương / Ca làm việc
@@ -6,10 +6,11 @@ Tabs trong "👥 Nhân viên":
   - 📊 Bảng công (Phase 4): sessions theo date range + summary per NV
     + ✏️ Sửa công (Phase 5, admin only): dialog edit session với audit history
   - 💰 Tính lương (Phase 6): CRUD kỳ lương / bảng lương / phụ cấp-thưởng
+    + 📥 Export Excel (Phase 7, admin only): 2-sheet XLSX bảng công + bảng lương
 
-Phase 7+ sẽ thêm: 📥 Export Excel, 🌐 POS view "Lương của tôi" (Phase 8).
+Phase 8 (POS repo): "Lương của tôi" cho NV xem qua POS dialog.
 
-Refs: PLAN_CHAM_CONG.md sections 7 + 9 + 10 + 11.
+Refs: PLAN_CHAM_CONG.md sections 7 + 9 + 10 + 11 + 12.
 """
 from __future__ import annotations
 
@@ -1800,6 +1801,26 @@ def _payroll_bang_luong():
     grand_total = int(df["_total"].sum())
     st.metric("💵 Tổng lương kỳ này", f"{grand_total:,}đ")
 
+    # 📥 Export Excel (Phase 7) — admin only
+    if is_admin():
+        try:
+            xlsx_bytes = _export_payroll_excel(period)
+            file_label = (
+                (period.get("label") or f"period_{pid}")
+                .replace("/", "-").replace(" ", "_")
+            )
+            file_date = datetime.now(VN_TZ).strftime("%Y%m%d")
+            st.download_button(
+                "📥 Export Excel (Bảng công + Bảng lương)",
+                data=xlsx_bytes,
+                file_name=f"bang_luong_{file_label}_{file_date}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary",
+                key=f"cc_pr_export_{pid}",
+            )
+        except Exception as e:
+            st.warning(f"⚠️ Không tạo được file Excel: {e}")
+
 
 def _payroll_adjustments():
     """Sub-tab Phụ cấp / Thưởng — CRUD adjustments per period."""
@@ -1928,3 +1949,324 @@ def _payroll_adjustments():
                             st.rerun()
                         except Exception as e:
                             st.error(f"Lỗi: {e}")
+
+
+# ============================================================
+# 📥 EXPORT EXCEL (Phase 7) — admin only, 2 sheets per period
+# ============================================================
+
+def _export_payroll_excel(period: dict) -> bytes:
+    """Generate XLSX file (2 sheets: Bảng công + Bảng lương) cho 1 kỳ lương.
+
+    Sheet 1 "Bảng công": session rows (NV, ngày, ca, vào, ra, worked, late, status)
+    Sheet 2 "Bảng lương": payroll breakdown per NV (giờ, OT, rate, lương, adj, tổng)
+
+    Format A4 landscape, fit-to-width, header bold + bg xám.
+    Footer: "Lập bởi: <admin> · <date>".
+    """
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
+    from openpyxl.utils import get_column_letter
+    from openpyxl.worksheet.page import PageMargins, PrintOptions
+    from io import BytesIO
+
+    pid = period["id"]
+    period_label = period.get("label", f"Period {pid}")
+    user = get_user() or {}
+    admin_name = user.get("ho_ten", "?")
+    today_str = datetime.now(VN_TZ).strftime("%d/%m/%Y %H:%M")
+
+    # Date range
+    try:
+        date_from = datetime.strptime(period["start_date"], "%Y-%m-%d").date()
+        date_to = datetime.strptime(period["end_date"], "%Y-%m-%d").date()
+    except Exception:
+        date_from = date.today()
+        date_to = date.today()
+
+    # Common styles
+    thin = Side(border_style="thin", color="888888")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    header_font = Font(bold=True, size=11, color="1A1A2E")
+    header_fill = PatternFill("solid", fgColor="EEEEEE")
+    title_font = Font(bold=True, size=14, color="E63946")
+    footer_font = Font(italic=True, size=9, color="888888")
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    left = Alignment(horizontal="left", vertical="center", wrap_text=True)
+    right = Alignment(horizontal="right", vertical="center")
+    money_fmt = '#,##0"đ"'
+
+    wb = Workbook()
+
+    # ─────────────────────────────────────────────────────────
+    # Sheet 1: Bảng công
+    # ─────────────────────────────────────────────────────────
+    ws1 = wb.active
+    ws1.title = "Bảng công"
+    ws1.page_setup.orientation = ws1.ORIENTATION_LANDSCAPE
+    ws1.page_setup.paperSize = ws1.PAPERSIZE_A4
+    ws1.page_setup.fitToWidth = 1
+    ws1.page_setup.fitToHeight = 0
+    ws1.sheet_properties.pageSetUpPr.fitToPage = True
+    ws1.page_margins = PageMargins(left=0.4, right=0.4, top=0.5, bottom=0.5)
+    ws1.print_options.horizontalCentered = True
+
+    ws1.cell(row=1, column=1, value=f"BẢNG CÔNG — {period_label}").font = title_font
+    ws1.merge_cells(start_row=1, start_column=1, end_row=1, end_column=10)
+    ws1.cell(row=1, column=1).alignment = center
+
+    ws1.cell(row=2, column=1,
+             value=f"Kỳ: {date_from.strftime('%d/%m/%Y')} → {date_to.strftime('%d/%m/%Y')}")
+    ws1.merge_cells(start_row=2, start_column=1, end_row=2, end_column=10)
+    ws1.cell(row=2, column=1).alignment = center
+
+    sheet1_headers = ["STT", "Ngày", "Thứ", "NV", "Ca", "Chi nhánh",
+                      "Vào", "Ra", "Worked (phút)", "Late (phút)", "Status"]
+    header_row = 4
+    for col, h in enumerate(sheet1_headers, start=1):
+        c = ws1.cell(row=header_row, column=col, value=h)
+        c.font = header_font
+        c.fill = header_fill
+        c.border = border
+        c.alignment = center
+
+    # Load sessions (no role filter for export — admin xem all)
+    sessions = _load_sessions_for_range(date_from, date_to, branch=None, nv_id_filter=None)
+
+    row = header_row + 1
+    for idx, s in enumerate(sessions, start=1):
+        try:
+            wd = datetime.strptime(s["work_date"], "%Y-%m-%d").date()
+            ngay_str = wd.strftime("%d/%m/%Y")
+            dow = DOW_VN[wd.weekday()]
+        except Exception:
+            ngay_str = s.get("work_date", "")
+            dow = ""
+
+        check_in = _format_time_vn(s.get("check_in_at"))
+        check_out = _format_time_vn(s.get("check_out_at"))
+
+        status = s.get("status", "open")
+        status_lbl = _STATUS_LABEL_VN.get(status, status)
+        if s.get("is_auto_checkout") and status == "auto_closed":
+            status_lbl += " ⚠"
+
+        worked = int(s.get("worked_minutes", 0) or 0)
+        late = int(s.get("late_minutes", 0) or 0) if s.get("is_late") else 0
+
+        values = [
+            idx, ngay_str, dow, s.get("ho_ten", "?"),
+            s.get("shift_label", "?"), s.get("branch_name", ""),
+            check_in, check_out,
+            worked, late, status_lbl,
+        ]
+        for col, v in enumerate(values, start=1):
+            c = ws1.cell(row=row, column=col, value=v)
+            c.border = border
+            c.alignment = left if col in (4, 5, 6, 11) else center
+        row += 1
+
+    # Total worked row
+    if sessions:
+        total_worked = sum(int(s.get("worked_minutes", 0) or 0) for s in sessions)
+        c = ws1.cell(row=row, column=8, value="Tổng worked:")
+        c.font = Font(bold=True)
+        c.alignment = right
+        c = ws1.cell(row=row, column=9, value=total_worked)
+        c.font = Font(bold=True)
+        c.border = border
+        c.alignment = center
+        row += 1
+
+    # Footer
+    row += 1
+    ws1.cell(row=row, column=1,
+             value=f"Lập bởi: {admin_name} · {today_str}").font = footer_font
+    ws1.merge_cells(start_row=row, start_column=1, end_row=row, end_column=11)
+
+    # Column widths
+    col_widths_1 = [5, 12, 6, 22, 18, 18, 8, 8, 14, 12, 22]
+    for i, w in enumerate(col_widths_1, start=1):
+        ws1.column_dimensions[get_column_letter(i)].width = w
+
+    # ─────────────────────────────────────────────────────────
+    # Sheet 2: Bảng lương
+    # ─────────────────────────────────────────────────────────
+    ws2 = wb.create_sheet("Bảng lương")
+    ws2.page_setup.orientation = ws2.ORIENTATION_LANDSCAPE
+    ws2.page_setup.paperSize = ws2.PAPERSIZE_A4
+    ws2.page_setup.fitToWidth = 1
+    ws2.page_setup.fitToHeight = 0
+    ws2.sheet_properties.pageSetUpPr.fitToPage = True
+    ws2.page_margins = PageMargins(left=0.4, right=0.4, top=0.5, bottom=0.5)
+    ws2.print_options.horizontalCentered = True
+
+    ws2.cell(row=1, column=1, value=f"BẢNG LƯƠNG — {period_label}").font = title_font
+    ws2.merge_cells(start_row=1, start_column=1, end_row=1, end_column=10)
+    ws2.cell(row=1, column=1).alignment = center
+
+    finalized_str = ""
+    if period.get("status") == "finalized" and period.get("finalized_at"):
+        try:
+            ft = datetime.fromisoformat(period["finalized_at"]).astimezone(VN_TZ)
+            finalized_str = f"🔒 Chốt: {ft.strftime('%d/%m/%Y %H:%M')}"
+        except Exception:
+            pass
+    sub_meta = f"Kỳ: {date_from.strftime('%d/%m/%Y')} → {date_to.strftime('%d/%m/%Y')}"
+    if finalized_str:
+        sub_meta += " · " + finalized_str
+    ws2.cell(row=2, column=1, value=sub_meta)
+    ws2.merge_cells(start_row=2, start_column=1, end_row=2, end_column=10)
+    ws2.cell(row=2, column=1).alignment = center
+
+    sheet2_headers = ["STT", "Nhân viên", "Loại lương",
+                      "Giờ regular", "Giờ OT", "Nghỉ phép (giờ)",
+                      "Đơn giá (đ)", "Lương ca (đ)",
+                      "Phụ cấp / Phạt (đ)", "Tổng cộng (đ)"]
+    for col, h in enumerate(sheet2_headers, start=1):
+        c = ws2.cell(row=header_row, column=col, value=h)
+        c.font = header_font
+        c.fill = header_fill
+        c.border = border
+        c.alignment = center
+
+    # Load items + adjustments (admin = all NV)
+    items = supabase.table("attendance_payroll_items").select("*") \
+        .eq("period_id", pid).execute().data or []
+    adjustments = supabase.table("attendance_adjustments").select("*") \
+        .eq("period_id", pid).execute().data or []
+
+    nv_ids = list({i["nhan_vien_id"] for i in items}
+                  | {a["nhan_vien_id"] for a in adjustments})
+    nv_map: dict[int, dict] = {}
+    if nv_ids:
+        nv_res = supabase.table("nhan_vien").select("id, ho_ten") \
+            .in_("id", nv_ids).execute()
+        nv_map = {n["id"]: n for n in (nv_res.data or [])}
+
+    # Aggregate per NV
+    nv_summary: dict[int, dict] = {}
+    for it in items:
+        nv_id = it["nhan_vien_id"]
+        if nv_id not in nv_summary:
+            nv_summary[nv_id] = {
+                "shift_minutes": 0, "ot_minutes": 0, "leave_minutes": 0,
+                "luong_ca": 0, "rate": 0, "salary_type": "",
+            }
+        s = nv_summary[nv_id]
+        s["luong_ca"] += int(it.get("salary_amount") or 0)
+        s["rate"] = int(it.get("rate_snapshot") or 0)
+        if it.get("item_type") == "shift":
+            s["shift_minutes"] += int(it.get("worked_minutes") or 0)
+            s["ot_minutes"] += int(it.get("ot_minutes") or 0)
+            s["salary_type"] = "hourly"
+        elif it.get("item_type") == "leave_paid":
+            s["leave_minutes"] += int(it.get("worked_minutes") or 0)
+            s["salary_type"] = "hourly"
+        elif it.get("item_type") == "monthly_fixed":
+            s["salary_type"] = "monthly_fixed"
+
+    adj_sum: dict[int, int] = {}
+    for a in adjustments:
+        nv_id = a["nhan_vien_id"]
+        adj_sum[nv_id] = adj_sum.get(nv_id, 0) + int(a.get("amount") or 0)
+
+    row = header_row + 1
+    grand_total = 0
+    sorted_nv_ids = sorted(nv_summary.keys(),
+                            key=lambda nid: nv_map.get(nid, {}).get("ho_ten", ""))
+    for idx, nv_id in enumerate(sorted_nv_ids, start=1):
+        s = nv_summary[nv_id]
+        nv = nv_map.get(nv_id, {})
+        adj = adj_sum.get(nv_id, 0)
+        total = s["luong_ca"] + adj
+        grand_total += total
+
+        salary_type_lbl = ("Theo giờ" if s["salary_type"] == "hourly"
+                           else "Cố định tháng")
+        gio_regular = round(s["shift_minutes"] / 60.0, 2) if s["salary_type"] == "hourly" else None
+        gio_ot = round(s["ot_minutes"] / 60.0, 2) if s["ot_minutes"] else None
+        gio_leave = round(s["leave_minutes"] / 60.0, 2) if s["leave_minutes"] else None
+
+        values_2 = [
+            idx, nv.get("ho_ten", "?"), salary_type_lbl,
+            gio_regular, gio_ot, gio_leave,
+            s["rate"], s["luong_ca"], adj if adj else None, total,
+        ]
+        for col, v in enumerate(values_2, start=1):
+            c = ws2.cell(row=row, column=col, value=v)
+            c.border = border
+            if col in (1,):
+                c.alignment = center
+            elif col in (2, 3):
+                c.alignment = left
+            else:
+                c.alignment = right
+            # Number format cho money cols (7-10) + hour cols (4-6)
+            if col in (7, 8, 9, 10):
+                c.number_format = money_fmt
+            elif col in (4, 5, 6) and v is not None:
+                c.number_format = "0.00"
+        row += 1
+
+    # Grand total row
+    if sorted_nv_ids:
+        c = ws2.cell(row=row, column=9, value="TỔNG CỘNG:")
+        c.font = Font(bold=True)
+        c.alignment = right
+        c = ws2.cell(row=row, column=10, value=grand_total)
+        c.font = Font(bold=True)
+        c.fill = PatternFill("solid", fgColor="FFF0F1")
+        c.border = border
+        c.alignment = right
+        c.number_format = money_fmt
+        row += 1
+
+    # Adjustments breakdown
+    if adjustments:
+        row += 1
+        c = ws2.cell(row=row, column=1, value="CHI TIẾT PHỤ CẤP / PHẠT")
+        c.font = Font(bold=True, size=11)
+        ws2.merge_cells(start_row=row, start_column=1, end_row=row, end_column=10)
+        row += 1
+        adj_headers = ["NV", "Loại", "Số tiền", "Ghi chú"]
+        for col, h in enumerate(adj_headers, start=1):
+            c = ws2.cell(row=row, column=col, value=h)
+            c.font = header_font
+            c.fill = header_fill
+            c.border = border
+            c.alignment = center
+        row += 1
+        for a in adjustments:
+            adj_type = _ADJUSTMENT_TYPE_LABEL.get(
+                a.get("adjustment_type", ""), a.get("adjustment_type", "")
+            )
+            nv_name = nv_map.get(a["nhan_vien_id"], {}).get("ho_ten", "?")
+            amt = int(a.get("amount") or 0)
+            note = a.get("note") or ""
+            for col, v in enumerate([nv_name, adj_type, amt, note], start=1):
+                c = ws2.cell(row=row, column=col, value=v)
+                c.border = border
+                if col == 3:
+                    c.alignment = right
+                    c.number_format = money_fmt
+                else:
+                    c.alignment = left
+            row += 1
+
+    # Footer
+    row += 1
+    ws2.cell(row=row, column=1,
+             value=f"Lập bởi: {admin_name} · {today_str}").font = footer_font
+    ws2.merge_cells(start_row=row, start_column=1, end_row=row, end_column=10)
+
+    # Column widths
+    col_widths_2 = [5, 22, 14, 12, 10, 14, 14, 14, 16, 16]
+    for i, w in enumerate(col_widths_2, start=1):
+        ws2.column_dimensions[get_column_letter(i)].width = w
+
+    # Output bytes
+    buffer = BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+    return buffer.getvalue()

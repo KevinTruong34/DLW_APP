@@ -941,3 +941,70 @@ def invalidate_hoa_don_cache():
         load_khach_hang_list.clear()
     except Exception:
         pass
+
+
+# ============================================================
+# Module Chấm công — helpers (Phase 2)
+# Refs: PLAN_CHAM_CONG.md section 7.5
+# ============================================================
+
+@st.cache_data(ttl=300)
+def load_shift_templates(include_inactive: bool = False) -> list[dict]:
+    """Load shift templates. Default chỉ active=True (cho UI xếp lịch).
+
+    include_inactive=True dùng cho UI Cấu hình > Ca làm việc (admin xem cả ca đã ẩn).
+    """
+    q = supabase.table("shift_templates").select("*")
+    if not include_inactive:
+        q = q.eq("active", True)
+    res = q.order("branch_name").order("start_time").execute()
+    return res.data or []
+
+
+@st.cache_data(ttl=300)
+def load_branch_networks() -> dict:
+    """Map branch_name → ip_prefixes (TEXT[])."""
+    res = supabase.table("attendance_branch_networks").select("*").execute()
+    return {r["branch_name"]: (r.get("ip_prefixes") or []) for r in (res.data or [])}
+
+
+@st.cache_data(ttl=300)
+def load_employee_rates() -> dict:
+    """Map nhan_vien_id → rate dict {salary_type, hourly_rate, monthly_fixed}."""
+    res = supabase.table("attendance_employee_rates").select("*").execute()
+    return {r["nhan_vien_id"]: r for r in (res.data or [])}
+
+
+def count_schedules_using_template(template_id: int) -> int:
+    """Count schedules ref tới template (dùng để lock fields edit shift_templates)."""
+    res = (
+        supabase.table("attendance_work_schedules")
+        .select("id", count="exact")
+        .eq("shift_template_id", template_id)
+        .execute()
+    )
+    return res.count or 0
+
+
+def load_schedules_for_week(start_monday, branch: str = None) -> list[dict]:
+    """Load schedules + JOIN shift_templates + nhan_vien cho 1 tuần.
+
+    start_monday: date object (Monday của tuần cần load).
+    branch: optional filter theo shift_templates.branch_name (client-side).
+    Skip status='cancelled' để khỏi render chip cancelled.
+    """
+    from datetime import timedelta as _td
+    end_sunday = start_monday + _td(days=6)
+    q = (
+        supabase.table("attendance_work_schedules")
+        .select("*, shift_templates(*), nhan_vien(ho_ten, role)")
+        .gte("work_date", start_monday.isoformat())
+        .lte("work_date", end_sunday.isoformat())
+        .neq("status", "cancelled")
+    )
+    res = q.execute()
+    rows = res.data or []
+    if branch:
+        rows = [r for r in rows
+                if (r.get("shift_templates") or {}).get("branch_name") == branch]
+    return rows

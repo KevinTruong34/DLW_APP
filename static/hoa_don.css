@@ -254,6 +254,21 @@ div[class*="st-key-hd_pagination"]{
   margin-top: 8px;
 }
 
+/* ── RAIL: force background trắng — st.container(border=True) chỉ thêm
+   border, nền vẫn lấy theme default (có thể transparent). Ép trắng bằng
+   key class do Streamlit gắn lên container outer. */
+.st-key-hd_rail,
+[class*="st-key-hd_rail"] {
+  background: #ffffff !important;
+  border-radius: 10px !important;
+}
+
+/* Padding nội bộ rail (nếu Streamlit default chưa có) */
+.st-key-hd_rail > div,
+[class*="st-key-hd_rail"] > div {
+  padding: 6px !important;
+}
+
 /* Sticky rail — chỉ áp dụng cho row có ĐÚNG 2 columns (title row + master-detail).
    Title col-2 đã ở top nên sticky vô hại; master-detail col-2 (rail) là target.
    Cần align-self:flex-start để bypass flex stretch của Streamlit's stHorizontalBlock. */

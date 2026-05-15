@@ -188,72 +188,6 @@
   max-width: 1400px;
 }
 
-/* ── Card click overlay — biến mỗi list card thành 1 vùng click duy nhất ──
-   Pattern: <st.container(key="hd_card_X")> chứa st.html(card) + st.button.
-   CSS này:
-     1. Container outer (.st-key-hd_card_*) → position:relative
-     2. Button container → position:absolute; inset:0 → phủ kín card
-     3. Button → opacity:0 + color:transparent → invisible nhưng VẪN clickable
-     4. cursor:pointer trên container → user thấy clickable
-   opacity:0 (không phải display:none / visibility:hidden) giữ clickability. */
-
-[class*="st-key-hd_card_"]{
-  position: relative;
-  cursor: pointer;
-  margin-bottom: 6px;
-}
-
-[class*="st-key-hd_card_"] [data-testid="stButton"]{
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  margin: 0 !important;
-  padding: 0 !important;
-  z-index: 5;
-}
-
-[class*="st-key-hd_card_"] [data-testid="stButton"] > button{
-  width: 100% !important;
-  height: 100% !important;
-  min-height: 100% !important;
-  background: transparent !important;
-  border: none !important;
-  box-shadow: none !important;
-  color: transparent !important;
-  opacity: 0;
-  cursor: pointer;
-  padding: 0 !important;
-}
-
-/* Hover feedback nhẹ — border của card đậm hơn */
-[class*="st-key-hd_card_"]:hover [data-testid="stHtml"] > div > div{
-  border-color: #c8c8cc !important;
-  transition: border-color .1s;
-}
-
-/* Pagination buttons (« » trong key="hd_pagination") KHÔNG overlay —
-   để chúng render bình thường ở dưới list */
-[class*="st-key-hd_pagination"] [data-testid="stButton"]{
-  position: static !important;
-}
-
-[class*="st-key-hd_pagination"] [data-testid="stButton"] > button{
-  opacity: 1 !important;
-  color: var(--hd-ink) !important;
-  background: var(--hd-surface) !important;
-  border: 1px solid var(--hd-border) !important;
-  min-height: 30px !important;
-  padding: 0 8px !important;
-  font-size: 14px !important;
-  font-weight: 600;
-}
-
-div[class*="st-key-hd_pagination"]{
-  margin-top: 8px;
-}
-
 /* ── RAIL: force background trắng — st.container(border=True) chỉ thêm
    border, nền vẫn lấy theme default (có thể transparent). Ép trắng bằng
    key class do Streamlit gắn lên container outer. */
@@ -267,6 +201,111 @@ div[class*="st-key-hd_pagination"]{
 .st-key-hd_rail > div,
 [class*="st-key-hd_rail"] > div {
   padding: 6px !important;
+}
+
+/* ── CARD CLICK OVERLAY — biến cả vùng card thành 1 button vô hình
+   Pattern: with st.container(key=f"hd_card_{ma}"):
+              st.html(card)         ← visual
+              st.button(" ", ...)   ← overlay invisible
+
+   DOM thực tế của 1 card:
+   <div data-testid="stVerticalBlock" class="... st-key-hd_card_XXX">
+     <div data-testid="element-container">
+       <div data-testid="stHtml">[card visual]</div>
+     </div>
+     <div data-testid="element-container">
+       <div data-testid="stButton"><button> </button></div>
+     </div>
+   </div>
+
+   Để overlay button lên card:
+     1. Container outer position:relative
+     2. Element-container của button position:absolute; inset:0
+     3. Button width/height 100%, opacity 0 (vẫn click được) */
+
+/* (1) Container outer của card → position relative để làm anchor cho overlay */
+[class*="st-key-hd_card_"] {
+  position: relative !important;
+  cursor: pointer !important;
+  margin-bottom: 6px !important;
+}
+
+/* (2) Xoá gap giữa card visual và button (Streamlit default có gap ~1rem) */
+[class*="st-key-hd_card_"] > div {
+  gap: 0 !important;
+}
+
+/* (3) Element-container chứa BUTTON → position absolute phủ toàn card.
+   Dùng :has() để chỉ chọn đúng container có stButton, không động vào container có stHtml.
+   Cover both naming conventions: element-container (older) & stElementContainer (newer). */
+[class*="st-key-hd_card_"] [data-testid="element-container"]:has([data-testid="stButton"]),
+[class*="st-key-hd_card_"] [data-testid="stElementContainer"]:has([data-testid="stButton"]) {
+  position: absolute !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  z-index: 10 !important;
+}
+
+/* (4) Button bên trong → fill 100%, transparent, opacity 0 (clickable) */
+[class*="st-key-hd_card_"] [data-testid="stButton"] {
+  width: 100% !important;
+  height: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+[class*="st-key-hd_card_"] [data-testid="stButton"] > button {
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 100% !important;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: transparent !important;
+  opacity: 0 !important;
+  cursor: pointer !important;
+  padding: 0 !important;
+}
+
+/* (5) Hover visual feedback — chỉnh màu viền card khi rê chuột.
+   Card visual nằm trong stHtml > div > div (card div thực tế).
+   Inline style của card có border-color cụ thể nên cần !important. */
+[class*="st-key-hd_card_"]:hover [data-testid="stHtml"] > div > div {
+  border-color: #c8c8cc !important;
+  box-shadow: 0 2px 8px rgba(24,24,27,0.08) !important;
+  transition: border-color .1s, box-shadow .1s !important;
+}
+
+/* ── EXCLUDE: pagination buttons (« ») KHÔNG được overlay/làm trong suốt ── */
+[class*="st-key-hd_pagination"] {
+  position: static !important;
+  cursor: default !important;
+}
+
+[class*="st-key-hd_pagination"] [data-testid="element-container"]:has([data-testid="stButton"]),
+[class*="st-key-hd_pagination"] [data-testid="stElementContainer"]:has([data-testid="stButton"]) {
+  position: static !important;
+  inset: auto !important;
+}
+
+[class*="st-key-hd_pagination"] [data-testid="stButton"] > button {
+  opacity: 1 !important;
+  color: #18181b !important;
+  background: #ffffff !important;
+  border: 1px solid #e7e7ea !important;
+  cursor: pointer !important;
+  min-height: 30px !important;
+  padding: 0 8px !important;
+  font-size: 14px !important;
+  font-weight: 600;
+}
+
+div[class*="st-key-hd_pagination"] {
+  margin-top: 8px;
 }
 
 /* Sticky rail — chỉ áp dụng cho row có ĐÚNG 2 columns (title row + master-detail).

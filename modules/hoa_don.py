@@ -121,17 +121,201 @@ def _build_invoice_dicts(df: pd.DataFrame) -> list[dict]:
     return out
 
 
+def _build_invoice_print_html(inv: dict) -> str:
+    """A4-friendly HTML cho browser print preview. Inline styles only."""
+    import html as _h
+    esc = _h.escape
+
+    is_pdt = inv.get("loai") == "Đổi/Trả"
+    is_apsc = inv.get("loai") == "Sửa chữa"
+
+    def _items_table(items, *, allow_negative=False):
+        if not items:
+            return '<tr><td colspan="5" style="padding:8px;color:#888;text-align:center">—</td></tr>'
+        rows = []
+        for it in items:
+            tt = it.get("tt", 0) or 0
+            tt_str = fmt_money(tt) if allow_negative else fmt_money(abs(tt))
+            rows.append(
+                f'<tr>'
+                f'<td style="padding:4px 6px;border-bottom:1px solid #eee;font-family:monospace">{esc(str(it.get("ma","")))}</td>'
+                f'<td style="padding:4px 6px;border-bottom:1px solid #eee">{esc(str(it.get("ten","")))}</td>'
+                f'<td style="padding:4px 6px;border-bottom:1px solid #eee;text-align:right">{it.get("sl",0)}</td>'
+                f'<td style="padding:4px 6px;border-bottom:1px solid #eee;text-align:right;font-family:monospace">{fmt_money(it.get("dg",0))}</td>'
+                f'<td style="padding:4px 6px;border-bottom:1px solid #eee;text-align:right;font-family:monospace;font-weight:600">{tt_str}</td>'
+                f'</tr>'
+            )
+        return "".join(rows)
+
+    pttt = inv.get("pttt") or {}
+    pttt_lines = []
+    for k, label in [("tm", "Tiền mặt"), ("ck", "Chuyển khoản"), ("the", "Thẻ"), ("vi", "Ví")]:
+        v = float(pttt.get(k, 0) or 0)
+        if v > 0:
+            pttt_lines.append(f'<div>{label}: <span style="font-family:monospace">{fmt_money(v)}</span></div>')
+    pttt_block = "".join(pttt_lines) or '<div style="color:#888">—</div>'
+
+    if is_pdt:
+        items_section = (
+            f'<h3 style="margin:12px 0 6px;color:#cf4c2c">← Khách trả lại</h3>'
+            f'<table style="width:100%;border-collapse:collapse;font-size:12px">'
+            f'<thead><tr style="background:#fef0f0">'
+            f'<th style="padding:6px;text-align:left">Mã</th><th style="padding:6px;text-align:left">Tên hàng</th>'
+            f'<th style="padding:6px;text-align:right">SL</th><th style="padding:6px;text-align:right">Đơn giá</th>'
+            f'<th style="padding:6px;text-align:right">Thành tiền</th></tr></thead>'
+            f'<tbody>{_items_table(inv.get("items_tra") or [], allow_negative=True)}</tbody></table>'
+            f'<h3 style="margin:12px 0 6px;color:#1a7f37">→ Khách mua mới</h3>'
+            f'<table style="width:100%;border-collapse:collapse;font-size:12px">'
+            f'<thead><tr style="background:#e9f6ee">'
+            f'<th style="padding:6px;text-align:left">Mã</th><th style="padding:6px;text-align:left">Tên hàng</th>'
+            f'<th style="padding:6px;text-align:right">SL</th><th style="padding:6px;text-align:right">Đơn giá</th>'
+            f'<th style="padding:6px;text-align:right">Thành tiền</th></tr></thead>'
+            f'<tbody>{_items_table(inv.get("items_moi") or [])}</tbody></table>'
+        )
+    else:
+        items_section = (
+            f'<h3 style="margin:12px 0 6px">Chi tiết hàng hoá</h3>'
+            f'<table style="width:100%;border-collapse:collapse;font-size:12px">'
+            f'<thead><tr style="background:#fafafa">'
+            f'<th style="padding:6px;text-align:left">Mã</th><th style="padding:6px;text-align:left">Tên hàng</th>'
+            f'<th style="padding:6px;text-align:right">SL</th><th style="padding:6px;text-align:right">Đơn giá</th>'
+            f'<th style="padding:6px;text-align:right">Thành tiền</th></tr></thead>'
+            f'<tbody>{_items_table(inv.get("items") or [])}</tbody></table>'
+        )
+
+    if is_pdt:
+        chenh = inv.get("chenh", 0) or 0
+        lbl = "Khách bù thêm" if chenh >= 0 else "Cửa hàng hoàn"
+        totals_block = (
+            f'<tr><td style="padding:4px 0">{lbl}</td>'
+            f'<td style="text-align:right;font-family:monospace;font-weight:600">{fmt_money(abs(chenh))}</td></tr>'
+        )
+    else:
+        giam = inv.get("giam", 0) or 0
+        giam_row = (
+            f'<tr><td style="padding:4px 0">Giảm giá</td>'
+            f'<td style="text-align:right;font-family:monospace;color:#cf4c2c">{fmt_money(giam)}</td></tr>'
+            if giam > 0 else ""
+        )
+        totals_block = (
+            f'<tr><td style="padding:4px 0">Tổng hàng</td>'
+            f'<td style="text-align:right;font-family:monospace">{fmt_money(inv.get("tong",0))}</td></tr>'
+            f'{giam_row}'
+            f'<tr><td style="padding:6px 0 0;border-top:1px solid #ccc;font-weight:600">Khách đã trả</td>'
+            f'<td style="padding:6px 0 0;border-top:1px solid #ccc;text-align:right;font-family:monospace;font-weight:700;font-size:14px">{fmt_money(inv.get("tra",0))}</td></tr>'
+        )
+
+    psc_block = ""
+    if is_apsc and inv.get("psc"):
+        p = inv["psc"]
+        psc_block = (
+            f'<div style="margin-top:12px;padding:8px 10px;background:#fef3c7;border:1px solid #f3d99c;border-radius:6px">'
+            f'<div style="font-size:11px;font-weight:600;color:#b45309;letter-spacing:.4px;text-transform:uppercase">Phiếu sửa chữa liên đới</div>'
+            f'<div style="margin-top:4px"><b>🔧 {esc(str(p.get("ma","—")))}</b> · {esc(str(p.get("san_pham","—")))}</div>'
+            f'<div style="font-size:11px;color:#555;margin-top:2px">Nhận: {esc(str(p.get("ngay_nhan","—")))} · '
+            f'Hẹn trả: {esc(str(p.get("ngay_tra","—")))} · KTV: {esc(str(p.get("kt_vien","—")))} · '
+            f'Trạng thái: {esc(str(p.get("tinh_trang","—")))}</div>'
+            f'</div>'
+        )
+
+    return (
+        f'<!DOCTYPE html><html lang="vi"><head><meta charset="utf-8">'
+        f'<title>{esc(str(inv.get("ma","")))}</title>'
+        f'<style>@page{{size:A4;margin:14mm}}body{{font-family:"Be Vietnam Pro",system-ui,sans-serif;color:#18181b;font-size:13px;margin:0}}</style>'
+        f'</head><body>'
+        f'<div style="text-align:center;margin-bottom:12px">'
+        f'<h1 style="margin:0;font-size:20px;letter-spacing:1px">HOÁ ĐƠN</h1>'
+        f'<div style="font-family:monospace;font-size:14px;margin-top:4px">{esc(str(inv.get("ma","")))}</div>'
+        f'<div style="font-size:11px;color:#666">{esc(str(inv.get("tg","")))}</div>'
+        f'</div>'
+        f'<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:8px">'
+        f'<div><b>Khách:</b> {esc(str(inv.get("khach","Khách lẻ") or "Khách lẻ"))}'
+        f'{" · " + esc(str(inv.get("sdt",""))) if inv.get("sdt") else ""}</div>'
+        f'<div>NV: {esc(str(inv.get("nv","") or "—"))}</div>'
+        f'</div>'
+        f'{items_section}'
+        f'<table style="width:60%;margin-left:auto;margin-top:12px;font-size:13px">{totals_block}</table>'
+        f'<div style="margin-top:12px;font-size:12px"><b>Phương thức thanh toán:</b>{pttt_block}</div>'
+        f'{psc_block}'
+        f'<div style="margin-top:20px;text-align:center;font-size:11px;color:#888">Cảm ơn quý khách</div>'
+        f'</body></html>'
+    )
+
+
 def _trigger_print_invoice(inv: dict):
-    st.toast("🖨 TODO: triển khai in HĐ ở phase 3", icon="🚧")
+    import base64
+    import streamlit.components.v1 as components
+    html_doc = _build_invoice_print_html(inv)
+    b64 = base64.b64encode(html_doc.encode("utf-8")).decode("ascii")
+    components.html(
+        f"""<script>
+        (function() {{
+          try {{
+            const html = new TextDecoder('utf-8').decode(
+              Uint8Array.from(atob('{b64}'), c => c.charCodeAt(0))
+            );
+            const blob = new Blob([html], {{type: 'text/html;charset=utf-8'}});
+            const url = URL.createObjectURL(blob);
+            const w = window.open(url, '_blank');
+            if (!w) {{
+              document.body.innerHTML = '<div style="color:#cf4c2c;font:13px sans-serif">⚠ Trình duyệt chặn popup. Cho phép popup cho trang này.</div>';
+              return;
+            }}
+            setTimeout(() => URL.revokeObjectURL(url), 60000);
+          }} catch (e) {{
+            document.body.innerHTML = '<div style="color:#cf4c2c;font:13px sans-serif">⚠ Lỗi mở print: ' + e.message + '</div>';
+          }}
+        }})();
+        </script>""",
+        height=0,
+    )
 
 
 def _copy_invoice_to_clipboard(inv: dict):
-    text = f"{inv['ma']} · {inv['tg']}\n{inv.get('khach', '')} · {inv.get('sdt', '')}\n"
-    text += f"Tổng: {fmt_money(inv.get('tra', 0))}\n"
-    for it in inv.get("items", []):
-        text += f"  - {it['ten']} × {it['sl']} = {fmt_money(it['tt'])}\n"
-    st.session_state["_hd_clipboard"] = text
-    st.toast("📋 Đã sao chép HĐ (clipboard JS triển khai sau)", icon="✅")
+    import json
+    import streamlit.components.v1 as components
+
+    lines = [f"{inv['ma']} · {inv.get('tg', '')}"]
+    if inv.get("khach"):
+        lines.append(f"{inv['khach']}" + (f" · {inv['sdt']}" if inv.get("sdt") else ""))
+    if inv.get("nv"):
+        lines.append(f"NV: {inv['nv']}")
+    if inv.get("loai") == "Đổi/Trả":
+        chenh = inv.get("chenh", 0) or 0
+        lbl = "Khách bù thêm" if chenh >= 0 else "Cửa hàng hoàn"
+        lines.append(f"{lbl}: {fmt_money(abs(chenh))}")
+        for it in inv.get("items_tra") or []:
+            lines.append(f"  ← {it['ten']} × {it['sl']}")
+        for it in inv.get("items_moi") or []:
+            lines.append(f"  → {it['ten']} × {it['sl']} = {fmt_money(it['tt'])}")
+    else:
+        lines.append(f"Tổng đã trả: {fmt_money(inv.get('tra', 0))}")
+        for it in inv.get("items", []) or []:
+            lines.append(f"  - {it['ten']} × {it['sl']} = {fmt_money(it['tt'])}")
+
+    text = "\n".join(lines)
+    components.html(
+        f"""<script>
+        (async function() {{
+          const text = {json.dumps(text)};
+          try {{
+            await navigator.clipboard.writeText(text);
+            document.body.innerHTML = '<div style="color:#1a7f37;font:13px sans-serif">✓ Đã sao chép vào clipboard</div>';
+          }} catch (e) {{
+            // Fallback: textarea + execCommand cho non-HTTPS / old browser
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed'; ta.style.opacity = '0';
+            document.body.appendChild(ta); ta.select();
+            try {{ document.execCommand('copy'); }}
+            catch (e2) {{ document.body.innerHTML = '<div style="color:#cf4c2c;font:13px sans-serif">⚠ Không sao chép được: ' + e.message + '</div>'; return; }}
+            document.body.removeChild(ta);
+            document.body.innerHTML = '<div style="color:#1a7f37;font:13px sans-serif">✓ Đã sao chép</div>';
+          }}
+        }})();
+        </script>""",
+        height=30,
+    )
 
 
 def module_hoa_don():
@@ -219,12 +403,54 @@ def module_hoa_don():
                     key="hd_filter_loai", label_visibility="collapsed",
                 )
 
-            # Status segmented (radio horizontal — CSS biến thành seg)
-            n_all    = data["Mã hóa đơn"].nunique()
-            n_ok     = data[data["Trạng thái"] == "Hoàn thành"]["Mã hóa đơn"].nunique()
-            n_cancel = data[data["Trạng thái"] == "Đã hủy"]["Mã hóa đơn"].nunique()
-            n_pdt    = data[data["Mã hóa đơn"].apply(_is_pdt_hd)]["Mã hóa đơn"].nunique()
-            n_apsc   = data[data["Mã hóa đơn"].apply(_is_apsc_hd)]["Mã hóa đơn"].nunique()
+            # ── Pre-status filters (date + search + NV + PTTT + Loại) ───
+            # Áp dụng TRƯỚC khi render radio để counts cập nhật realtime.
+            pre = data.copy()
+
+            if "_date" in pre.columns:
+                pre = pre[pre["_date"].between(d_from, d_to)]
+            else:
+                _ngay = pd.to_datetime(pre["Thời gian"], dayfirst=True, errors="coerce").dt.date
+                pre = pre[_ngay.between(d_from, d_to)]
+
+            if keyword:
+                pred = smart_search_predicate(keyword)
+                pre = pre[pre.apply(pred, axis=1)]
+
+            if sel_nv != "Tất cả NV":
+                for col in NGUOI_BAN_COLS:
+                    if col in pre.columns:
+                        pre = pre[pre[col].astype(str).str.strip() == sel_nv]
+                        break
+
+            pttt_col_map = {"Tiền mặt": "Tiền mặt", "CK": "Chuyển khoản",
+                            "Thẻ": "Thẻ", "Ví": "Ví"}
+            if sel_pttt != "Tất cả PTTT" and sel_pttt in pttt_col_map:
+                col = pttt_col_map[sel_pttt]
+                if col in pre.columns:
+                    pre = pre[pd.to_numeric(pre[col], errors="coerce").fillna(0) > 0]
+
+            if sel_loai == "POS":
+                mask_kenh_pos = pre["Kênh bán"].fillna("") == "POS" \
+                    if "Kênh bán" in pre.columns else pd.Series(False, index=pre.index)
+                pre = pre[mask_kenh_pos &
+                          (~pre["Mã hóa đơn"].apply(_is_pdt_hd)) &
+                          (~pre["Mã hóa đơn"].apply(_is_apsc_hd))]
+            elif sel_loai == "Đổi/Trả":
+                pre = pre[pre["Mã hóa đơn"].apply(_is_pdt_hd)]
+            elif sel_loai == "Sửa chữa":
+                pre = pre[pre["Mã hóa đơn"].apply(_is_apsc_hd)]
+            elif sel_loai == "KiotViet":
+                mask_kenh_pos = pre["Kênh bán"].fillna("") == "POS" \
+                    if "Kênh bán" in pre.columns else pd.Series(False, index=pre.index)
+                pre = pre[(~mask_kenh_pos) & (~pre["Mã hóa đơn"].apply(_is_pdt_hd))]
+
+            # Status segmented (radio horizontal — counts từ pre, KHÔNG phải data)
+            n_all    = pre["Mã hóa đơn"].nunique()
+            n_ok     = pre[pre["Trạng thái"] == "Hoàn thành"]["Mã hóa đơn"].nunique()
+            n_cancel = pre[pre["Trạng thái"] == "Đã hủy"]["Mã hóa đơn"].nunique()
+            n_pdt    = pre[pre["Mã hóa đơn"].apply(_is_pdt_hd)]["Mã hóa đơn"].nunique()
+            n_apsc   = pre[pre["Mã hóa đơn"].apply(_is_apsc_hd)]["Mã hóa đơn"].nunique()
             sel_status = st.radio(
                 "Trạng thái",
                 [f"Tất cả ({n_all})", f"● Hoàn thành ({n_ok})", f"✕ Đã hủy ({n_cancel})",
@@ -232,48 +458,8 @@ def module_hoa_don():
                 horizontal=True, label_visibility="collapsed", key="hd_filter_status",
             )
 
-        # ── Apply filters ───────────────────────────────────────────
-        filt = data.copy()
-
-        if "_date" in filt.columns:
-            filt = filt[filt["_date"].between(d_from, d_to)]
-        else:
-            _ngay = pd.to_datetime(filt["Thời gian"], dayfirst=True, errors="coerce").dt.date
-            filt = filt[_ngay.between(d_from, d_to)]
-
-        if keyword:
-            pred = smart_search_predicate(keyword)
-            mask = filt.apply(pred, axis=1)
-            filt = filt[mask]
-
-        if sel_nv != "Tất cả NV":
-            for col in NGUOI_BAN_COLS:
-                if col in filt.columns:
-                    filt = filt[filt[col].astype(str).str.strip() == sel_nv]
-                    break
-
-        pttt_col_map = {"Tiền mặt": "Tiền mặt", "CK": "Chuyển khoản",
-                        "Thẻ": "Thẻ", "Ví": "Ví"}
-        if sel_pttt != "Tất cả PTTT" and sel_pttt in pttt_col_map:
-            col = pttt_col_map[sel_pttt]
-            if col in filt.columns:
-                filt = filt[pd.to_numeric(filt[col], errors="coerce").fillna(0) > 0]
-
-        if sel_loai == "POS":
-            mask_kenh_pos = filt["Kênh bán"].fillna("") == "POS" \
-                if "Kênh bán" in filt.columns else pd.Series(False, index=filt.index)
-            filt = filt[mask_kenh_pos &
-                        (~filt["Mã hóa đơn"].apply(_is_pdt_hd)) &
-                        (~filt["Mã hóa đơn"].apply(_is_apsc_hd))]
-        elif sel_loai == "Đổi/Trả":
-            filt = filt[filt["Mã hóa đơn"].apply(_is_pdt_hd)]
-        elif sel_loai == "Sửa chữa":
-            filt = filt[filt["Mã hóa đơn"].apply(_is_apsc_hd)]
-        elif sel_loai == "KiotViet":
-            mask_kenh_pos = filt["Kênh bán"].fillna("") == "POS" \
-                if "Kênh bán" in filt.columns else pd.Series(False, index=filt.index)
-            filt = filt[(~mask_kenh_pos) & (~filt["Mã hóa đơn"].apply(_is_pdt_hd))]
-
+        # ── Apply status filter to pre → filt ────────────────────────
+        filt = pre
         if "Hoàn thành" in sel_status:
             filt = filt[filt["Trạng thái"] == "Hoàn thành"]
         elif "Đã hủy" in sel_status:

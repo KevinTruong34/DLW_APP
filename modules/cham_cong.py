@@ -879,10 +879,15 @@ def _visible_nv_ids() -> list[int] | None:
 
 def _trigger_build_sessions(date_from: date, date_to: date,
                             branch: str | None):
-    """Call RPC build_sessions_for_date per day in range. Idempotent."""
+    """Call RPC build_sessions_for_date per day in range. Idempotent.
+
+    Aggregate by_status để hiển thị edited count (sessions admin-edited
+    được preserve, không recompute — hotfix Phase 5).
+    """
     d = date_from
     total = 0
     errors = 0
+    by_status_agg: dict[str, int] = {}
     while d <= date_to:
         try:
             res = call_rpc("build_sessions_for_date", {
@@ -891,16 +896,24 @@ def _trigger_build_sessions(date_from: date, date_to: date,
             })
             if isinstance(res, dict) and res.get("ok"):
                 total += int(res.get("sessions_count", 0) or 0)
+                for k, v in (res.get("by_status") or {}).items():
+                    by_status_agg[k] = by_status_agg.get(k, 0) + int(v)
             else:
                 errors += 1
         except Exception:
             errors += 1
         d += timedelta(days=1)
+
     if errors:
         st.toast(f"⚠️ Built {total} sessions, {errors} ngày lỗi",
                  icon="⚠️")
-    else:
-        st.toast(f"✓ Đã build {total} sessions", icon="✅")
+        return
+
+    msg = f"✓ Đã cập nhật {total} sessions"
+    edited_count = by_status_agg.get("edited", 0)
+    if edited_count > 0:
+        msg += f" ({edited_count} đã sửa — giữ nguyên không recompute)"
+    st.toast(msg, icon="✅")
 
 
 def _load_sessions_for_range(date_from: date, date_to: date,

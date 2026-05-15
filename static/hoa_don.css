@@ -190,45 +190,50 @@
 
 /* ── Clickable card pattern (st.container(key=hd_card_*) + button overlay) ──
    Mỗi card list được wrap trong `st.container(key="hd_card_<ma>")` →
-   Streamlit add class `st-key-hd_card_<ma>` lên stVerticalBlockBorderWrapper.
+   Streamlit add class `st-key-hd_card_<ma>` lên outer wrapper.
    Bên trong: st.html(card) + st.button(" ") liền nhau.
-   CSS biến button thành invisible overlay phủ toàn bộ card → click bất cứ
-   đâu trên card đều trigger button.
+   CSS biến button container thành invisible overlay phủ toàn bộ card → click
+   bất cứ đâu trên card đều trigger button.
 
-   STREAMLIT_DESIGN_RULES vẫn được tuân thủ vì ta chỉ override Streamlit's
-   native widgets (button container) qua [data-testid="..."]. */
-.main .block-container:has(.hd-scope) [class*="st-key-hd_card_"]{
-  position: relative;
+   NOTE: KHÔNG scope qua `.main .block-container:has(.hd-scope)` vì class
+   `.block-container` có thể đã rename thành `.stMainBlockContainer` trong
+   Streamlit ≥1.50. Prefix `st-key-hd_card_` unique trong module này → safe. */
+div[class*="st-key-hd_card_"]{
+  position: relative !important;
   cursor: pointer;
 }
-.main .block-container:has(.hd-scope) [class*="st-key-hd_card_"]
-  [data-testid="stElementContainer"]:has(> [data-testid="stButton"]){
+/* Button's element container → absolute over the entire card area */
+div[class*="st-key-hd_card_"] [data-testid="stElementContainer"]:has(button){
   position: absolute !important;
-  inset: 0 !important;
+  top: 0 !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  height: auto !important;
   margin: 0 !important;
+  padding: 0 !important;
+  z-index: 5;
 }
-.main .block-container:has(.hd-scope) [class*="st-key-hd_card_"]
-  [data-testid="stButton"]{
-  height: 100%;
-}
-.main .block-container:has(.hd-scope) [class*="st-key-hd_card_"]
-  [data-testid="stButton"] > button{
+/* Button itself: invisible nhưng vẫn focusable + clickable */
+div[class*="st-key-hd_card_"] button{
   width: 100% !important;
   height: 100% !important;
   min-height: 0 !important;
   opacity: 0 !important;
-  border: 0 !important;
   background: transparent !important;
+  border: 0 !important;
+  outline: 0 !important;
+  box-shadow: none !important;
   padding: 0 !important;
-  cursor: pointer;
+  margin: 0 !important;
+  cursor: pointer !important;
 }
 
 /* ── Compact pagination (st.container(key=hd_pagination)) ── */
-.main .block-container:has(.hd-scope) [class*="st-key-hd_pagination"]{
+div[class*="st-key-hd_pagination"]{
   margin-top: 8px;
 }
-.main .block-container:has(.hd-scope) [class*="st-key-hd_pagination"]
-  [data-testid="stButton"] > button{
+div[class*="st-key-hd_pagination"] [data-testid="stButton"] > button{
   min-height: 30px !important;
   padding: 0 8px !important;
   font-size: 14px !important;
@@ -237,13 +242,14 @@
 
 /* ── White BG cho rail (st.container(key=hd_rail)) ──
    Bao gồm cả detail_rail_html, action buttons, empty state — toàn bộ
-   phần chi tiết phiếu bên cột phải có 1 nền trắng đồng nhất. */
-.main .block-container:has(.hd-scope) [class*="st-key-hd_rail"]{
-  background: var(--hd-surface);
-  border: 1px solid var(--hd-border);
-  border-radius: var(--hd-radius);
-  padding: 16px 18px;
-  box-shadow: var(--hd-shadow-sm);
+   phần chi tiết phiếu bên cột phải có 1 nền trắng đồng nhất.
+   KHÔNG scope qua .main .block-container (lý do giống section hd_card trên). */
+div[class*="st-key-hd_rail"]{
+  background: #ffffff !important;
+  border: 1px solid var(--hd-border) !important;
+  border-radius: var(--hd-radius) !important;
+  padding: 16px 18px !important;
+  box-shadow: var(--hd-shadow-sm) !important;
 }
 
 /* Sticky rail — chỉ áp dụng cho row có ĐÚNG 2 columns (title row + master-detail).

@@ -1,0 +1,192 @@
+/* ═══════════════════════════════════════════════════════════════════════════
+   hoa_don.css — Streamlit overrides ONLY for hoa_don.py redesign
+   ═══════════════════════════════════════════════════════════════════════════
+   Per STREAMLIT_DESIGN_RULES.md:
+   - CSS file is for: design tokens (reference), Streamlit native widget
+     overrides via [data-testid="..."], font imports.
+   - It does NOT style HTML emitted by st.html() — those elements must use
+     INLINE style="..." attributes (see utils/hd_style.py).
+   - Do NOT add `.hd-*` classes that target custom HTML here. All custom HTML
+     is inline-styled.
+
+   USAGE — inject ONCE at top of module_hoa_don() via inject_hoa_don_css().
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* ── 0. Fonts ──────────────────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+/* ── 1. Design Tokens (reference — also used inline in hd_style.py) ────── */
+:root{
+  --hd-bg:        #f7f7f8;
+  --hd-surface:   #ffffff;
+  --hd-surface-2: #fafafa;
+  --hd-surface-3: #f3f3f5;
+  --hd-border:    #e7e7ea;
+  --hd-border-2:  #d8d8dc;
+  --hd-ink:       #18181b;
+  --hd-ink-2:     #3f3f46;
+  --hd-ink-3:     #71717a;
+  --hd-ink-4:     #a1a1aa;
+
+  --hd-accent:      #e63946;
+  --hd-accent-d:    #c1121f;
+  --hd-accent-soft: #fdecee;
+
+  --hd-good:        #1a7f37;
+  --hd-good-soft:   #e6f4ea;
+  --hd-warn:        #cf4c2c;
+  --hd-warn-soft:   #fdecec;
+  --hd-info:        #2563eb;
+  --hd-info-soft:   #e7efff;
+  --hd-purple:      #7c3aed;
+  --hd-purple-soft: #f1e9ff;
+  --hd-amber:       #b45309;
+  --hd-amber-soft:  #fef3c7;
+
+  --hd-radius:    10px;
+  --hd-radius-sm: 6px;
+  --hd-shadow-sm: 0 1px 2px rgba(24,24,27,.04), 0 0 0 1px var(--hd-border);
+
+  --hd-font:  'Be Vietnam Pro', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --hd-mono:  'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+}
+
+/* ── 2. Page base — keep scoped via wrapper class .hd-scope set by helper ── */
+/*  Wrap module body in: with st.container(): st.html('<div class="hd-scope"></div>')
+    then everything below cascades — without touching other modules. */
+
+/* ── 3. Streamlit native widget overrides (only inside .hd-scope siblings) */
+
+/* Text input — used for the smart-search bar */
+[data-testid="stTextInput"] input{
+  font-family: var(--hd-font);
+  font-size: 13px;
+  background: var(--hd-surface);
+  border: 1px solid var(--hd-border);
+  border-radius: var(--hd-radius-sm);
+  color: var(--hd-ink);
+  transition: border-color .12s;
+}
+[data-testid="stTextInput"] input:focus{
+  border-color: var(--hd-ink);
+  box-shadow: none;
+}
+[data-testid="stTextInput"] input::placeholder{
+  color: var(--hd-ink-4);
+}
+
+/* Selectbox — used for branch / NV / PTTT / loại filters */
+[data-testid="stSelectbox"] [data-baseweb="select"] > div{
+  background: var(--hd-surface);
+  border: 1px solid var(--hd-border);
+  border-radius: var(--hd-radius-sm);
+  font-size: 13px;
+  min-height: 36px;
+}
+[data-testid="stSelectbox"] [data-baseweb="select"]:hover > div{
+  border-color: var(--hd-border-2);
+}
+
+/* Button — both default + primary */
+[data-testid="stButton"] > button{
+  font-family: var(--hd-font);
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: var(--hd-radius-sm);
+  border: 1px solid var(--hd-border);
+  background: var(--hd-surface);
+  color: var(--hd-ink);
+  min-height: 36px;
+  padding: 0 14px;
+  transition: background .12s, border-color .12s;
+}
+[data-testid="stButton"] > button:hover{
+  background: var(--hd-surface-2);
+  border-color: var(--hd-border-2);
+}
+[data-testid="stButton"] > button[kind="primary"]{
+  background: var(--hd-accent);
+  border-color: var(--hd-accent);
+  color: #fff;
+}
+[data-testid="stButton"] > button[kind="primary"]:hover{
+  background: var(--hd-accent-d);
+  border-color: var(--hd-accent-d);
+}
+
+/* Date input — used for date range */
+[data-testid="stDateInput"] input{
+  font-family: var(--hd-mono);
+  font-size: 12.5px;
+  border-radius: var(--hd-radius-sm);
+}
+
+/* Radio (used for status segmented control) — render horizontally */
+[data-testid="stRadio"] > div[role="radiogroup"]{
+  flex-direction: row;
+  gap: 4px;
+  background: var(--hd-surface-3);
+  border: 1px solid var(--hd-border);
+  border-radius: 8px;
+  padding: 3px;
+}
+[data-testid="stRadio"] label{
+  margin: 0;
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--hd-ink-3);
+  cursor: pointer;
+  transition: background .12s, color .12s;
+}
+[data-testid="stRadio"] label:hover{
+  color: var(--hd-ink-2);
+}
+[data-testid="stRadio"] label:has(input:checked){
+  background: var(--hd-surface);
+  color: var(--hd-ink);
+  box-shadow: 0 1px 2px rgba(24,24,27,.06), 0 0 0 1px var(--hd-border);
+}
+[data-testid="stRadio"] label > div:first-child{ display: none; }   /* hide radio dot */
+
+/* Popover trigger — match button style */
+[data-testid="stPopover"] button{
+  font-family: var(--hd-font);
+  font-size: 13px;
+  border-radius: var(--hd-radius-sm);
+  min-height: 36px;
+}
+
+/* Containers with border=True — soften default look */
+[data-testid="stContainer"][data-border="true"],
+.stContainer[data-border="true"]{
+  background: var(--hd-surface);
+  border: 1px solid var(--hd-border);
+  border-radius: var(--hd-radius);
+  box-shadow: var(--hd-shadow-sm);
+}
+
+/* Dataframe — used as fallback if you opt to render the list as st.dataframe */
+[data-testid="stDataFrame"] thead th{
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .4px;
+  text-transform: uppercase;
+  color: var(--hd-ink-3);
+  background: var(--hd-surface-2);
+}
+[data-testid="stDataFrame"] tbody td{
+  font-size: 13px;
+  color: var(--hd-ink);
+}
+
+/* Body / page background — scoped to anything after the .hd-scope marker */
+.main .block-container:has(.hd-scope){
+  padding-top: 1rem;
+  padding-bottom: 5rem;
+  max-width: 1400px;
+}
+
+/* Optional: hide Streamlit's "Press Enter to apply" hint under text_input */
+[data-testid="InputInstructions"]{ display: none; }

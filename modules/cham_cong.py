@@ -1595,7 +1595,7 @@ def _payroll_periods():
         total = p.get("total_amount", 0)
 
         with st.container(border=True):
-            col_info, col_meta, col_act = st.columns([3, 2, 2])
+            col_info, col_meta, col_act, col_del = st.columns([3, 2, 2, 1])
             with col_info:
                 st.markdown(
                     f"**{p['label']}**  \n"
@@ -1627,6 +1627,15 @@ def _payroll_periods():
                     except Exception:
                         finalized_str = finalized_at
                     st.caption(f"Chốt: {finalized_str}")
+            with col_del:
+                if is_admin_user:
+                    if st.button(
+                        "🗑",
+                        key=f"cc_pr_del_btn_{pid}",
+                        use_container_width=True,
+                        help="Xóa kỳ lương vĩnh viễn (admin only)",
+                    ):
+                        _delete_period_dialog(p)
 
 
 def _compute_period(period_id: int):
@@ -2270,3 +2279,82 @@ def _export_payroll_excel(period: dict) -> bytes:
     wb.save(buffer)
     buffer.seek(0)
     return buffer.getvalue()
+
+
+@st.dialog("🗑 Xóa kỳ lương")
+def _delete_period_dialog(period: dict):
+    """Confirm dialog xóa kỳ lương — admin only, cascade items + adjustments.
+
+    Cho phép xóa cả periods finalized. Confirm typing 'XÓA' bắt buộc.
+    """
+    if not is_admin():
+        st.error("⛔ Chỉ admin được xóa kỳ lương.")
+        return
+
+    pid = period["id"]
+    is_fin = period.get("status") == "finalized"
+    items_count = period.get("items_count", 0)
+    total = period.get("total_amount", 0)
+
+    # Count adjustments (không có trong _load_payroll_periods)
+    try:
+        adj_res = supabase.table("attendance_adjustments") \
+            .select("id", count="exact").eq("period_id", pid).execute()
+        adj_count = adj_res.count or 0
+    except Exception:
+        adj_count = 0
+
+    st.error(f"⛔ Xóa **VĨNH VIỄN** kỳ lương `{period['label']}`?")
+
+    if is_fin:
+        st.warning(
+            "🔒 **Kỳ này ĐÃ CHỐT.** Xóa = mất records chính thức, "
+            "không hoàn lại được. Chỉ xóa nếu thật sự cần (vd: tính nhầm, "
+            "trùng kỳ với kỳ khác)."
+        )
+
+    with st.container(border=True):
+        st.markdown(
+            f"**Kỳ:** {period['label']}  \n"
+            f"**Range:** {period['start_date']} → {period['end_date']}  \n"
+            f"**Status:** {'🔒 Đã chốt' if is_fin else '📂 Mở'}  \n"
+            f"**Sẽ xóa:** {items_count} payroll items · "
+            f"{adj_count} adjustments · 💵 {total:,}đ"
+        )
+
+    confirm = st.text_input(
+        "Gõ `XÓA` (in hoa) để bật nút xóa",
+        key=f"cc_pr_del_confirm_{pid}",
+        placeholder="XÓA",
+    )
+    can_delete = confirm.strip() == "XÓA"
+
+    if not can_delete:
+        st.caption("💡 Gõ chính xác `XÓA` (chữ hoa, không có dấu) để bật.")
+
+    if st.button(
+        "🗑 XÓA VĨNH VIỄN",
+        type="primary",
+        use_container_width=True,
+        disabled=not can_delete,
+        key=f"cc_pr_del_save_{pid}",
+    ):
+        try:
+            user = get_user()
+            res = call_rpc("delete_payroll_period", {
+                "p_period_id": pid,
+                "p_admin_id": user["id"],
+            })
+            if isinstance(res, dict) and res.get("ok"):
+                st.toast(
+                    f"🗑 Đã xóa kỳ '{period['label']}' "
+                    f"({res.get('items_deleted', 0)} items, "
+                    f"{res.get('adjustments_deleted', 0)} adj)",
+                    icon="🗑",
+                )
+                st.rerun()
+            else:
+                err = (res or {}).get("error", "Lỗi RPC")
+                st.error(f"❌ {err}")
+        except Exception as e:
+            st.error(f"Lỗi: {e}")

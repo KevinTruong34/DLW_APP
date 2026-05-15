@@ -191,7 +191,8 @@ hr { border-color: #ebebeb !important; margin: 8px 0 !important; }
 
 
 # ── Auth gate — phải chạy trước khi import modules ──
-from utils.auth import (get_user, is_admin, get_active_branch,
+from utils.auth import (get_user, is_admin, is_ke_toan_or_admin,
+                        get_active_branch,
                         get_accessible_branches, get_selectable_branches,
                         do_logout, save_branch_to_url, run_auth_gate)
 from utils.db import supabase, log_action
@@ -210,6 +211,7 @@ from modules.chuyen_hang import module_chuyen_hang
 from modules.quan_tri    import module_quan_tri
 from modules.bao_cao     import module_bao_cao
 from modules.admin_pos   import module_admin_pos
+from modules.cham_cong   import module_cham_cong
 
 # ── Navigation ──
 # ==========================================
@@ -229,6 +231,8 @@ role_lbl  = {"admin":"Admin","ke_toan":"Kế toán","nhan_vien":"Nhân viên"}.g
 # Sắp xếp thứ tự theo ý anh: Tổng quan -> Hóa đơn -> Hàng hóa -> Chuyển hàng -> Kiểm kê
 menu = ["📊 Tổng quan", "🧾 Hóa đơn", "📦 Hàng hóa", "🔄 Chuyển hàng", "🧮 Kiểm kê", "🔧 Sửa chữa", "👥 Khách hàng", "📥 Nhập/Trả hàng", "📊 Báo cáo"]
 
+if is_ke_toan_or_admin():
+    menu.append("👥 Nhân viên")
 
 if is_admin():
     menu.append("⚙️ Quản trị")
@@ -287,5 +291,6 @@ elif page_clean == "Kiểm kê":     module_kiem_ke()
 elif page_clean == "Sửa chữa":    module_sua_chua()
 elif page_clean == "Khách hàng":  module_khach_hang()
 elif page_clean == "Nhập/Trả hàng": module_nhap_hang()
+elif page_clean == "Nhân viên":   module_cham_cong()
 elif page_clean == "Báo cáo":     module_bao_cao()
 elif page_clean == "Admin POS":   module_admin_pos()

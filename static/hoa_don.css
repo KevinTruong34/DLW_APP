@@ -199,5 +199,30 @@
   align-self: flex-start;
 }
 
+/* Responsive collapse ≤1100px — master-detail xếp dọc (rail xuống dưới list).
+   Áp dụng cho 2-col rows (title + master-detail). Title row collapse → caption
+   xuống dưới H1, vô hại. Action buttons row trong rail là 3-col → KHÔNG bị
+   ảnh hưởng. Filter row 5-col cũng KHÔNG bị ảnh hưởng. */
+@media (max-width: 1100px){
+  .main .block-container:has(.hd-scope)
+    [data-testid="stHorizontalBlock"]:has(> [data-testid="column"]:nth-child(2):last-child){
+    flex-direction: column !important;
+  }
+  .main .block-container:has(.hd-scope)
+    [data-testid="stHorizontalBlock"]:has(> [data-testid="column"]:nth-child(2):last-child)
+    > [data-testid="column"]{
+    width: 100% !important;
+    flex: 1 1 100% !important;
+    min-width: 0 !important;
+  }
+  /* Disable sticky khi đã collapsed — rail flow normally bên dưới list */
+  .main .block-container:has(.hd-scope)
+    [data-testid="stHorizontalBlock"]:has(> [data-testid="column"]:nth-child(2):last-child)
+    > [data-testid="column"]:nth-child(2){
+    position: static !important;
+    top: auto !important;
+  }
+}
+
 /* Optional: hide Streamlit's "Press Enter to apply" hint under text_input */
 [data-testid="InputInstructions"]{ display: none; }

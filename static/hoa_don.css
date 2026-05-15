@@ -188,5 +188,16 @@
   max-width: 1400px;
 }
 
+/* Sticky rail — chỉ áp dụng cho row có ĐÚNG 2 columns (title row + master-detail).
+   Title col-2 đã ở top nên sticky vô hại; master-detail col-2 (rail) là target.
+   Cần align-self:flex-start để bypass flex stretch của Streamlit's stHorizontalBlock. */
+.main .block-container:has(.hd-scope)
+  [data-testid="stHorizontalBlock"]:has(> [data-testid="column"]:nth-child(2):last-child)
+  > [data-testid="column"]:nth-child(2){
+  position: sticky;
+  top: 60px;
+  align-self: flex-start;
+}
+
 /* Optional: hide Streamlit's "Press Enter to apply" hint under text_input */
 [data-testid="InputInstructions"]{ display: none; }

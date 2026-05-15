@@ -356,19 +356,8 @@ def module_hoa_don():
                                       if n.strip() and n.strip().lower() != "nan"])
                 break
 
-        # ── Title row ────────────────────────────────────────────────
         import datetime as _dt
-        _wd = ["Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy", "Chủ Nhật"]
         _now = _dt.datetime.now()
-        title_l, title_r = st.columns([3, 1])
-        with title_l:
-            st.html(
-                f'<h2 style="font-size:22px;font-weight:600;letter-spacing:-.2px;'
-                f'margin:0 0 10px;font-family:Be Vietnam Pro,system-ui,sans-serif;">'
-                f'Hoá đơn · {_wd[_now.weekday()]} {_now.strftime("%d/%m/%Y")}</h2>'
-            )
-        with title_r:
-            st.caption(f"{data['Mã hóa đơn'].nunique()} chứng từ")
 
         # ── Filter container (thay 3 sub-tab cũ) ─────────────────────
         with st.container(border=True):
@@ -382,7 +371,7 @@ def module_hoa_don():
             with c2:
                 with st.popover("📅 Khoảng ngày", use_container_width=True):
                     d_from = st.date_input(
-                        "Từ:", value=_now.date() - _dt.timedelta(days=7),
+                        "Từ:", value=_now.date(),
                         key="hd_date_from", format="DD/MM/YYYY",
                     )
                     d_to = st.date_input(
@@ -455,6 +444,7 @@ def module_hoa_don():
                 "Trạng thái",
                 [f"Tất cả ({n_all})", f"● Hoàn thành ({n_ok})", f"✕ Đã hủy ({n_cancel})",
                  f"↔ Đổi/Trả ({n_pdt})", f"🔧 Sửa chữa ({n_apsc})"],
+                index=1,
                 horizontal=True, label_visibility="collapsed", key="hd_filter_status",
             )
 
@@ -480,37 +470,76 @@ def module_hoa_don():
             sel_ma = None
             st.session_state.pop("hd_sel_ma", None)
 
+        # ── Pagination 10/page ───────────────────────────────────────
+        PER_PAGE = 10
+        total = len(invoices)
+        n_pages = max(1, (total + PER_PAGE - 1) // PER_PAGE)
+        page = int(st.session_state.get("hd_page", 1) or 1)
+        if page > n_pages:
+            page = n_pages
+            st.session_state["hd_page"] = page
+        if page < 1:
+            page = 1
+            st.session_state["hd_page"] = 1
+        start = (page - 1) * PER_PAGE
+        page_invoices = invoices[start:start + PER_PAGE]
+
         col_list, col_rail = st.columns([6, 4], gap="medium")
         with col_list:
-            for inv in invoices:
+            for inv in page_invoices:
                 is_sel = inv["ma"] == sel_ma
-                st.html(list_card_html(inv, selected=is_sel))
-                if st.button("Xem chi tiết →", key=f"hd_open_{inv['ma']}",
-                             use_container_width=True,
-                             type="primary" if is_sel else "secondary"):
-                    st.session_state["hd_sel_ma"] = inv["ma"]
-                    st.rerun()
+                with st.container(key=f"hd_card_{inv['ma']}"):
+                    st.html(list_card_html(inv, selected=is_sel))
+                    if st.button(" ", key=f"hd_open_{inv['ma']}",
+                                 use_container_width=True):
+                        st.session_state["hd_sel_ma"] = inv["ma"]
+                        st.rerun()
+
+            if n_pages > 1:
+                with st.container(key="hd_pagination"):
+                    nav_l, nav_c, nav_r = st.columns([1, 8, 1])
+                    with nav_l:
+                        if st.button("‹", key="hd_page_prev",
+                                     disabled=(page <= 1),
+                                     use_container_width=True):
+                            st.session_state["hd_page"] = page - 1
+                            st.rerun()
+                    with nav_c:
+                        st.markdown(
+                            f"<div style='text-align:center;font-family:"
+                            f"\"JetBrains Mono\",monospace;line-height:32px;"
+                            f"color:#71717a;font-size:12px'>"
+                            f"Trang {page} / {n_pages}</div>",
+                            unsafe_allow_html=True,
+                        )
+                    with nav_r:
+                        if st.button("›", key="hd_page_next",
+                                     disabled=(page >= n_pages),
+                                     use_container_width=True):
+                            st.session_state["hd_page"] = page + 1
+                            st.rerun()
 
         with col_rail:
-            if sel_ma:
-                sel_inv = next((i for i in invoices if i["ma"] == sel_ma), None)
-                if sel_inv:
-                    st.html(detail_rail_html(sel_inv))
-                    b1, b2, b3 = st.columns(3)
-                    with b1:
-                        if st.button("🖨 In lại", key=f"hd_print_{sel_ma}",
-                                     use_container_width=True, type="primary"):
-                            _trigger_print_invoice(sel_inv)
-                    with b2:
-                        if st.button("⎘ Sao chép", key=f"hd_copy_{sel_ma}",
-                                     use_container_width=True):
-                            _copy_invoice_to_clipboard(sel_inv)
-                    with b3:
-                        if st.button("⤴ Phiếu kho", key=f"hd_kho_{sel_ma}",
-                                     use_container_width=True):
-                            st.toast("TODO: link to phiếu kho", icon="🚧")
-            else:
-                st.html(empty_rail_html())
+            with st.container(key="hd_rail"):
+                if sel_ma:
+                    sel_inv = next((i for i in invoices if i["ma"] == sel_ma), None)
+                    if sel_inv:
+                        st.html(detail_rail_html(sel_inv))
+                        b1, b2, b3 = st.columns(3)
+                        with b1:
+                            if st.button("🖨 In lại", key=f"hd_print_{sel_ma}",
+                                         use_container_width=True, type="primary"):
+                                _trigger_print_invoice(sel_inv)
+                        with b2:
+                            if st.button("⎘ Sao chép", key=f"hd_copy_{sel_ma}",
+                                         use_container_width=True):
+                                _copy_invoice_to_clipboard(sel_inv)
+                        with b3:
+                            if st.button("⤴ Phiếu kho", key=f"hd_kho_{sel_ma}",
+                                         use_container_width=True):
+                                st.toast("TODO: link to phiếu kho", icon="🚧")
+                else:
+                    st.html(empty_rail_html())
 
     except Exception as e:
         st.error(f"Lỗi: {e}")

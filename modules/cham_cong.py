@@ -1,23 +1,25 @@
-"""Module Chấm công nhân viên — DLW Phase 2.
+"""Module Chấm công nhân viên — DLW Phase 2 + 4.
 
-Phase 2 deliver: 2 outer tabs trong "👥 Nhân viên":
-  - ⚙️ Cấu hình: 3 sub-tabs (Mạng cửa hàng / Lương NV / Ca làm việc)
-  - 📅 Lịch làm việc: calendar tuần + CRUD schedule
+Tabs trong "👥 Nhân viên":
+  - ⚙️ Cấu hình (Phase 2): 3 sub-tabs Mạng / Lương / Ca làm việc
+  - 📅 Lịch làm việc (Phase 2): calendar tuần + CRUD schedule
+  - 📊 Bảng công (Phase 4): sessions theo date range + summary per NV
 
-Phase 4+ sẽ thêm: 📊 Bảng công, ✏️ Sửa công, 💰 Tính lương, 📥 Export.
+Phase 5+ sẽ thêm: ✏️ Sửa công, 💰 Tính lương, 📥 Export.
 
-Refs: PLAN_CHAM_CONG.md section 7 + D17 (CRUD shift_templates).
+Refs: PLAN_CHAM_CONG.md sections 7 + 9.
 """
 from __future__ import annotations
 
 import streamlit as st
+import pandas as pd
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from utils.auth import is_admin, is_ke_toan_or_admin, get_user
 from utils.config import ALL_BRANCHES
 from utils.db import (
-    supabase, log_action,
+    supabase, log_action, call_rpc,
     load_all_nhan_vien,
     load_shift_templates, load_branch_networks, load_employee_rates,
     count_schedules_using_template, load_schedules_for_week,
@@ -38,11 +40,14 @@ def module_cham_cong():
     tabs = st.tabs([
         "⚙️ Cấu hình",
         "📅 Lịch làm việc",
+        "📊 Bảng công",
     ])
     with tabs[0]:
         _render_config()
     with tabs[1]:
         _render_schedule()
+    with tabs[2]:
+        _render_bang_cong()
 
 
 # ============================================================
@@ -757,3 +762,369 @@ def _copy_previous_week(target_monday: date, branch: str | None = None):
                f"{prev_monday}→{target_monday}: {created} OK, {skipped} skipped")
     st.toast(f"✓ Copy: {created} lịch (skip {skipped} trùng/lỗi)", icon="✅")
     st.rerun()
+
+
+# ============================================================
+# 📊 BẢNG CÔNG (Phase 4)
+# ============================================================
+
+_STATUS_LABEL_VN = {
+    "open": "🔵 Đang trong ca",
+    "completed": "✅ Hoàn thành",
+    "auto_closed": "🟠 Auto đóng",
+    "absent": "🔴 Vắng",
+    "edited": "🟢 Đã sửa",
+    "leave_paid": "🌴 Nghỉ phép",
+    "leave_unpaid": "⚪ Nghỉ KL",
+}
+
+
+def _render_bang_cong():
+    """Bảng công — sessions theo date range, role-aware filter."""
+    today = datetime.now(VN_TZ).date()
+    first_of_month = today.replace(day=1)
+
+    col_from, col_to, col_branch = st.columns([2, 2, 2])
+    with col_from:
+        date_from = st.date_input("Từ ngày", value=first_of_month, key="cc_bc_from")
+    with col_to:
+        date_to = st.date_input("Đến ngày", value=today, key="cc_bc_to")
+    with col_branch:
+        cn_filter = st.selectbox(
+            "Chi nhánh", ["Tất cả"] + ALL_BRANCHES, key="cc_bc_cn"
+        )
+
+    if date_from > date_to:
+        st.error("Ngày 'Từ' phải <= 'Đến'")
+        return
+    if (date_to - date_from).days > 92:
+        st.warning("⚠️ Range > 3 tháng có thể load chậm.")
+
+    branch_arg = None if cn_filter == "Tất cả" else cn_filter
+
+    # NV filter (role-aware)
+    visible_nv_ids = _visible_nv_ids()
+    nv_options = load_all_nhan_vien(include_inactive=True)
+    if visible_nv_ids is not None:
+        nv_options = [n for n in nv_options if n["id"] in visible_nv_ids]
+
+    nv_names_selected = st.multiselect(
+        "Nhân viên (rỗng = tất cả NV thuộc quyền xem)",
+        options=[n["ho_ten"] for n in nv_options],
+        default=[],
+        key="cc_bc_nv",
+    )
+
+    nv_id_filter: list[int] | None = None
+    if nv_names_selected:
+        nv_id_filter = [n["id"] for n in nv_options
+                        if n["ho_ten"] in nv_names_selected]
+    elif visible_nv_ids is not None:
+        nv_id_filter = visible_nv_ids
+
+    # Build trigger
+    col_build, col_info = st.columns([2, 4])
+    with col_build:
+        if st.button("🔄 Cập nhật sessions",
+                     help="Build sessions từ events thô (idempotent)",
+                     key="cc_bc_build_btn"):
+            _trigger_build_sessions(date_from, date_to, branch_arg)
+            st.rerun()
+    with col_info:
+        st.caption(
+            "💡 Bấm 'Cập nhật sessions' nếu vừa có chấm công mới — "
+            "tự động trigger `build_sessions_for_date` cho từng ngày trong range."
+        )
+
+    sessions = _load_sessions_for_range(
+        date_from, date_to, branch_arg, nv_id_filter
+    )
+
+    if not sessions:
+        st.info(
+            f"📭 Chưa có session nào trong khoảng "
+            f"**{date_from.strftime('%d/%m')} → {date_to.strftime('%d/%m/%Y')}**. "
+            "Bấm '🔄 Cập nhật sessions' để build từ events thô (nếu NV đã chấm công)."
+        )
+        return
+
+    df = _sessions_to_df(sessions)
+    _render_bang_cong_table(df)
+
+    st.markdown("---")
+    st.markdown("##### 📊 Tổng kết theo nhân viên")
+    _render_bang_cong_summary(df)
+
+
+def _visible_nv_ids() -> list[int] | None:
+    """Role-aware filter: admin all, ke_toan ex-admin, NV chỉ mình.
+    Return None = no filter (load all)."""
+    u = get_user()
+    if not u:
+        return [-1]  # nothing accessible
+    role = u.get("role", "")
+    if role == "admin":
+        return None
+    if role == "ke_toan":
+        res = supabase.table("nhan_vien").select("id") \
+            .neq("role", "admin").execute()
+        return [n["id"] for n in (res.data or [])]
+    return [u["id"]]
+
+
+def _trigger_build_sessions(date_from: date, date_to: date,
+                            branch: str | None):
+    """Call RPC build_sessions_for_date per day in range. Idempotent."""
+    d = date_from
+    total = 0
+    errors = 0
+    while d <= date_to:
+        try:
+            res = call_rpc("build_sessions_for_date", {
+                "p_work_date": d.isoformat(),
+                "p_chi_nhanh": branch,
+            })
+            if isinstance(res, dict) and res.get("ok"):
+                total += int(res.get("sessions_count", 0) or 0)
+            else:
+                errors += 1
+        except Exception:
+            errors += 1
+        d += timedelta(days=1)
+    if errors:
+        st.toast(f"⚠️ Built {total} sessions, {errors} ngày lỗi",
+                 icon="⚠️")
+    else:
+        st.toast(f"✓ Đã build {total} sessions", icon="✅")
+
+
+def _load_sessions_for_range(date_from: date, date_to: date,
+                              branch: str | None,
+                              nv_id_filter: list[int] | None) -> list[dict]:
+    """Load sessions + schedule + template + nv info merged. Sort newest-first."""
+    # 1. Load schedules in range (embed template only — nhan_vien có 2 FK)
+    q = supabase.table("attendance_work_schedules").select(
+        "id, nhan_vien_id, work_date, shift_template_id, status, "
+        "shift_templates(label, branch_name, is_technician, default_hours)"
+    ).gte("work_date", date_from.isoformat()) \
+     .lte("work_date", date_to.isoformat())
+
+    if nv_id_filter is not None:
+        if not nv_id_filter:
+            return []
+        q = q.in_("nhan_vien_id", nv_id_filter)
+
+    sched_rows = q.execute().data or []
+
+    if branch:
+        sched_rows = [r for r in sched_rows
+                      if (r.get("shift_templates") or {}).get("branch_name") == branch]
+
+    if not sched_rows:
+        return []
+
+    sched_map = {r["id"]: r for r in sched_rows}
+    sched_ids = list(sched_map.keys())
+
+    # 2. Load sessions cho các schedule_ids (batch 200 phòng URL length)
+    sess_rows: list[dict] = []
+    for i in range(0, len(sched_ids), 200):
+        chunk = sched_ids[i:i + 200]
+        res = supabase.table("attendance_sessions").select("*") \
+            .in_("schedule_id", chunk).execute()
+        sess_rows.extend(res.data or [])
+
+    # 3. Load NV info (ho_ten + role)
+    nv_ids_needed = list({r["nhan_vien_id"] for r in sched_rows})
+    nv_map: dict[int, dict] = {}
+    if nv_ids_needed:
+        nv_res = supabase.table("nhan_vien").select("id, ho_ten, role") \
+            .in_("id", nv_ids_needed).execute()
+        nv_map = {n["id"]: n for n in (nv_res.data or [])}
+
+    # 4. Merge — anchor by schedule (mỗi schedule = 1 row)
+    sess_by_sched = {s["schedule_id"]: s for s in sess_rows}
+    result = []
+    for sched_id, sched in sched_map.items():
+        s = sess_by_sched.get(sched_id)
+        tmpl = sched.get("shift_templates") or {}
+        nv = nv_map.get(sched["nhan_vien_id"], {})
+        sched_status = sched.get("status") or "scheduled"
+
+        # Skip cancelled schedules (không tính bảng công)
+        if sched_status == "cancelled":
+            continue
+
+        # Schedule leave_* không có session → tạo virtual row
+        if not s and sched_status in ("leave_paid", "leave_unpaid"):
+            result.append({
+                "session_id": None,
+                "schedule_id": sched_id,
+                "nhan_vien_id": sched["nhan_vien_id"],
+                "ho_ten": nv.get("ho_ten", "?"),
+                "role": nv.get("role", ""),
+                "work_date": sched.get("work_date", ""),
+                "shift_label": tmpl.get("label", "?"),
+                "branch_name": tmpl.get("branch_name", ""),
+                "is_technician": tmpl.get("is_technician", False),
+                "check_in_at": None,
+                "check_out_at": None,
+                "is_late": False,
+                "late_minutes": 0,
+                "worked_minutes": 0,
+                "regular_minutes": 0,
+                "ot_minutes": 0,
+                "status": sched_status,
+                "is_auto_checkout": False,
+                "note": None,
+            })
+            continue
+
+        if not s:
+            # Chưa build session row → skip (UI hint user bấm Cập nhật)
+            continue
+
+        result.append({
+            "session_id": s["id"],
+            "schedule_id": sched_id,
+            "nhan_vien_id": s["nhan_vien_id"],
+            "ho_ten": nv.get("ho_ten", "?"),
+            "role": nv.get("role", ""),
+            "work_date": sched.get("work_date", ""),
+            "shift_label": tmpl.get("label", "?"),
+            "branch_name": tmpl.get("branch_name", ""),
+            "is_technician": tmpl.get("is_technician", False),
+            "check_in_at": s.get("check_in_at"),
+            "check_out_at": s.get("check_out_at"),
+            "is_late": bool(s.get("is_late", False)),
+            "late_minutes": int(s.get("late_minutes", 0) or 0),
+            "worked_minutes": int(s.get("worked_minutes", 0) or 0),
+            "regular_minutes": int(s.get("regular_minutes", 0) or 0),
+            "ot_minutes": int(s.get("ot_minutes", 0) or 0),
+            "status": s.get("status", "open"),
+            "is_auto_checkout": bool(s.get("is_auto_checkout", False)),
+            "note": s.get("note"),
+        })
+
+    # Sort newest first, then by NV
+    result.sort(
+        key=lambda r: (r["work_date"], r["shift_label"], r["ho_ten"]),
+        reverse=True,
+    )
+    return result
+
+
+def _format_time_vn(iso_str: str | None) -> str:
+    """ISO timestamptz → 'HH:MM' (VN tz). Empty/None → '—'."""
+    if not iso_str:
+        return "—"
+    try:
+        dt = datetime.fromisoformat(iso_str)
+        return dt.astimezone(VN_TZ).strftime("%H:%M")
+    except Exception:
+        return "—"
+
+
+def _format_minutes(m: int) -> str:
+    """123 minutes → '2h 3p'. Negative/0 → '0'."""
+    if not m or m <= 0:
+        return "0"
+    h = m // 60
+    p = m % 60
+    if h and p:
+        return f"{h}h {p}p"
+    if h:
+        return f"{h}h"
+    return f"{p}p"
+
+
+def _sessions_to_df(sessions: list[dict]) -> pd.DataFrame:
+    rows = []
+    for s in sessions:
+        try:
+            wd = datetime.strptime(s["work_date"], "%Y-%m-%d").date()
+            ngay_str = wd.strftime("%d/%m")
+            dow = DOW_VN[wd.weekday()]
+        except Exception:
+            ngay_str = s.get("work_date", "?")
+            dow = ""
+
+        status = s.get("status", "open")
+        status_lbl = _STATUS_LABEL_VN.get(status, status)
+        if s.get("is_auto_checkout") and status == "auto_closed":
+            status_lbl += " ⚠"
+
+        late_str = f"{s['late_minutes']}p" if s.get("is_late") else "—"
+        branch_short = (s.get("branch_name") or "")[:10]
+
+        rows.append({
+            "Ngày": ngay_str,
+            "Thứ": dow,
+            "NV": s["ho_ten"],
+            "Ca": f"{s['shift_label']} ({branch_short})",
+            "Vào": _format_time_vn(s.get("check_in_at")),
+            "Ra": _format_time_vn(s.get("check_out_at")),
+            "Worked": _format_minutes(s.get("worked_minutes", 0)),
+            "OT": _format_minutes(s.get("ot_minutes", 0)) if s.get("ot_minutes") else "—",
+            "Late": late_str,
+            "Status": status_lbl,
+            # Hidden cols cho summary
+            "_nv_id": s["nhan_vien_id"],
+            "_worked_minutes": s.get("worked_minutes", 0),
+            "_ot_minutes": s.get("ot_minutes", 0),
+            "_regular_minutes": s.get("regular_minutes", 0),
+            "_is_late": bool(s.get("is_late", False)),
+            "_status": status,
+        })
+    return pd.DataFrame(rows)
+
+
+def _render_bang_cong_table(df: pd.DataFrame):
+    if df.empty:
+        st.info("Không có session nào.")
+        return
+    display_cols = ["Ngày", "Thứ", "NV", "Ca", "Vào", "Ra",
+                    "Worked", "OT", "Late", "Status"]
+    st.dataframe(
+        df[display_cols],
+        hide_index=True,
+        use_container_width=True,
+        height=min(36 * (len(df) + 1) + 4, 600),
+    )
+
+
+def _render_bang_cong_summary(df: pd.DataFrame):
+    if df.empty:
+        return
+    summary = df.groupby("NV").agg(
+        sessions=("Ngày", "count"),
+        regular_minutes=("_regular_minutes", "sum"),
+        ot_minutes=("_ot_minutes", "sum"),
+        worked_minutes=("_worked_minutes", "sum"),
+        late_count=("_is_late", "sum"),
+    ).reset_index()
+
+    summary["Giờ regular"] = summary["regular_minutes"].apply(_format_minutes)
+    summary["Giờ OT"] = summary["ot_minutes"].apply(_format_minutes)
+    summary["Tổng worked"] = summary["worked_minutes"].apply(_format_minutes)
+    summary["Late"] = summary["late_count"].astype(int)
+    summary = summary.rename(columns={"sessions": "Sessions"})
+
+    st.dataframe(
+        summary[["NV", "Sessions", "Giờ regular", "Giờ OT",
+                 "Tổng worked", "Late"]],
+        hide_index=True,
+        use_container_width=True,
+    )
+
+    # Overall metrics
+    total_sessions = int(summary["Sessions"].sum())
+    total_worked = int(summary["worked_minutes"].sum())
+    total_ot = int(summary["ot_minutes"].sum())
+    total_late = int(summary["late_count"].sum())
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Sessions", total_sessions)
+    col2.metric("Tổng worked", _format_minutes(total_worked))
+    col3.metric("Tổng OT", _format_minutes(total_ot))
+    col4.metric("Late count", total_late)

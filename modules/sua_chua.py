@@ -857,70 +857,148 @@ def module_sua_chua():
             can_create = (
                 ten_khach.strip() and sdt_khach.strip() and mo_ta.strip()
             )
+            # Layer 1: Disable button khi đang submit (chống double-click).
+            # Streamlit single-thread per session → click 2 đợi click 1 xong,
+            # rerun thấy flag=True → button disabled → click 2 no-op.
+            _submitting_key = f"sc_drawer_submitting_{fcnt}"
+            _is_submitting = st.session_state.get(_submitting_key, False)
             if st.button(
-                "✅ Tạo phiếu & In", key=f"sc_drawer_submit_{fcnt}",
+                "⏳ Đang tạo..." if _is_submitting else "✅ Tạo phiếu & In",
+                key=f"sc_drawer_submit_{fcnt}",
                 type="primary", use_container_width=True,
-                disabled=not can_create,
+                disabled=(not can_create) or _is_submitting,
             ):
+                st.session_state[_submitting_key] = True
                 try:
-                    ma = _gen_ma_phieu()
-                    supabase.table("phieu_sua_chua").insert({
-                        "ma_phieu": ma, "chi_nhanh": cn_create,
-                        "ten_khach": ten_khach.strip(),
-                        "sdt_khach": sdt_khach.strip(),
-                        "loai_yeu_cau": loai_yc,
-                        "hieu_dong_ho": hieu_dh.strip() or None,
-                        "dac_diem": dac_diem.strip() or None,
-                        "mo_ta_loi": mo_ta.strip(),
-                        "khach_tra_truoc": int(tra_truoc),
-                        "ghi_chu_noi_bo": ghi_chu.strip() or None,
-                        "trang_thai": "Đang sửa",
-                        "nguoi_tiep_nhan": ho_ten,
-                        "ngay_hen_tra": ngay_hen.isoformat() if ngay_hen else None,
-                        "created_by": user.get("username", ""),
-                        "created_at": now_vn_iso(),
-                        "updated_at": now_vn_iso(),
-                    }).execute()
-                    if items:
-                        supabase.table("phieu_sua_chua_chi_tiet").insert(
-                            [{"ma_phieu": ma, **item} for item in items]
-                        ).execute()
+                    # Layer 2: Soft check duplicate 60s gần nhất.
+                    # Fingerprint 11 business fields, compare Python-side
+                    # để NULL-safe (tránh quirks của Supabase .eq() với None).
+                    from datetime import timedelta as _td
+                    _cutoff = (now_vn() - _td(seconds=60)).isoformat()
+                    _recent = supabase.table("phieu_sua_chua").select(
+                        "ma_phieu, sdt_khach, ten_khach, chi_nhanh, "
+                        "loai_yeu_cau, hieu_dong_ho, dac_diem, mo_ta_loi, "
+                        "khach_tra_truoc, ngay_hen_tra, nguoi_tiep_nhan"
+                    ).eq("created_by", user.get("username", "")) \
+                     .gte("created_at", _cutoff).execute()
 
-                    _upsert_khach_hang(
-                        ten_khach.strip(), sdt_khach.strip(), cn_create,
+                    def _ns(v):
+                        """Normalize string field (NULL → '', strip)."""
+                        if v is None:
+                            return ""
+                        return str(v).strip()
+
+                    def _ni(v):
+                        """Normalize int field (NULL → 0)."""
+                        try:
+                            return int(v or 0)
+                        except (ValueError, TypeError):
+                            return 0
+
+                    _new_fp = (
+                        _ns(sdt_khach), _ns(ten_khach), _ns(cn_create),
+                        _ns(loai_yc), _ns(hieu_dh), _ns(dac_diem),
+                        _ns(mo_ta), _ni(tra_truoc),
+                        _ns(ngay_hen.isoformat() if ngay_hen else None),
+                        _ns(ho_ten),
                     )
+                    _dup_ma = None
+                    for _r in _recent.data or []:
+                        _old_fp = (
+                            _ns(_r.get("sdt_khach")),
+                            _ns(_r.get("ten_khach")),
+                            _ns(_r.get("chi_nhanh")),
+                            _ns(_r.get("loai_yeu_cau")),
+                            _ns(_r.get("hieu_dong_ho")),
+                            _ns(_r.get("dac_diem")),
+                            _ns(_r.get("mo_ta_loi")),
+                            _ni(_r.get("khach_tra_truoc")),
+                            _ns(_r.get("ngay_hen_tra")),
+                            _ns(_r.get("nguoi_tiep_nhan")),
+                        )
+                        if _new_fp == _old_fp:
+                            _dup_ma = _r.get("ma_phieu")
+                            break
 
-                    # Build print HTML — render sau rerun
-                    ct_new = pd.DataFrame(items) if items else pd.DataFrame()
-                    if not ct_new.empty:
-                        for col in ["so_luong", "don_gia"]:
-                            ct_new[col] = pd.to_numeric(
-                                ct_new[col], errors="coerce"
-                            ).fillna(0).astype(int)
-                    phieu_data = {
-                        "ma_phieu": ma, "chi_nhanh": cn_create,
-                        "ten_khach": ten_khach.strip(),
-                        "sdt_khach": sdt_khach.strip(),
-                        "hieu_dong_ho": hieu_dh.strip(),
-                        "loai_yeu_cau": loai_yc, "dac_diem": dac_diem.strip(),
-                        "mo_ta_loi": mo_ta.strip(),
-                        "khach_tra_truoc": int(tra_truoc),
-                        "ngay_hen_tra": str(ngay_hen) if ngay_hen else None,
-                        "nguoi_tiep_nhan": ho_ten,
-                        "Ngày TN": now_vn().strftime("%d/%m/%Y %H:%M"),
-                    }
-                    st.session_state["sc_pending_print_html"] = \
-                        _build_phieu_html(phieu_data, ct_new)
-                    st.session_state["sc_just_created_ma"] = ma
+                    if _dup_ma:
+                        st.error(
+                            f"⚠️ Phiếu giống hệt vừa tạo trong 60 giây "
+                            f"qua: **`{_dup_ma}`**\n\n"
+                            f"Nếu thực sự cần tạo phiếu thứ 2 với cùng "
+                            f"thông tin: đợi 60 giây hoặc thay đổi 1 "
+                            f"trường (mô tả lỗi, đặc điểm, hiệu đồng hồ...)."
+                        )
+                        log_action(
+                            "SC_DUPLICATE_BLOCKED",
+                            f"matched={_dup_ma} sdt={sdt_khach} "
+                            f"cn={cn_create}",
+                        )
+                    else:
+                        # Original insert flow (không thay đổi)
+                        ma = _gen_ma_phieu()
+                        supabase.table("phieu_sua_chua").insert({
+                            "ma_phieu": ma, "chi_nhanh": cn_create,
+                            "ten_khach": ten_khach.strip(),
+                            "sdt_khach": sdt_khach.strip(),
+                            "loai_yeu_cau": loai_yc,
+                            "hieu_dong_ho": hieu_dh.strip() or None,
+                            "dac_diem": dac_diem.strip() or None,
+                            "mo_ta_loi": mo_ta.strip(),
+                            "khach_tra_truoc": int(tra_truoc),
+                            "ghi_chu_noi_bo": ghi_chu.strip() or None,
+                            "trang_thai": "Đang sửa",
+                            "nguoi_tiep_nhan": ho_ten,
+                            "ngay_hen_tra": ngay_hen.isoformat() if ngay_hen else None,
+                            "created_by": user.get("username", ""),
+                            "created_at": now_vn_iso(),
+                            "updated_at": now_vn_iso(),
+                        }).execute()
+                        if items:
+                            supabase.table("phieu_sua_chua_chi_tiet").insert(
+                                [{"ma_phieu": ma, **item} for item in items]
+                            ).execute()
 
-                    # Đóng drawer + cleanup state + reload data
-                    close_drawer()
-                    st.cache_data.clear()
-                    log_action("SC_CREATE",
-                               f"ma={ma} kh={ten_khach} cn={cn_create}")
-                    st.rerun()
+                        _upsert_khach_hang(
+                            ten_khach.strip(), sdt_khach.strip(), cn_create,
+                        )
+
+                        # Build print HTML — render sau rerun
+                        ct_new = pd.DataFrame(items) if items else pd.DataFrame()
+                        if not ct_new.empty:
+                            for col in ["so_luong", "don_gia"]:
+                                ct_new[col] = pd.to_numeric(
+                                    ct_new[col], errors="coerce"
+                                ).fillna(0).astype(int)
+                        phieu_data = {
+                            "ma_phieu": ma, "chi_nhanh": cn_create,
+                            "ten_khach": ten_khach.strip(),
+                            "sdt_khach": sdt_khach.strip(),
+                            "hieu_dong_ho": hieu_dh.strip(),
+                            "loai_yeu_cau": loai_yc, "dac_diem": dac_diem.strip(),
+                            "mo_ta_loi": mo_ta.strip(),
+                            "khach_tra_truoc": int(tra_truoc),
+                            "ngay_hen_tra": str(ngay_hen) if ngay_hen else None,
+                            "nguoi_tiep_nhan": ho_ten,
+                            "Ngày TN": now_vn().strftime("%d/%m/%Y %H:%M"),
+                        }
+                        st.session_state["sc_pending_print_html"] = \
+                            _build_phieu_html(phieu_data, ct_new)
+                        st.session_state["sc_just_created_ma"] = ma
+
+                        # Đóng drawer + cleanup state + reload data
+                        close_drawer()
+                        st.cache_data.clear()
+                        log_action("SC_CREATE",
+                                   f"ma={ma} kh={ten_khach} cn={cn_create}")
+                        st.rerun()
                 except Exception as e:
                     st.error(f"Lỗi tạo phiếu: {e}")
+                finally:
+                    # Layer 1: ALWAYS clear submitting flag (cả success/dup/error)
+                    # để button quay về clickable cho lần submit kế tiếp.
+                    # Note: nếu st.rerun() raise trong success path, finally
+                    # vẫn chạy trước khi exception propagate → flag được clear.
+                    st.session_state.pop(_submitting_key, None)
 
     # ══════════════════════════════════════════════════════════
     # PR3b — Edit drawer (render trong col_drawer khi sc_form_mode=edit)

@@ -396,18 +396,6 @@ def module_hoa_don():
         border: 1px solid #e7e7ea !important;
         cursor: pointer !important;
     }
-
-    /* 4. DEBUG MARKER v4 — confirm patch applied. Xóa sau khi user xác nhận. */
-    .stApp::before {
-        content: "HOA_DON_FIX_v4" !important;
-        position: fixed !important;
-        bottom: 4px !important; right: 4px !important;
-        background: #1a7f37 !important; color: white !important;
-        padding: 2px 8px !important; border-radius: 4px !important;
-        font-size: 10px !important; font-family: monospace !important;
-        z-index: 99999 !important; opacity: 0.6 !important;
-        pointer-events: none !important;
-    }
     </style>
     """, unsafe_allow_html=True)
 

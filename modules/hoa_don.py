@@ -321,6 +321,62 @@ def _copy_invoice_to_clipboard(inv: dict):
 def module_hoa_don():
     inject_hoa_don_css()
 
+    # ╔══════════════════════════════════════════════════════════════╗
+    # ║ NUCLEAR CSS INJECT — bypass st.html sanitizer that strips    ║
+    # ║ <style> tags. Use st.markdown(unsafe_allow_html=True) which  ║
+    # ║ is the documented Streamlit CSS injection pattern.            ║
+    # ║ DO NOT REMOVE — these 2 rules are NOT in static/hoa_don.css. ║
+    # ╚══════════════════════════════════════════════════════════════╝
+    st.markdown("""
+    <style>
+    /* 1. Force white background cho rail bên phải */
+    .stApp [class*="st-key-hd_rail"] {
+        background: #ffffff !important;
+        border-radius: 10px !important;
+        padding: 14px !important;
+    }
+    .stApp [class*="st-key-hd_rail"] > div {
+        background: transparent !important;
+    }
+
+    /* 2. Card list — cursor pointer + hover effect.
+       (Card click sẽ hoạt động qua <a href> nhúng trong HTML, không cần CSS overlay button) */
+    .stApp [class*="st-key-hd_card_"] {
+        cursor: pointer !important;
+        margin-bottom: 6px !important;
+    }
+    .stApp [class*="st-key-hd_card_"] a.hd-card-link {
+        text-decoration: none !important;
+        color: inherit !important;
+        display: block !important;
+    }
+    .stApp [class*="st-key-hd_card_"] a.hd-card-link:hover > div {
+        border-color: #c8c8cc !important;
+        box-shadow: 0 2px 8px rgba(24,24,27,0.06) !important;
+        transition: all .12s ease;
+    }
+
+    /* 3. DEBUG MARKER — confirm CSS injected (xóa sau khi test xong) */
+    .stApp::before {
+        content: "HOA_DON_FIX_v3" !important;
+        position: fixed !important;
+        bottom: 4px !important; right: 4px !important;
+        background: #1a7f37 !important; color: white !important;
+        padding: 2px 8px !important; border-radius: 4px !important;
+        font-size: 10px !important; font-family: monospace !important;
+        z-index: 99999 !important; opacity: 0.6 !important;
+        pointer-events: none !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # ── Process click qua URL query params ────────────────────────
+    qp = st.query_params
+    if "hd_open" in qp:
+        st.session_state["hd_sel_ma"] = qp["hd_open"]
+        del st.query_params["hd_open"]
+        st.rerun()
+
     try:
         active = get_active_branch()
         accessible = get_accessible_branches()
@@ -486,14 +542,20 @@ def module_hoa_don():
 
         col_list, col_rail = st.columns([6, 4], gap="medium")
         with col_list:
+            import time as _t
             for inv in page_invoices:
                 is_sel = inv["ma"] == sel_ma
                 with st.container(key=f"hd_card_{inv['ma']}"):
-                    st.html(list_card_html(inv, selected=is_sel))
-                    if st.button(" ", key=f"hd_open_{inv['ma']}",
-                                 use_container_width=True):
-                        st.session_state["hd_sel_ma"] = inv["ma"]
-                        st.rerun()
+                    # Card bọc trong <a href> — click trigger URL change →
+                    # Streamlit rerun → query param "hd_open" được xử lý ở
+                    # đầu module_hoa_don. Cache-buster (timestamp) để URL
+                    # khác nhau giữa các click trên cùng card.
+                    cb = int(_t.time() * 1000)
+                    st.html(
+                        f'<a class="hd-card-link" href="?hd_open={inv["ma"]}&_={cb}" target="_self">'
+                        f'{list_card_html(inv, selected=is_sel)}'
+                        f'</a>'
+                    )
 
             if n_pages > 1:
                 with st.container(key="hd_pagination"):

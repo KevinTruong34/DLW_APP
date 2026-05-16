@@ -339,26 +339,67 @@ def module_hoa_don():
         background: transparent !important;
     }
 
-    /* 2. Card list — cursor pointer + hover effect.
-       (Card click sẽ hoạt động qua <a href> nhúng trong HTML, không cần CSS overlay button) */
+    /* 2. Card click overlay — biến button thành vùng click vô hình phủ card.
+       (Bỏ pattern <a href> của v3 vì gây logout do full page reload.) */
     .stApp [class*="st-key-hd_card_"] {
+        position: relative !important;
         cursor: pointer !important;
         margin-bottom: 6px !important;
     }
-    .stApp [class*="st-key-hd_card_"] a.hd-card-link {
-        text-decoration: none !important;
-        color: inherit !important;
-        display: block !important;
+    .stApp [class*="st-key-hd_card_"] > div {
+        gap: 0 !important;
     }
-    .stApp [class*="st-key-hd_card_"] a.hd-card-link:hover > div {
+    .stApp [class*="st-key-hd_card_"] [data-testid="stElementContainer"]:has([data-testid="stButton"]) {
+        position: absolute !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        z-index: 10 !important;
+    }
+    .stApp [class*="st-key-hd_card_"] [data-testid="stButton"] {
+        width: 100% !important;
+        height: 100% !important;
+        margin: 0 !important;
+        padding: 0 !important;
+    }
+    .stApp [class*="st-key-hd_card_"] [data-testid="stButton"] > button {
+        width: 100% !important;
+        height: 100% !important;
+        min-height: 100% !important;
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+        color: transparent !important;
+        opacity: 0 !important;
+        cursor: pointer !important;
+        padding: 0 !important;
+    }
+    /* Hover feedback trên card (target inner div của card được render bởi list_card_html) */
+    .stApp [class*="st-key-hd_card_"]:hover [data-testid="stHtml"] > div > div {
         border-color: #c8c8cc !important;
         box-shadow: 0 2px 8px rgba(24,24,27,0.06) !important;
-        transition: all .12s ease;
+        transition: all .12s ease !important;
     }
 
-    /* 3. DEBUG MARKER — confirm CSS injected (xóa sau khi test xong) */
+    /* 3. Exclude pagination buttons — KHÔNG overlay/làm trong suốt nút « » */
+    .stApp [class*="st-key-hd_pagination"] [data-testid="stElementContainer"]:has([data-testid="stButton"]) {
+        position: static !important;
+        inset: auto !important;
+    }
+    .stApp [class*="st-key-hd_pagination"] [data-testid="stButton"] > button {
+        opacity: 1 !important;
+        color: #18181b !important;
+        background: #ffffff !important;
+        border: 1px solid #e7e7ea !important;
+        cursor: pointer !important;
+    }
+
+    /* 4. DEBUG MARKER v4 — confirm patch applied. Xóa sau khi user xác nhận. */
     .stApp::before {
-        content: "HOA_DON_FIX_v3" !important;
+        content: "HOA_DON_FIX_v4" !important;
         position: fixed !important;
         bottom: 4px !important; right: 4px !important;
         background: #1a7f37 !important; color: white !important;
@@ -369,13 +410,6 @@ def module_hoa_don():
     }
     </style>
     """, unsafe_allow_html=True)
-
-    # ── Process click qua URL query params ────────────────────────
-    qp = st.query_params
-    if "hd_open" in qp:
-        st.session_state["hd_sel_ma"] = qp["hd_open"]
-        del st.query_params["hd_open"]
-        st.rerun()
 
     try:
         active = get_active_branch()
@@ -542,20 +576,17 @@ def module_hoa_don():
 
         col_list, col_rail = st.columns([6, 4], gap="medium")
         with col_list:
-            import time as _t
             for inv in page_invoices:
                 is_sel = inv["ma"] == sel_ma
                 with st.container(key=f"hd_card_{inv['ma']}"):
-                    # Card bọc trong <a href> — click trigger URL change →
-                    # Streamlit rerun → query param "hd_open" được xử lý ở
-                    # đầu module_hoa_don. Cache-buster (timestamp) để URL
-                    # khác nhau giữa các click trên cùng card.
-                    cb = int(_t.time() * 1000)
-                    st.html(
-                        f'<a class="hd-card-link" href="?hd_open={inv["ma"]}&_={cb}" target="_self">'
-                        f'{list_card_html(inv, selected=is_sel)}'
-                        f'</a>'
-                    )
+                    st.html(list_card_html(inv, selected=is_sel))
+                    # Button overlay phủ kín card (CSS làm invisible nhưng vẫn click được).
+                    # Click → Streamlit rerun qua WebSocket, KHÔNG full page reload,
+                    # KHÔNG mất session state → KHÔNG bị logout.
+                    if st.button(" ", key=f"hd_open_{inv['ma']}",
+                                 use_container_width=True):
+                        st.session_state["hd_sel_ma"] = inv["ma"]
+                        st.rerun()
 
             if n_pages > 1:
                 with st.container(key="hd_pagination"):

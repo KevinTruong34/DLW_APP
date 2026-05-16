@@ -800,9 +800,18 @@ def module_sua_chua():
         # ── Bordered container cho search + items đã thêm ──
         with st.container(border=True):
             st.markdown(
+                '<div style="display:flex;justify-content:space-between;'
+                'align-items:center;margin-bottom:6px;gap:12px;">'
                 '<div style="font-size:11.5px;color:var(--sc-ink-3);'
-                'font-weight:500;letter-spacing:0.02em;margin-bottom:6px;'
-                'text-transform:uppercase;">🔍 tìm + thêm dịch vụ / linh kiện</div>',
+                'font-weight:500;letter-spacing:0.02em;'
+                'text-transform:uppercase;">🔍 tìm + thêm dịch vụ / linh kiện</div>'
+                '<a href="https://docs.google.com/spreadsheets/d/1rHyrv1M8E4hX_Aqe5HisL63_SeWpFOQ2meylY4SOXEM/edit?usp=sharing" '
+                'target="_blank" rel="noopener noreferrer" '
+                'style="font-size:11.5px;color:var(--sc-accent);'
+                'text-decoration:none;font-weight:500;white-space:nowrap;" '
+                'title="Mở Google Sheets gợi ý mã trong tab mới">'
+                '💡 Gợi ý mã ↗</a>'
+                '</div>',
                 unsafe_allow_html=True,
             )
 
@@ -1068,9 +1077,18 @@ def module_sua_chua():
         # pending state — items lưu ngay khi click.
         with st.container(border=True):
             st.markdown(
+                '<div style="display:flex;justify-content:space-between;'
+                'align-items:center;margin-bottom:6px;gap:12px;">'
                 '<div style="font-size:11.5px;color:var(--sc-ink-3);'
-                'font-weight:500;letter-spacing:0.02em;margin-bottom:6px;'
-                'text-transform:uppercase;">🔍 thêm dịch vụ / linh kiện</div>',
+                'font-weight:500;letter-spacing:0.02em;'
+                'text-transform:uppercase;">🔍 thêm dịch vụ / linh kiện</div>'
+                '<a href="https://docs.google.com/spreadsheets/d/1rHyrv1M8E4hX_Aqe5HisL63_SeWpFOQ2meylY4SOXEM/edit?usp=sharing" '
+                'target="_blank" rel="noopener noreferrer" '
+                'style="font-size:11.5px;color:var(--sc-accent);'
+                'text-decoration:none;font-weight:500;white-space:nowrap;" '
+                'title="Mở Google Sheets gợi ý mã trong tab mới">'
+                '💡 Gợi ý mã ↗</a>'
+                '</div>',
                 unsafe_allow_html=True,
             )
 

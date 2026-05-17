@@ -1,5 +1,5 @@
 # AI_CONTEXT.md — DL Watch Store App (Web App quản lý cũ)
-**Cập nhật:** 15/05/2026 | **Session tiếp theo bắt đầu từ đây**
+**Cập nhật:** 16/05/2026 | **Session tiếp theo bắt đầu từ đây**
 
 ---
 
@@ -21,8 +21,10 @@ User đã **bỏ KiotViet** — adapter đã xử lý sẵn. Đã hoàn tất:
 - **Barcode Live Scan trong Chuyển hàng** (12/05/2026)
 - **Hide Streamlit Branding** (12/05/2026)
 - **★ Module Chấm công — 8 phases COMPLETE** (14-15/05/2026) — schema/RPC + Cấu hình + Lịch + POS check-in + Bảng công + Sửa công + Tính lương + Export Excel + POS "Lương của tôi" + delete period
+- **★ Hoá đơn module redesign — master-detail rail UI** (15-16/05/2026) — smart search + filter container + master-detail grid 60/40 + PSC linkage 1:1 + responsive ≤1100px + clickable cards (button overlay) + pagination 10/page + white BG rail
+- **★ Sửa chữa anti-duplicate + "Gợi ý mã" link** (16/05/2026) — 2-layer guard (client flag + DB fingerprint 60s) chống NV double-click tạo phiếu trùng + anchor link Google Sheets gợi ý mã hàng trong giỏ hàng
 
-**★ Workflow đã proven (lưu memory):** 2-phase cho big features — Phase A planning trong Claude in app (front-load decisions → PLAN.md chi tiết), Phase B execute với Claude Code (pre-flight verify, commit từng phase, smoke tests trước INSERT thật). Pattern này đã thành công 5+ lần liên tiếp (SPK/DVPS, B1, B2a, B2b, APSC K80, Barcode Scan).
+**★ Workflow đã proven (lưu memory):** 2-phase cho big features — Phase A planning trong Claude in app (front-load decisions → PLAN.md chi tiết), Phase B execute với Claude Code (pre-flight verify, commit từng phase, smoke tests trước INSERT thật). Pattern này đã thành công 6+ lần liên tiếp (SPK/DVPS, B1, B2a, B2b, APSC K80, Barcode Scan, Chấm công, Hoá đơn redesign).
 
 ---
 
@@ -36,18 +38,24 @@ utils/
                        ★ Hướng B: bỏ apply delta block trong load_the_kho
                        ★ B1: load_all_nhan_vien, call_rpc, search_hd_pos_for_edit, search_pdt/sc_for_edit
                        ★ B2: load_record_with_history (generic cho 3 loại phiếu)
+                       ★ HĐ redesign (15/05): load_psc_for_apsc(ma_ycsc) — 1:1 lookup hoa_don."Mã YCSC" → phieu_sua_chua.ma_phieu, cache 120s
   auth.py              login/logout, session, get_user, is_admin, is_ke_toan_or_admin
                        ★ B1: require_admin() helper
   helpers.py           now_vn, now_vn_iso, today_vn, fmt_vn, _normalize, _build_phieu_html, _in_phieu_sc
+  hd_style.py          ★ MỚI (15/05/2026): HTML helpers cho hoa_don redesign — list_card_html, detail_rail_html, empty_rail_html, smart_search_predicate, fmt_money, short_time, badges (status/type/pttt/nv/khach). Theo STREAMLIT_DESIGN_RULES: inline styles only trong st.html output, KHÔNG dùng class
   print_queue_apsc.py  ★ MỚI (10/05/2026): enqueue HĐ APSC vào print_queue cho daemon in K80
   scanner_component.py ★ MỚI (12/05/2026): live_scanner() — shared với POS repo (copy thuần)
   barcode.py           ★ MỚI (12/05/2026): lookup_hang_by_ma_vach — shared với POS repo (copy thuần)
   hide_streamlit_badge.py ★ MỚI (12/05/2026): hide_streamlit_branding() — shared với POS repo (copy thuần)
+static/
+  hang_hoa.css         CSS cho module Hàng hóa (hh-scope)
+  hoa_don.css          ★ MỚI (15/05/2026): CSS cho module Hoá đơn (hd-scope) — design tokens + Streamlit widget overrides + responsive collapse. NOTE: CSS file inject qua st.html(<style>) BỊ DOMPurify STRIP → critical rules phải inject inline trong Python qua st.markdown (xem section Hoá đơn module redesign)
 modules/
   tong_quan.py         Dashboard + greeting (admin only - sales overview restructured)
-  hoa_don.py           Tra cứu HĐ KiotViet + AHD POS + AHDD đổi/trả (merge unified)
+  hoa_don.py           ★ REDESIGNED 15-16/05/2026: master-detail rail UI (smart search + filter container + master-detail grid + PSC linkage 1:1 + responsive ≤1100px + clickable cards + pagination 10/page). Nuclear CSS inject inline qua st.markdown để bypass DOMPurify strip
   hang_hoa.py          Master hàng hóa + tồn kho. ★ Form thêm/sửa hỗ trợ flag is_open_price (radio "Mã giá mở") + cột `ma_vach`
   sua_chua.py          Phiếu sửa chữa. ★ Wire enqueue_apsc trong _tao_hoa_don_apsc + UI 2 nút In/Hủy trong tab_list
+                       ★ 16/05/2026: 2-layer anti-duplicate guard trong _render_create_drawer (client flag + DB fingerprint 60s) + anchor "💡 Gợi ý mã ↗" link Google Sheets trong header giỏ hàng (cả create + edit drawer)
   nhap_hang.py         Nhập/Trả hàng NCC
   khach_hang.py        Danh sách + tra cứu khách hàng (tong_ban đã cộng dồn POS)
   kiem_ke.py           Kiểm kê kho. ★ _kk_approve gọi RPC duyet_phieu_kiem_ke
@@ -108,6 +116,128 @@ hang_hoa_ma_vach_idx (UNIQUE)        -- ★ MỚI (11/05) WHERE ma_vach IS NOT N
 
 - `ahd_seq`, `ahdd_seq`, `ahdc_seq` — POS
 - **★ `sc_seq`** (mới 08/05) — phiếu sửa chữa, race-safe. Wrapper `next_sc_seq()` cho Python.
+
+---
+
+## ★ HOÁ ĐƠN MODULE REDESIGN (15-16/05/2026)
+
+### Mục đích
+
+Thay UI 3-sub-tab cũ (SĐT/Mã HĐ/Ngày) bằng **master-detail rail** với smart search + filter unified + PSC linkage 1:1. KHÔNG đổi logic Supabase / phân quyền / prefix detection / cache.
+
+### Kết quả 13 PRs (#72 → #84)
+
+| Phase | PR | Nội dung |
+|---|---|---|
+| Foundation | #72 | `static/hoa_don.css` + `utils/hd_style.py` + `load_psc_for_apsc()` trong db.py |
+| Layout | #72 | Master-detail grid 60/40 + smart search + filter container + status segmented radio |
+| Polish | #73 | Real print (Blob URL A4) + clipboard JS + sticky rail + status counts realtime |
+| Responsive | #74 | Collapse ≤1100px (rail xuống dưới list) |
+| UI feedback | #75 | Bỏ title row + default Hoàn thành + default ngày=today + white BG rail + clickable cards + pagination 10/page |
+| Click fix | #76-#79 | Failed attempts (CSS selectors sai cho Streamlit version) |
+| **Nuclear** | **#80** | **Bypass DOMPurify strip — inject CSS qua `st.markdown(unsafe_allow_html=True)` thay vì st.html(<style>)** |
+| Logout fix | #81 | Revert `<a href>` → `st.button` overlay (a-tag gây full page reload → mất session → logout) |
+| Cleanup | #82 | Xóa DEBUG MARKER + 3 action buttons (In/Sao chép/Phiếu kho) + orphan helpers |
+
+### Architecture
+
+**Entry**: `module_hoa_don()` trong `modules/hoa_don.py`. Cùng tên hàm như cũ, app.py không đổi.
+
+**Data load**: `load_hoa_don_unified(branches_key=load_cns)` — unchanged.
+
+**State keys**:
+| Key | Mục đích |
+|---|---|
+| `hd_sel_ma` | Mã HĐ đang chọn (rail render) |
+| `hd_search` | Smart search input |
+| `hd_filter_nv` / `hd_filter_pttt` / `hd_filter_loai` / `hd_filter_status` | Filters |
+| `hd_date_from` / `hd_date_to` | Date range (default both = today) |
+| `hd_page` | Pagination current page (10 HĐ/page) |
+| `hd_cn` | Chi nhánh filter (admin/kế toán >1 CN) |
+
+**Smart search predicate** (`smart_search_predicate` trong hd_style.py):
+- All digits → match SĐT contains OR Mã HĐ endswith/contains
+- Alpha only → match Tên khách hàng (case-insensitive)
+- Mixed → match Mã HĐ contains
+
+**PSC linkage 1:1** (APSC chỉ):
+- `hoa_don."Mã YCSC"` → `phieu_sua_chua.ma_phieu`
+- Loader `load_psc_for_apsc(ma_ycsc)` cache 120s, trả về dict|None: `{ma, san_pham, ngay_nhan, ngay_tra, tinh_trang, kt_vien}`
+- Render: badge `🔗 PSC` trên list card + block hổ phách "Phiếu sửa chữa liên đới" trong rail với badge trạng thái có màu
+
+### ⚠ CRITICAL — Streamlit CSS inject pattern
+
+**`st.html("<style>...</style>")` BỊ DOMPurify STRIP** — silent failure, không error, file đọc OK, content bị strip trước render. Đó là lý do hoa_don.css file inject qua `inject_hoa_don_css()` (xài st.html) chưa từng được apply.
+
+**Solution**: 2 critical rules (white BG rail + card overlay) inject inline trong Python qua `st.markdown(unsafe_allow_html=True)`:
+
+```python
+st.markdown("""
+<style>
+.stApp [class*="st-key-hd_rail"] { background: #ffffff !important; ... }
+.stApp [class*="st-key-hd_card_"] [data-testid="stElementContainer"]:has([data-testid="stButton"]) {
+    position: absolute !important; inset: 0 !important; z-index: 10 !important;
+}
+.stApp [class*="st-key-hd_card_"] [data-testid="stButton"] > button {
+    opacity: 0 !important; color: transparent !important; ...
+}
+</style>
+""", unsafe_allow_html=True)
+```
+
+CSS file `static/hoa_don.css` vẫn giữ — chứa **không-critical rules** (font, design tokens, button styling) mà default theme apply OK.
+
+### ⚠ CRITICAL — Card click overlay (KHÔNG dùng `<a href>`)
+
+**Pattern**: `with st.container(key=f"hd_card_{ma}"):` chứa `st.html(card)` + `st.button(" ")`. CSS make button container `position:absolute; inset:0; opacity:0` → overlay invisible nhưng vẫn clickable (qua WebSocket, KHÔNG full page reload → session preserved).
+
+**ĐÃ THỬ và FAIL `<a href="?hd_open=X" target="_self">`** — pattern này trigger browser full page navigation → session_state reset → `user` key mất → auth check fail → logout. Đừng quay lại pattern này.
+
+### Files thay đổi
+
+- `modules/hoa_don.py` — refactor toàn bộ (giữ entry point + load + permission)
+- `utils/hd_style.py` — MỚI
+- `utils/db.py` — thêm `load_psc_for_apsc`
+- `static/hoa_don.css` — MỚI (non-critical CSS)
+
+---
+
+## ★ SỬA CHỮA UPDATES (16/05/2026)
+
+### "💡 Gợi ý mã ↗" link (PR #83)
+
+Anchor inline HTML ở góc phải header "🔍 tìm + thêm dịch vụ / linh kiện" trong **cả create drawer và edit drawer**. Click mở tab mới đến Google Sheets danh mục mã gợi ý (`https://docs.google.com/spreadsheets/d/1rHyrv1M8E4hX_Aqe5HisL63_SeWpFOQ2meylY4SOXEM/...`).
+
+Design: HTML anchor `<a target="_blank" rel="noopener noreferrer">` thay vì `st.link_button` để giữ visual hierarchy — search input vẫn là CTA chính, "gợi ý" là affordance phụ. Inline style reuse `var(--sc-accent)` CSS token.
+
+### Anti-duplicate 2-layer guard (PR #84)
+
+**Bug**: NV double-click "Tạo phiếu & In" → 2 phiếu trùng toàn bộ data, chỉ khác mã (trong context ~60s).
+
+**Layer 1 — Client guard** (chống double-click sequential):
+```python
+_submitting_key = f"sc_drawer_submitting_{fcnt}"
+_is_submitting = st.session_state.get(_submitting_key, False)
+if st.button("⏳ Đang tạo..." if _is_submitting else "✅ Tạo phiếu & In",
+             disabled=(not can_create) or _is_submitting):
+    st.session_state[_submitting_key] = True
+    try:
+        # ... insert flow ...
+    finally:
+        st.session_state.pop(_submitting_key, None)  # ALWAYS clear
+```
+
+Streamlit single-thread per session → click 2 đợi click 1 xong → rerun thấy flag=True → button disabled → no-op. `finally` clear flag cover success/dup/error.
+
+**Layer 2 — DB soft check** (chống resubmit cùng data trong 60s):
+- Query `phieu_sua_chua` trong 60s gần nhất của cùng `created_by`
+- Compare **fingerprint 10 fields** Python-side (NULL-safe, tránh quirks của Supabase `.eq()` với None): `sdt_khach`, `ten_khach`, `chi_nhanh`, `loai_yeu_cau`, `hieu_dong_ho`, `dac_diem`, `mo_ta_loi`, `khach_tra_truoc`, `ngay_hen_tra`, `nguoi_tiep_nhan`
+- Match → block với error đỏ hiển thị mã phiếu cũ + log `SC_DUPLICATE_BLOCKED`
+- Bỏ field `ghi_chu_noi_bo` khỏi fingerprint (per user confirm)
+
+**Override khi block**: NV đợi 60s HOẶC đổi 1 field (mô tả lỗi, đặc điểm...).
+
+**Scope**: Chỉ `_render_create_drawer`. KHÔNG patch `_render_edit_drawer` (edit không gen mã mới → không có duplicate risk).
 
 ---
 
@@ -1068,6 +1198,11 @@ Claude session mới nên:
 | **★ Chấm công không xóa được kỳ lương đã chốt** | UI Phase 6 chỉ cho `compute`/`finalize`, không có nút xóa | RPC `delete_payroll_period` (admin-only) + `_delete_period_dialog` typing `"XÓA"` confirm. Cascade items + adjustments. Audit `ATT_PAYROLL_DELETE` warn. |
 | **★ Chấm công RPC báo `record "v_session" is not a scalar variable`** | Khai báo `v_session RECORD` rồi dùng `INTO v_admin_name, v_session` (scalar) | Tách scalar var `v_admin_role TEXT` riêng |
 | **★ Chấm công insert admin_edit_history reject CHECK** | `table_name` không có `'attendance_sessions'` trong CHECK whitelist | ALTER constraint thêm `'attendance_sessions'` (migration p1_admin_edit_history_whitelist) |
+| **★ Hoá đơn CSS file không apply** | `inject_hoa_don_css()` dùng `st.html("<style>...</style>")` → DOMPurify strip `<style>` tags silent | Inject critical CSS inline qua `st.markdown(unsafe_allow_html=True)` ngay trong `module_hoa_don()`. CSS file giữ cho non-critical (font, tokens) |
+| **★ `st.container(key="X")` class không nằm trên wrapper outer** | Streamlit issue #10674 — bug class placement trong 1.55-1.56, class trên inner element thay vì wrapper | Workaround: dùng `:has()` selector hoặc apply style cho cả inner + outer. Hoặc tránh phụ thuộc class placement, dùng `[class*="st-key-X"]` substring match (tolerant) |
+| **★ Click HĐ → app bị logout** | Pattern `<a href="?hd_open=X" target="_self">` trigger browser full page navigation → Streamlit session_state reset → auth check fail | KHÔNG dùng `<a href>` query param. Dùng `st.button` overlay (CSS `position:absolute; inset:0; opacity:0`) — click qua WebSocket, không page reload |
+| **★ Streamlit `.main .block-container` selector không match** | Class đã rename thành `.stMainBlockContainer` trong Streamlit ≥1.50 | Bỏ ancestor scope `.main .block-container`. Target trực tiếp qua unique key class (`[class*="st-key-..."]`) hoặc dùng `.stApp` làm root |
+| **★ NV double-click tạo 2 phiếu sửa chữa trùng** | Submit handler không guard double-click + DB chưa có unique constraint trên fingerprint | 2-layer guard: (1) session flag `sc_drawer_submitting_{fcnt}` disable button + label "⏳ Đang tạo..." + clear trong `finally`. (2) Pre-INSERT query phiếu trong 60s cùng `created_by`, compare 10-field fingerprint Python-side, block + log `SC_DUPLICATE_BLOCKED` |
 
 ---
 

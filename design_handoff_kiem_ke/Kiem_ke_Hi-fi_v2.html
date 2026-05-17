@@ -1,0 +1,1085 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<title>Kiểm kê v2 — Hi-fi (Streamlit-safe)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+  /* ════════════════════════════════════════════════════════════════════
+     STREAMLIT-SAFE STYLE RULES — only what survives the iframe boundary:
+
+       1. :root CSS variables          → propagate to inline style="var(...)"
+       2. body + html resets           → applied at document level
+       3. @keyframes definitions       → reachable by inline style="animation: ..."
+       4. Selectors on <button>/<input>/<select>/<textarea>
+          (= Streamlit native widgets — production maps via [data-testid=...])
+
+     Everything ELSE (every <div>, <span>, <section>, etc.) MUST use
+     inline style="..." with var(--token) for colors and tokens.
+     ════════════════════════════════════════════════════════════════════ */
+
+  :root {
+    --bg: #f6f7f5;
+    --surface: #ffffff;
+    --surface-2: #f8fafc;
+    --surface-3: #f1f5f9;
+    --line: #e5e7eb;
+    --line-strong: #cbd5e1;
+    --ink: #0b1220;
+    --ink-2: #475569;
+    --ink-3: #94a3b8;
+    --green-50: #ecfdf5;
+    --green-100: #d1fae5;
+    --green-200: #a7f3d0;
+    --green-500: #10b981;
+    --green-600: #059669;
+    --green-700: #047857;
+    --green-800: #065f46;
+    --green-900: #064e3b;
+    --warn-50: #fffbeb;
+    --warn-200: #fde68a;
+    --warn-700: #b45309;
+    --bad-50: #fef2f2;
+    --bad-200: #fecaca;
+    --bad-500: #ef4444;
+    --bad-700: #b91c1c;
+    --info-50: #eff6ff;
+    --info-200: #bfdbfe;
+    --info-700: #1d4ed8;
+    --shadow-1: 0 1px 2px rgba(15,23,42,.04), 0 1px 1px rgba(15,23,42,.03);
+    --shadow-2: 0 4px 14px -4px rgba(15,23,42,.10), 0 2px 4px rgba(15,23,42,.04);
+    --shadow-card: 0 8px 28px -10px rgba(4,120,87,.18), 0 2px 6px rgba(15,23,42,.04);
+    --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    font-family: var(--sans);
+    color: var(--ink);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ─── Keyframes (applied via inline style="animation:...") ─── */
+  @keyframes flashOk {
+    0%   { background: var(--green-50); }
+    100% { background: var(--surface); }
+  }
+  @keyframes flashBad {
+    0%   { background: var(--bad-50); }
+    100% { background: var(--surface); }
+  }
+  @keyframes rowFlash {
+    0%   { background: var(--green-100); }
+    100% { background: transparent; }
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: none; }
+  }
+  @keyframes toastIn {
+    from { transform: translateX(16px); opacity: 0; }
+    to   { transform: none; opacity: 1; }
+  }
+  @keyframes toastOut {
+    to   { transform: translateX(16px); opacity: 0; }
+  }
+  @keyframes modalIn {
+    from { transform: translateY(10px); opacity: 0; }
+    to   { transform: none; opacity: 1; }
+  }
+
+  /* ════════ NATIVE WIDGET CLASSES (button / input / select only) ════════
+     In production: copy block to static/kiem_ke.css and target via
+     [data-testid="stButton"] button { ... }
+     [data-testid="stTextInput"] input { ... }
+     etc.  ──────────────────────────────────────────────────────────────  */
+
+  button.btn {
+    appearance: none;
+    border: 1px solid var(--line-strong);
+    background: var(--surface);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 14px;
+    font-weight: 600;
+    padding: 9px 14px;
+    border-radius: 10px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    transition: all .12s ease;
+    box-shadow: var(--shadow-1);
+    white-space: nowrap;
+  }
+  button.btn:hover { border-color: var(--ink-3); }
+  button.btn.primary {
+    background: var(--green-700);
+    border-color: var(--green-800);
+    color: #fff;
+    box-shadow: 0 1px 0 rgba(255,255,255,.1) inset, 0 1px 2px rgba(4,120,87,.30);
+  }
+  button.btn.primary:hover { background: var(--green-800); }
+  button.btn.danger {
+    background: #fff;
+    color: var(--bad-700);
+    border-color: var(--bad-200);
+  }
+  button.btn.danger:hover { background: var(--bad-50); }
+  button.btn.ghost {
+    background: transparent;
+    box-shadow: none;
+    border-color: transparent;
+    color: var(--ink-2);
+  }
+  button.btn.ghost:hover { background: var(--surface-2); color: var(--ink); }
+  button.btn.lg { padding: 14px 22px; font-size: 15px; border-radius: 14px; }
+  button.btn.sm { padding: 6px 10px; font-size: 12px; box-shadow: none; }
+  button.btn.icon { padding: 9px; }
+  button.btn:disabled { opacity: .5; cursor: not-allowed; }
+
+  /* 2-tab segmented control (inner buttons) */
+  button.kk-seg-tab {
+    appearance: none;
+    border: none;
+    background: transparent;
+    padding: 10px 18px;
+    font-family: var(--sans);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ink-2);
+    cursor: pointer;
+    border-radius: 10px;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    transition: all .15s ease;
+  }
+  button.kk-seg-tab:hover { color: var(--ink); }
+  button.kk-seg-tab.active {
+    background: var(--ink);
+    color: #fff;
+    box-shadow: 0 1px 0 rgba(255,255,255,.1) inset, 0 1px 2px rgba(0,0,0,.15);
+  }
+
+  /* Filter chips (buttons) */
+  button.kk-chip {
+    appearance: none;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--ink-2);
+    font-family: var(--sans);
+    font-size: 13px;
+    font-weight: 500;
+    padding: 6px 12px;
+    border-radius: 999px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: all .12s ease;
+  }
+  button.kk-chip:hover { border-color: var(--line-strong); color: var(--ink); }
+  button.kk-chip.active {
+    background: var(--ink);
+    color: #fff;
+    border-color: var(--ink);
+  }
+
+  /* Scan input — big bold mono */
+  input.kk-scan-input {
+    flex: 1;
+    border: none;
+    outline: none;
+    background: transparent;
+    font-family: var(--mono);
+    font-size: 17px;
+    font-weight: 500;
+    color: var(--ink);
+    padding: 14px 0;
+    letter-spacing: .01em;
+  }
+  input.kk-scan-input::placeholder {
+    color: var(--ink-3);
+    font-family: var(--sans);
+    font-weight: 400;
+  }
+
+  /* Search input (small, in toolbar) */
+  input.kk-search {
+    flex: 1;
+    border: none;
+    outline: none;
+    background: transparent;
+    font-family: var(--sans);
+    font-size: 13px;
+    color: var(--ink);
+    width: 100%;
+  }
+  input.kk-search::placeholder { color: var(--ink-3); }
+
+  /* Number input inside data-editor cell */
+  input.kk-cell-edit {
+    width: 64px;
+    text-align: right;
+    border: 1px solid transparent;
+    background: transparent;
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    font-size: 14px;
+    padding: 5px 8px;
+    border-radius: 6px;
+    color: var(--ink);
+    outline: none;
+  }
+  input.kk-cell-edit:hover { border-color: var(--line); background: #fff; }
+  input.kk-cell-edit:focus {
+    border-color: var(--green-600);
+    background: #fff;
+    box-shadow: 0 0 0 3px var(--green-100);
+  }
+
+  /* Modal form widgets */
+  input.kk-form, select.kk-form, textarea.kk-form {
+    width: 100%;
+    border: 1px solid var(--line-strong);
+    border-radius: 10px;
+    padding: 9px 12px;
+    font-family: var(--sans);
+    font-size: 14px;
+    color: var(--ink);
+    background: var(--surface);
+    outline: none;
+    resize: vertical;
+  }
+  input.kk-form:focus, select.kk-form:focus, textarea.kk-form:focus {
+    border-color: var(--green-600);
+    box-shadow: 0 0 0 3px var(--green-100);
+  }
+
+  /* Native dataframe row — Streamlit's st.dataframe renders <tr>;
+     these styles mirror it for the preview. */
+  tr.kk-row {
+    cursor: pointer;
+    transition: background .12s ease;
+  }
+  tr.kk-row:hover { background: var(--surface-2); }
+  tr.kk-row.selected {
+    background: var(--green-50);
+    box-shadow: inset 3px 0 0 var(--green-700);
+  }
+
+  /* Row-flash animation marker — JS sets animation property inline,
+     but referencing a class-keyed keyframe is allowed because the class
+     itself doesn't paint anything (just an animation hook). */
+  tr.kk-flash { animation: rowFlash 1.4s ease; }
+</style>
+</head>
+<body>
+
+  <!-- ════════ App shell — all inline ════════ -->
+  <div style="max-width:1320px;margin:0 auto;padding:28px 28px 80px;">
+
+    <!-- ── Module header ── -->
+    <div style="display:flex;align-items:flex-end;justify-content:space-between;gap:24px;margin-bottom:22px;">
+      <div>
+        <h1 style="margin:0;font-size:26px;font-weight:700;letter-spacing:-0.01em;color:var(--ink);display:flex;align-items:center;gap:12px;">
+          <span style="width:36px;height:36px;background:var(--green-50);border:1px solid var(--green-200);border-radius:10px;display:inline-flex;align-items:center;justify-content:center;color:var(--green-700);">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 9h18M9 3v18"/><circle cx="6" cy="6" r=".7" fill="currentColor"/><circle cx="6" cy="12" r=".7" fill="currentColor"/><circle cx="6" cy="18" r=".7" fill="currentColor"/></svg>
+          </span>
+          Kiểm kê
+        </h1>
+        <p style="margin:6px 0 0;color:var(--ink-2);font-size:13px;">
+          <b style="color:var(--ink);font-weight:600;">DLW · Inventory</b>
+          &nbsp;›&nbsp; Kiểm kê &nbsp;·&nbsp; v2 redesign
+        </p>
+      </div>
+      <div style="display:inline-flex;align-items:center;gap:8px;background:var(--surface);border:1px solid var(--line);padding:7px 12px 7px 10px;border-radius:999px;font-size:13px;color:var(--ink-2);box-shadow:var(--shadow-1);">
+        <span style="width:6px;height:6px;border-radius:50%;background:var(--green-600);"></span>
+        Đang ở chi nhánh: <b style="color:var(--ink);font-weight:600;">100 Lê Quý Đôn</b>
+      </div>
+    </div>
+
+    <!-- ── 2-tab segmented control ── -->
+    <div style="display:inline-flex;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:4px;box-shadow:var(--shadow-1);margin-bottom:20px;">
+      <button class="kk-seg-tab active" data-pane="scan">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 8v8M11 8v8M15 8v8M19 8v8"/></svg>
+        Quét kiểm kê
+        <span style="background:var(--surface-3);color:var(--ink-2);border-radius:999px;padding:1px 7px;font-size:11px;font-weight:700;font-variant-numeric:tabular-nums;">1 đang kiểm</span>
+      </button>
+      <button class="kk-seg-tab" data-pane="manage">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z"/><path d="M9 13h6M9 17h4"/></svg>
+        Quản lý phiếu
+        <span style="background:var(--surface-3);color:var(--ink-2);border-radius:999px;padding:1px 7px;font-size:11px;font-weight:700;font-variant-numeric:tabular-nums;">15</span>
+      </button>
+    </div>
+
+    <!-- ════════════════ PANE 1 — QUÉT ════════════════ -->
+    <section id="pane-scan" style="display:block;animation:fadeIn .2s ease;">
+
+      <!-- Context bar -->
+      <div style="background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px 16px;box-shadow:var(--shadow-1);display:flex;align-items:center;gap:18px;margin-bottom:16px;">
+        <div id="phieuPicker" style="display:flex;align-items:center;gap:10px;padding:6px 10px 6px 6px;border:1px solid var(--line);border-radius:10px;background:var(--surface-2);cursor:pointer;transition:all .12s ease;">
+          <span style="background:var(--green-700);color:#fff;font-family:var(--mono);font-weight:700;font-size:12px;letter-spacing:.02em;padding:5px 9px;border-radius:6px;">KK000013</span>
+          <span style="display:flex;flex-direction:column;line-height:1.2;">
+            <span style="font-weight:600;color:var(--ink);font-size:14px;">100 LQĐ <span style="color:var(--ink-3);">·</span> Đồng hồ Casio</span>
+            <span style="font-size:12px;color:var(--ink-2);">Nguyễn Liên · tạo 17/05 09:41</span>
+          </span>
+          <span style="color:var(--ink-3);">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 9 5 5 5-5"/></svg>
+          </span>
+        </div>
+
+        <div style="flex:1;display:flex;flex-direction:column;gap:6px;">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;font-size:12px;color:var(--ink-2);">
+            <span>Tiến độ quét</span>
+            <span><b id="progressTxt" style="color:var(--ink);font-family:var(--mono);font-weight:600;font-size:13px;">87 / 261</b> &nbsp;·&nbsp; <b id="progressPct" style="color:var(--ink);font-family:var(--mono);font-weight:600;font-size:13px;">33%</b></span>
+          </div>
+          <div style="height:8px;background:var(--surface-3);border-radius:999px;overflow:hidden;">
+            <span id="progressBar" style="display:block;height:100%;background:linear-gradient(90deg, var(--green-500), var(--green-700));border-radius:999px;transition:width .35s ease;width:33%;"></span>
+          </div>
+        </div>
+
+        <div style="display:flex;gap:10px;">
+          <div style="border:1px solid var(--line);border-radius:10px;padding:8px 12px;background:var(--surface);min-width:84px;">
+            <div style="font-size:11px;color:var(--ink-3);letter-spacing:.04em;text-transform:uppercase;font-weight:600;">Khớp</div>
+            <div id="kpiOk" style="font-family:var(--mono);font-weight:700;font-size:17px;color:var(--green-700);font-variant-numeric:tabular-nums;">12</div>
+          </div>
+          <div style="border:1px solid var(--line);border-radius:10px;padding:8px 12px;background:var(--surface);min-width:84px;">
+            <div style="font-size:11px;color:var(--ink-3);letter-spacing:.04em;text-transform:uppercase;font-weight:600;">Lệch</div>
+            <div id="kpiBad" style="font-family:var(--mono);font-weight:700;font-size:17px;color:var(--bad-700);font-variant-numeric:tabular-nums;">−174</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ─── HERO SCAN CARD ─── -->
+      <div id="scanShell" style="background:var(--surface);border:1px solid var(--line);border-radius:18px;box-shadow:var(--shadow-2);overflow:hidden;margin-bottom:14px;transition:box-shadow .3s ease, border-color .3s ease;">
+        <div id="scanCard" style="padding:18px 20px 20px;display:grid;grid-template-columns:minmax(280px,1.4fr) repeat(5, minmax(0, 1fr));gap:18px;align-items:center;">
+
+          <!-- Col 1: item id -->
+          <div style="display:flex;flex-direction:column;gap:4px;min-width:0;">
+            <span style="display:inline-flex;align-items:center;gap:6px;background:var(--green-50);color:var(--green-700);border:1px solid var(--green-200);border-radius:999px;padding:3px 10px;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;width:fit-content;margin-bottom:4px;">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 5 5L20 7"/></svg>
+              Vừa quét · +1
+            </span>
+            <span id="scCode" style="font-family:var(--mono);font-weight:700;font-size:22px;letter-spacing:-0.01em;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">LTP-V005D-4BUDF</span>
+            <span id="scName" style="font-size:13px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">Đồng hồ Casio LTP-V005D-4BUDF (nữ, dây da nâu)</span>
+          </div>
+
+          <!-- Col 2-6: fields -->
+          <div style="display:flex;flex-direction:column;gap:3px;min-width:0;border-left:1px solid var(--line);padding-left:14px;">
+            <span style="font-size:11px;letter-spacing:.04em;text-transform:uppercase;font-weight:600;color:var(--ink-3);">Mã vạch</span>
+            <span id="scVach" style="font-family:var(--mono);font-weight:700;font-size:18px;color:var(--ink);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">LV005D4BU</span>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:3px;min-width:0;border-left:1px solid var(--line);padding-left:14px;">
+            <span style="font-size:11px;letter-spacing:.04em;text-transform:uppercase;font-weight:600;color:var(--ink-3);">Giá bán</span>
+            <span id="scPrice" style="font-family:var(--mono);font-weight:700;font-size:18px;color:var(--ink);font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">1.450.000 <small style="font-family:var(--sans);font-size:12px;color:var(--ink-3);font-weight:500;">₫</small></span>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:3px;min-width:0;border-left:1px solid var(--line);padding-left:14px;">
+            <span style="font-size:11px;letter-spacing:.04em;text-transform:uppercase;font-weight:600;color:var(--ink-3);">SL đã quét</span>
+            <span id="scQuet" style="font-family:var(--mono);font-weight:700;font-size:22px;color:var(--green-700);font-variant-numeric:tabular-nums;">3</span>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:3px;min-width:0;border-left:1px solid var(--line);padding-left:14px;">
+            <span style="font-size:11px;letter-spacing:.04em;text-transform:uppercase;font-weight:600;color:var(--ink-3);">Tồn hệ thống</span>
+            <span id="scTon" style="font-family:var(--mono);font-weight:700;font-size:18px;color:var(--ink);font-variant-numeric:tabular-nums;">5</span>
+          </div>
+
+          <div id="scLechField" style="display:flex;flex-direction:column;gap:3px;min-width:0;border-left:1px solid var(--line);padding-left:14px;">
+            <span style="font-size:11px;letter-spacing:.04em;text-transform:uppercase;font-weight:600;color:var(--ink-3);">Lệch tạm</span>
+            <span id="scLech" style="font-family:var(--mono);font-weight:700;font-size:18px;color:var(--bad-700);font-variant-numeric:tabular-nums;">−2</span>
+          </div>
+        </div>
+
+        <!-- Error overlay (toggled via JS by changing display) -->
+        <div id="badMsg" style="display:none;padding:14px 20px;align-items:center;gap:10px;border-top:1px dashed var(--bad-200);background:var(--bad-50);">
+          <span style="color:var(--bad-700);">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+          </span>
+          <span><b id="badMsgCode" style="color:var(--bad-700);">Mã 'ABCD-XYZ'</b> không tồn tại trong hệ thống KiotViet</span>
+          <span id="badMsgX" style="margin-left:auto;cursor:pointer;color:var(--bad-700);">✕</span>
+        </div>
+      </div>
+
+      <!-- Scan input row -->
+      <form id="scanForm" autocomplete="off" style="display:flex;gap:10px;margin-bottom:18px;">
+        <label id="scanInputLabel" for="scanField" style="flex:1;display:flex;align-items:center;gap:10px;background:var(--surface);border:1.5px solid var(--line-strong);border-radius:14px;padding:4px 4px 4px 16px;transition:all .15s ease;">
+          <span style="color:var(--green-700);display:flex;">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 7v10M11 7v10M15 7v10M19 7v10"/></svg>
+          </span>
+          <input id="scanField" class="kk-scan-input" placeholder="Đưa con trỏ ở đây và quét mã vạch / mã hàng…" />
+          <span style="display:inline-flex;align-items:center;gap:4px;background:var(--surface-3);border:1px solid var(--line);color:var(--ink-2);font-size:11px;font-weight:600;padding:3px 7px;border-radius:5px;margin-right:8px;">↵ Enter để +1</span>
+        </label>
+        <button type="submit" class="btn primary lg">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+          Quét +1
+        </button>
+      </form>
+
+      <!-- Toolbar above items table -->
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+        <div id="scanFilterChips" style="display:inline-flex;gap:6px;">
+          <button class="kk-chip active" data-filter="all">Tất cả <span style="font-family:var(--mono);font-weight:700;font-size:12px;opacity:.85;">9</span></button>
+          <button class="kk-chip" data-filter="lech">Còn lệch <span style="font-family:var(--mono);font-weight:700;font-size:12px;opacity:.85;">7</span></button>
+          <button class="kk-chip" data-filter="khop">Đã khớp <span style="font-family:var(--mono);font-weight:700;font-size:12px;opacity:.85;">2</span></button>
+          <button class="kk-chip" data-filter="chua">Chưa quét <span style="font-family:var(--mono);font-weight:700;font-size:12px;opacity:.85;">6</span></button>
+        </div>
+        <div style="flex:1;"></div>
+        <div style="display:flex;align-items:center;gap:8px;border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:7px 12px;min-width:220px;">
+          <span style="color:var(--ink-3);">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg>
+          </span>
+          <input class="kk-search" placeholder="Tìm trong phiếu này…" />
+        </div>
+      </div>
+
+      <div style="font-size:12px;color:var(--ink-3);margin-bottom:12px;display:flex;align-items:center;gap:6px;">
+        <span style="color:var(--green-700);">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 1 1 3 3L7 19l-4 1 1-4Z"/></svg>
+        </span>
+        Nháy đúp vào cột <b style="color:var(--ink-2);">SL Thực tế</b> để sửa trực tiếp · Mã vừa quét sẽ nhảy lên đầu bảng
+      </div>
+
+      <!-- Items table (data_editor look) -->
+      <div style="background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:var(--shadow-1);">
+        <table style="width:100%;border-collapse:collapse;font-size:14px;">
+          <thead>
+            <tr>
+              <th style="text-align:left;background:var(--surface-2);color:var(--ink-2);font-weight:600;font-size:12px;letter-spacing:.03em;text-transform:uppercase;padding:12px 14px;border-bottom:1px solid var(--line);white-space:nowrap;">Mã hàng / Mã vạch</th>
+              <th style="text-align:left;background:var(--surface-2);color:var(--ink-2);font-weight:600;font-size:12px;letter-spacing:.03em;text-transform:uppercase;padding:12px 14px;border-bottom:1px solid var(--line);">Tên hàng</th>
+              <th style="text-align:right;background:var(--surface-2);color:var(--ink-2);font-weight:600;font-size:12px;letter-spacing:.03em;text-transform:uppercase;padding:12px 14px;border-bottom:1px solid var(--line);white-space:nowrap;">Tồn</th>
+              <th style="text-align:right;background:var(--surface-2);color:var(--ink-2);font-weight:600;font-size:12px;letter-spacing:.03em;text-transform:uppercase;padding:12px 14px;border-bottom:1px solid var(--line);white-space:nowrap;">SL Quét</th>
+              <th style="text-align:right;background:var(--surface-2);color:var(--ink-2);font-weight:600;font-size:12px;letter-spacing:.03em;text-transform:uppercase;padding:12px 14px;border-bottom:1px solid var(--line);white-space:nowrap;">SL Thực tế ✏️</th>
+              <th style="text-align:right;background:var(--surface-2);color:var(--ink-2);font-weight:600;font-size:12px;letter-spacing:.03em;text-transform:uppercase;padding:12px 14px;border-bottom:1px solid var(--line);white-space:nowrap;">Lệch</th>
+            </tr>
+          </thead>
+          <tbody id="scanTableBody">
+            <!-- rows injected at runtime by JS for cleanliness -->
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Footer actions -->
+      <div style="margin-top:18px;display:flex;gap:12px;">
+        <button class="btn primary lg" style="flex:1;justify-content:center;">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 5 5L20 7"/></svg>
+          Hoàn thành kiểm kê
+        </button>
+        <button class="btn lg">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+          Xuất Excel KiotViet
+        </button>
+        <button class="btn danger lg">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+          Hủy phiếu
+        </button>
+      </div>
+    </section>
+
+    <!-- ════════════════ PANE 2 — QUẢN LÝ PHIẾU (Phương án A) ════════════════ -->
+    <section id="pane-manage" style="display:none;animation:fadeIn .2s ease;">
+
+      <!-- Toolbar: filter chips + search + Tạo phiếu -->
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+        <div id="manageFilters" style="display:inline-flex;gap:6px;">
+          <button class="kk-chip active" data-status="all">Tất cả <span style="font-family:var(--mono);font-weight:700;font-size:12px;opacity:.85;">15</span></button>
+          <button class="kk-chip" data-status="scanning">Đang kiểm <span style="font-family:var(--mono);font-weight:700;font-size:12px;opacity:.85;">1</span></button>
+          <button class="kk-chip" data-status="waiting">Chờ duyệt <span style="font-family:var(--mono);font-weight:700;font-size:12px;opacity:.85;">1</span></button>
+          <button class="kk-chip" data-status="approved">Đã duyệt <span style="font-family:var(--mono);font-weight:700;font-size:12px;opacity:.85;">13</span></button>
+        </div>
+        <div style="flex:1;"></div>
+        <div style="display:flex;align-items:center;gap:8px;border:1px solid var(--line);background:var(--surface);border-radius:10px;padding:7px 12px;min-width:260px;">
+          <span style="color:var(--ink-3);">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg>
+          </span>
+          <input class="kk-search" placeholder="Tìm mã phiếu / chi nhánh / nhóm…" />
+        </div>
+        <button class="btn primary" id="btnCreate">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+          Tạo phiếu mới
+        </button>
+      </div>
+
+      <!-- ============ Native dataframe (Phương án A) ============ 
+           In production: render via st.dataframe(..., on_select="rerun", 
+           selection_mode="single-row"). Click row → returns selection in 
+           Python → render detail panel below.  ────────────────────────── -->
+      <div style="background:var(--surface);border:1px solid var(--line);border-radius:14px;overflow:hidden;box-shadow:var(--shadow-1);">
+
+        <!-- Helper hint above the table -->
+        <div style="padding:10px 14px;border-bottom:1px solid var(--line);background:var(--surface-2);font-size:12px;color:var(--ink-2);display:flex;align-items:center;gap:6px;">
+          <span style="color:var(--green-700);">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+          </span>
+          Click vào một dòng phiếu để mở chi tiết & hành động ở bảng dưới
+        </div>
+
+        <table id="manageTable" style="width:100%;border-collapse:collapse;font-size:14px;">
+          <thead>
+            <tr>
+              <th style="text-align:left;background:var(--surface-2);color:var(--ink-2);font-weight:600;font-size:12px;letter-spacing:.03em;text-transform:uppercase;padding:11px 14px;border-bottom:1px solid var(--line);white-space:nowrap;">Mã phiếu</th>
+              <th style="text-align:left;background:var(--surface-2);color:var(--ink-2);font-weight:600;font-size:12px;letter-spacing:.03em;text-transform:uppercase;padding:11px 14px;border-bottom:1px solid var(--line);">Chi nhánh</th>
+              <th style="text-align:left;background:var(--surface-2);color:var(--ink-2);font-weight:600;font-size:12px;letter-spacing:.03em;text-transform:uppercase;padding:11px 14px;border-bottom:1px solid var(--line);">Nhóm hàng</th>
+              <th style="text-align:left;background:var(--surface-2);color:var(--ink-2);font-weight:600;font-size:12px;letter-spacing:.03em;text-transform:uppercase;padding:11px 14px;border-bottom:1px solid var(--line);">Trạng thái</th>
+              <th style="text-align:left;background:var(--surface-2);color:var(--ink-2);font-weight:600;font-size:12px;letter-spacing:.03em;text-transform:uppercase;padding:11px 14px;border-bottom:1px solid var(--line);">Người tạo</th>
+              <th style="text-align:left;background:var(--surface-2);color:var(--ink-2);font-weight:600;font-size:12px;letter-spacing:.03em;text-transform:uppercase;padding:11px 14px;border-bottom:1px solid var(--line);">Ngày tạo</th>
+              <th style="text-align:left;background:var(--surface-2);color:var(--ink-2);font-weight:600;font-size:12px;letter-spacing:.03em;text-transform:uppercase;padding:11px 14px;border-bottom:1px solid var(--line);">Tiến độ</th>
+            </tr>
+          </thead>
+          <tbody id="manageTableBody"></tbody>
+        </table>
+      </div>
+
+      <!-- ============ Detail panel (shown when a row is selected) ============ -->
+      <div id="detailEmpty" style="background:var(--surface);border:1px dashed var(--line);border-radius:14px;padding:36px 24px;margin-top:14px;text-align:center;color:var(--ink-3);">
+        <div style="width:48px;height:48px;border-radius:50%;background:var(--surface-2);display:inline-flex;align-items:center;justify-content:center;margin-bottom:10px;color:var(--ink-3);">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg>
+        </div>
+        <div style="font-size:14px;font-weight:600;color:var(--ink-2);">Chưa chọn phiếu nào</div>
+        <div style="font-size:13px;color:var(--ink-3);margin-top:4px;">Click vào một dòng trong bảng để xem chi tiết & hành động</div>
+      </div>
+
+      <!-- Detail card mounted via JS into #detailMount -->
+      <div id="detailMount"></div>
+
+    </section>
+  </div>
+
+  <!-- ── Toast region ── -->
+  <div id="toastRegion" style="position:fixed;top:18px;right:22px;z-index:50;display:flex;flex-direction:column;gap:10px;pointer-events:none;"></div>
+
+  <!-- ── Modal: Tạo phiếu mới ── -->
+  <div id="createScrim" style="display:none;position:fixed;inset:0;background:rgba(15,23,42,.32);backdrop-filter:blur(2px);z-index:40;align-items:center;justify-content:center;">
+    <div style="background:var(--surface);width:min(640px, 92vw);border-radius:18px;box-shadow:0 24px 60px -12px rgba(15,23,42,.35);overflow:hidden;animation:modalIn .2s ease;">
+      <header style="padding:18px 20px 14px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;">
+        <h3 style="margin:0;font-size:17px;font-weight:700;">Tạo phiếu kiểm kê mới</h3>
+        <button id="closeCreate" class="btn ghost icon">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </header>
+      <div style="padding:18px 20px;display:flex;flex-direction:column;gap:14px;">
+        <div>
+          <label style="font-size:12px;font-weight:600;color:var(--ink-2);margin-bottom:6px;display:block;">Chi nhánh kiểm kê</label>
+          <select class="kk-form">
+            <option>100 Lê Quý Đôn</option>
+            <option>Coop Vũng Tàu</option>
+          </select>
+        </div>
+
+        <div style="background:var(--green-50);border:1px solid var(--green-200);border-radius:10px;padding:12px 14px;display:flex;align-items:center;gap:10px;font-size:13px;color:var(--green-800);">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41 13.42 20.58a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><circle cx="7" cy="7" r="1"/></svg>
+          Mã phiếu dự kiến: <b style="font-family:var(--mono);font-size:14px;color:var(--green-900);">KK000014</b>
+        </div>
+
+        <div>
+          <label style="font-size:12px;font-weight:600;color:var(--ink-2);margin-bottom:6px;display:block;">Nhóm hàng kiểm kê (chọn nhiều)</label>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;border:1px solid var(--line-strong);border-radius:10px;padding:8px;min-height:44px;background:var(--surface);">
+            <span style="background:var(--green-700);color:#fff;padding:3px 8px 3px 10px;border-radius:999px;font-size:12px;font-weight:500;display:inline-flex;align-items:center;gap:6px;">Đồng hồ đeo tay › Casio <span style="cursor:pointer;opacity:.7;">✕</span></span>
+            <span style="background:var(--green-700);color:#fff;padding:3px 8px 3px 10px;border-radius:999px;font-size:12px;font-weight:500;display:inline-flex;align-items:center;gap:6px;">Đồng hồ đeo tay › Citizen <span style="cursor:pointer;opacity:.7;">✕</span></span>
+            <input class="kk-search" placeholder="+ thêm nhóm…" style="min-width:120px;padding:5px;font-size:13px;" />
+          </div>
+        </div>
+
+        <div>
+          <label style="font-size:12px;font-weight:600;color:var(--ink-2);margin-bottom:6px;display:block;">Ghi chú (tùy chọn)</label>
+          <textarea class="kk-form" rows="3" placeholder="Ghi chú cho đợt kiểm kê này…"></textarea>
+        </div>
+      </div>
+      <footer style="padding:14px 20px 18px;display:flex;justify-content:flex-end;gap:10px;border-top:1px solid var(--line);">
+        <button class="btn" id="cancelCreate">Hủy</button>
+        <button class="btn primary">Tạo phiếu kiểm kê</button>
+      </footer>
+    </div>
+  </div>
+
+<script>
+  /* ──────────────────────────────────────────────────────────────────────
+     Style helper — produce common inline style strings for repeated DOM
+     fragments. Keeps the design system token usage consistent without
+     using CSS classes for content elements.
+     ──────────────────────────────────────────────────────────────────── */
+  const S = {
+    tdBase: "padding:13px 14px;border-bottom:1px solid var(--line);vertical-align:middle;color:var(--ink);",
+    tdNum:  "text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums;font-weight:500;",
+    tdCode: "font-family:var(--mono);font-weight:600;font-size:13px;color:var(--ink);",
+    deltaPos: "color:var(--green-700);font-weight:600;",
+    deltaNeg: "color:var(--bad-700);font-weight:600;",
+    deltaZero: "color:var(--ink-3);font-weight:500;",
+    stScanning: "display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid var(--warn-200);background:var(--warn-50);color:var(--warn-700);line-height:1.5;",
+    stWaiting:  "display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid var(--info-200);background:var(--info-50);color:var(--info-700);line-height:1.5;",
+    stApproved: "display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:999px;font-size:12px;font-weight:600;border:1px solid var(--green-200);background:var(--green-50);color:var(--green-700);line-height:1.5;",
+    miniProgWrap: "height:8px;width:120px;background:var(--surface-3);border-radius:999px;overflow:hidden;",
+    miniProgFill: "display:block;height:100%;background:linear-gradient(90deg, var(--green-500), var(--green-700));border-radius:999px;",
+    kpiTile: "border:1px solid var(--line);border-radius:10px;padding:10px 14px;background:var(--surface);min-width:120px;flex:1;",
+    kpiK: "font-size:11px;color:var(--ink-3);letter-spacing:.04em;text-transform:uppercase;font-weight:600;",
+    kpiV: "font-family:var(--mono);font-weight:700;font-size:20px;color:var(--ink);font-variant-numeric:tabular-nums;",
+  };
+  const statusBadge = (status) => {
+    if (status === "scanning") return `<span style="${S.stScanning}"><span style="width:6px;height:6px;border-radius:50%;background:var(--warn-700);"></span>Đang kiểm</span>`;
+    if (status === "waiting")  return `<span style="${S.stWaiting}"><span style="width:6px;height:6px;border-radius:50%;background:var(--info-700);"></span>Chờ duyệt</span>`;
+    return `<span style="${S.stApproved}"><span style="width:6px;height:6px;border-radius:50%;background:var(--green-700);"></span>Đã duyệt</span>`;
+  };
+  const miniProg = (pct) => `<div style="${S.miniProgWrap}"><span style="${S.miniProgFill}width:${pct}%;"></span></div>`;
+  const fmtVnd = n => n.toLocaleString('vi-VN');
+
+  /* ────── Tab switch ────── */
+  const segBtns = document.querySelectorAll('.kk-seg-tab');
+  segBtns.forEach(b => b.addEventListener('click', () => {
+    segBtns.forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+    document.getElementById('pane-scan').style.display = b.dataset.pane === 'scan' ? 'block' : 'none';
+    document.getElementById('pane-manage').style.display = b.dataset.pane === 'manage' ? 'block' : 'none';
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (b.dataset.pane === 'scan') setTimeout(focusScan, 50);
+  }));
+
+  /* ────── Filter chips ────── */
+  document.querySelectorAll('#scanFilterChips .kk-chip').forEach(c => c.addEventListener('click', () => {
+    document.querySelectorAll('#scanFilterChips .kk-chip').forEach(x => x.classList.remove('active'));
+    c.classList.add('active');
+    const f = c.dataset.filter;
+    document.querySelectorAll('#scanTableBody tr').forEach(tr => {
+      const st = tr.dataset.status;
+      let show = true;
+      if (f === 'lech') show = st === 'lech';
+      else if (f === 'khop') show = st === 'khop';
+      else if (f === 'chua') show = st === 'chua';
+      tr.style.display = show ? '' : 'none';
+    });
+  }));
+  document.querySelectorAll('#manageFilters .kk-chip').forEach(c => c.addEventListener('click', () => {
+    document.querySelectorAll('#manageFilters .kk-chip').forEach(x => x.classList.remove('active'));
+    c.classList.add('active');
+    const f = c.dataset.status;
+    document.querySelectorAll('#manageTableBody tr').forEach(tr => {
+      tr.style.display = (f === 'all' || tr.dataset.rowStatus === f) ? '' : 'none';
+    });
+  }));
+
+  /* ──────────────────────────────────────────────────────────────────────
+     Scan-pane items table — render from data
+     ──────────────────────────────────────────────────────────────────── */
+  const SCAN_ROWS = [
+    { ma: "LTP-V005D-4BUDF", vach: "LV005D4BU", ten: "Đồng hồ Casio LTP-V005D-4BUDF", ton: 1, quet: 3, status: "lech" },
+    { ma: "LRW-200H-4CVDF",  vach: "L200H4CV",  ten: "Đồng hồ Casio LRW-200H-4CVDF",  ton: 2, quet: 2, status: "khop" },
+    { ma: "LA-20WH-1ADF",    vach: "L20WH1AD",  ten: "Đồng hồ Casio LA-20WH-1ADF",    ton: 2, quet: 1, status: "lech" },
+    { ma: "LTP-V005D-4B2UDF",vach: "LV005D4B2", ten: "Đồng hồ Casio LTP-V005D-4B2UDF",ton: 1, quet: 0, status: "chua" },
+    { ma: "LTP-V005D-2B2UDF",vach: "LV005D2B2", ten: "Đồng hồ Casio LTP-V005D-2B2UDF",ton: 1, quet: 0, status: "chua" },
+    { ma: "LA-20WH-9ADF",    vach: "L20WH9AD",  ten: "Đồng hồ Casio LA-20WH-9ADF",    ton: 1, quet: 0, status: "chua" },
+    { ma: "AE-1600HX-3AVDF", vach: "A160HX3AV", ten: "Đồng hồ Casio AE-1600HX-3AVDF", ton: 1, quet: 0, status: "chua" },
+    { ma: "A158WEA-7DF",     vach: "A15EA7DF",  ten: "Đồng hồ Casio A158WEA-7DF",     ton: 2, quet: 0, status: "chua" },
+    { ma: "A158WEA-1DF",     vach: "A15EA1DF",  ten: "Đồng hồ Casio A158WEA-1DF",     ton: 1, quet: 0, status: "chua" },
+  ];
+
+  const deltaSpan = (lech) => {
+    if (lech === 0) return `<span style="${S.deltaZero}">0</span>`;
+    if (lech > 0)   return `<span style="${S.deltaPos}">+${lech}</span>`;
+    return `<span style="${S.deltaNeg}">−${Math.abs(lech)}</span>`;
+  };
+  const renderScanRow = (r) => {
+    const lech = r.quet - r.ton;
+    return `<tr data-status="${r.status}" data-ma="${r.ma}">
+      <td style="${S.tdBase}${S.tdCode}">${r.ma}<br /><span style="font-family:var(--mono);font-weight:400;color:var(--ink-3);font-size:12px;">${r.vach}</span></td>
+      <td style="${S.tdBase}"><span style="font-weight:500;color:var(--ink);">${r.ten}</span></td>
+      <td style="${S.tdBase}${S.tdNum}">${r.ton}</td>
+      <td style="${S.tdBase}${S.tdNum}" data-quet>${r.quet}</td>
+      <td style="${S.tdBase}${S.tdNum}background:var(--surface-2);border-left:1px solid var(--line);border-right:1px solid var(--line);">
+        <input class="kk-cell-edit" type="number" value="${r.quet}" min="0" />
+      </td>
+      <td style="${S.tdBase}${S.tdNum}" data-lech>${deltaSpan(lech)}</td>
+    </tr>`;
+  };
+  const renderScanTable = () => {
+    document.getElementById('scanTableBody').innerHTML = SCAN_ROWS.map(renderScanRow).join('');
+  };
+  renderScanTable();
+
+  /* ──────────────────────────────────────────────────────────────────────
+     Manage-pane phiếu table — native st.dataframe simulation
+     ──────────────────────────────────────────────────────────────────── */
+  const PHIEU = [
+    { ma: "KK000013", cn: "100 LQĐ",      nhom: "Đồng hồ đeo tay › Casio",        status: "scanning", nguoi: "Nguyễn Liên", ngay: "17/05 09:41", pct: 33  },
+    { ma: "KK000012", cn: "100 LQĐ",      nhom: "Đồng hồ treo tường",             status: "waiting",  nguoi: "Nguyễn Liên", ngay: "13/05 09:41", pct: 100 },
+    { ma: "KK000011", cn: "Coop Vũng Tàu",nhom: "Đồng hồ đeo tay › DW",           status: "approved", nguoi: "Đăng Khoa",   ngay: "07/05 14:09", pct: 100 },
+    { ma: "KK000010", cn: "100 LQĐ",      nhom: "LC | Seiko",                     status: "approved", nguoi: "Nguyễn Liên", ngay: "28/04 20:22", pct: 100 },
+    { ma: "KK000009", cn: "100 LQĐ",      nhom: "Longines | Ogival | Fuji…",      status: "approved", nguoi: "Nguyễn Liên", ngay: "28/04 19:57", pct: 100 },
+    { ma: "KK000008", cn: "100 LQĐ",      nhom: "Orient | Saga",                  status: "approved", nguoi: "Nguyễn Liên", ngay: "28/04 19:27", pct: 100 },
+    { ma: "KK000007", cn: "100 LQĐ",      nhom: "Citizen",                        status: "approved", nguoi: "Nguyễn Liên", ngay: "28/04 18:36", pct: 100 },
+  ];
+  const renderPhieuRow = (p) => `
+    <tr class="kk-row" data-row-status="${p.status}" data-ma="${p.ma}">
+      <td style="${S.tdBase}${S.tdCode}">${p.ma}</td>
+      <td style="${S.tdBase}">${p.cn}</td>
+      <td style="${S.tdBase}color:var(--ink-2);">${p.nhom}</td>
+      <td style="${S.tdBase}">${statusBadge(p.status)}</td>
+      <td style="${S.tdBase}">${p.nguoi}</td>
+      <td style="${S.tdBase}color:var(--ink-3);font-size:13px;">${p.ngay}</td>
+      <td style="${S.tdBase}">${miniProg(p.pct)}</td>
+    </tr>`;
+  document.getElementById('manageTableBody').innerHTML = PHIEU.map(renderPhieuRow).join('');
+
+  /* ────── Row click → render detail panel (Phương án A) ────── */
+  const detailEmpty = document.getElementById('detailEmpty');
+  const detailMount = document.getElementById('detailMount');
+
+  function renderDetail(p) {
+    if (!p) { detailEmpty.style.display = 'block'; detailMount.innerHTML = ''; return; }
+    detailEmpty.style.display = 'none';
+
+    // Header — status-aware action buttons
+    let actions = '';
+    if (p.status === 'scanning') {
+      actions = `
+        <button class="btn primary">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          Quét tiếp phiếu này
+        </button>
+        <button class="btn danger">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+          Hủy phiếu
+        </button>`;
+    } else if (p.status === 'waiting') {
+      actions = `
+        <button class="btn primary" data-action="approve">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 5 5L20 7"/></svg>
+          Duyệt & chốt phiếu
+        </button>
+        <button class="btn danger">Hủy phiếu</button>`;
+    } else {
+      actions = `
+        <button class="btn">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+          Xuất Excel KiotViet
+        </button>`;
+    }
+
+    // KPI tiles — only for "waiting" status
+    let kpis = '';
+    if (p.status === 'waiting') {
+      kpis = `
+        <div style="display:flex;gap:10px;padding:14px 18px;border-bottom:1px solid var(--line);">
+          <div style="${S.kpiTile}">
+            <div style="${S.kpiK}">Tổng thực tế</div>
+            <div style="${S.kpiV}">142 <small style="font-family:var(--sans);font-size:11px;color:var(--ink-3);font-weight:500;">SKU</small></div>
+          </div>
+          <div style="${S.kpiTile}">
+            <div style="${S.kpiK}">Lệch tăng</div>
+            <div style="${S.kpiV}color:var(--green-700);">+4</div>
+          </div>
+          <div style="${S.kpiTile}">
+            <div style="${S.kpiK}">Lệch giảm</div>
+            <div style="${S.kpiV}color:var(--bad-700);">−12</div>
+          </div>
+          <div style="${S.kpiTile}">
+            <div style="${S.kpiK}">Giá trị lệch</div>
+            <div style="${S.kpiV}color:var(--bad-700);">−12.4 <small style="font-family:var(--sans);font-size:11px;color:var(--ink-3);font-weight:500;">triệu</small></div>
+          </div>
+        </div>`;
+    } else if (p.status === 'scanning') {
+      kpis = `
+        <div style="display:flex;gap:10px;padding:14px 18px;border-bottom:1px solid var(--line);">
+          <div style="${S.kpiTile}">
+            <div style="${S.kpiK}">Tiến độ</div>
+            <div style="${S.kpiV}">${p.pct}%</div>
+          </div>
+          <div style="${S.kpiTile}">
+            <div style="${S.kpiK}">Đã quét</div>
+            <div style="${S.kpiV}color:var(--green-700);">87 <small style="font-family:var(--sans);font-size:11px;color:var(--ink-3);font-weight:500;">/ 261</small></div>
+          </div>
+          <div style="${S.kpiTile}">
+            <div style="${S.kpiK}">Lệch tạm</div>
+            <div style="${S.kpiV}color:var(--bad-700);">−174</div>
+          </div>
+          <div style="flex:2;display:flex;align-items:center;justify-content:flex-end;padding-right:8px;color:var(--ink-2);font-size:13px;text-align:right;">
+            Bấm <b style="color:var(--ink);">Quét tiếp phiếu này</b> để tiếp tục — phiếu sẽ được chọn ở tab Quét
+          </div>
+        </div>`;
+    }
+
+    // Mock detail items for "waiting"
+    const items = p.status === 'waiting' ? [
+      { ma: "TW-NHA-001", ten: "Đồng hồ treo tường nhựa Casio IQ-01",     ton: 12, tt: 10, gt: -1560000 },
+      { ma: "TW-GO-114",  ten: "Đồng hồ treo tường gỗ Vintage XL",        ton: 8,  tt: 8,  gt: 0 },
+      { ma: "TW-GO-203",  ten: "Đồng hồ treo tường gỗ cao cấp Rhythm",    ton: 5,  tt: 3,  gt: -4200000 },
+      { ma: "TW-NHA-122", ten: "Đồng hồ treo tường nhựa Mickey 30cm",     ton: 6,  tt: 7,  gt: 320000 },
+    ] : (p.status === 'scanning' ? [
+      { ma: "LTP-V005D-4BUDF", ten: "Đồng hồ Casio LTP-V005D-4BUDF", ton: 1, tt: 3 },
+      { ma: "LRW-200H-4CVDF",  ten: "Đồng hồ Casio LRW-200H-4CVDF",  ton: 2, tt: 2 },
+      { ma: "LA-20WH-1ADF",    ten: "Đồng hồ Casio LA-20WH-1ADF",    ton: 2, tt: 1 },
+    ] : [
+      { ma: "DH-DW-001", ten: "Đồng hồ DW Petite Rosegold 32mm", ton: 3, tt: 3 },
+      { ma: "DH-DW-002", ten: "Đồng hồ DW Iconic Black 36mm",    ton: 5, tt: 5 },
+    ]);
+
+    let itemTable = '';
+    if (p.status === 'waiting') {
+      itemTable = `<table style="width:100%;border-collapse:collapse;font-size:14px;">
+        <thead><tr>
+          <th style="text-align:left;background:var(--surface-2);color:var(--ink-2);font-weight:600;font-size:12px;letter-spacing:.03em;text-transform:uppercase;padding:11px 14px;border-bottom:1px solid var(--line);">Mã hàng</th>
+          <th style="text-align:left;background:var(--surface-2);color:var(--ink-2);font-weight:600;font-size:12px;letter-spacing:.03em;text-transform:uppercase;padding:11px 14px;border-bottom:1px solid var(--line);">Tên hàng</th>
+          <th style="text-align:right;background:var(--surface-2);color:var(--ink-2);font-weight:600;font-size:12px;letter-spacing:.03em;text-transform:uppercase;padding:11px 14px;border-bottom:1px solid var(--line);">Tồn</th>
+          <th style="text-align:right;background:var(--surface-2);color:var(--ink-2);font-weight:600;font-size:12px;letter-spacing:.03em;text-transform:uppercase;padding:11px 14px;border-bottom:1px solid var(--line);">SL Thực tế</th>
+          <th style="text-align:right;background:var(--surface-2);color:var(--ink-2);font-weight:600;font-size:12px;letter-spacing:.03em;text-transform:uppercase;padding:11px 14px;border-bottom:1px solid var(--line);">Lệch</th>
+          <th style="text-align:right;background:var(--surface-2);color:var(--ink-2);font-weight:600;font-size:12px;letter-spacing:.03em;text-transform:uppercase;padding:11px 14px;border-bottom:1px solid var(--line);">Giá trị lệch</th>
+        </tr></thead>
+        <tbody>${items.map(it => {
+          const lech = it.tt - it.ton;
+          return `<tr>
+            <td style="${S.tdBase}${S.tdCode}">${it.ma}</td>
+            <td style="${S.tdBase}">${it.ten}</td>
+            <td style="${S.tdBase}${S.tdNum}">${it.ton}</td>
+            <td style="${S.tdBase}${S.tdNum}">${it.tt}</td>
+            <td style="${S.tdBase}${S.tdNum}">${deltaSpan(lech)}</td>
+            <td style="${S.tdBase}${S.tdNum}${it.gt < 0 ? S.deltaNeg : (it.gt > 0 ? S.deltaPos : S.deltaZero)}">${it.gt === 0 ? '0' : (it.gt > 0 ? '+' : '−') + fmtVnd(Math.abs(it.gt))}</td>
+          </tr>`;
+        }).join('')}
+        <tr><td colspan="6" style="text-align:center;color:var(--ink-3);font-style:italic;font-size:13px;padding:11px 14px;">… ${142 - items.length} dòng khác (rút gọn) …</td></tr>
+        </tbody></table>`;
+    } else {
+      itemTable = `<table style="width:100%;border-collapse:collapse;font-size:14px;">
+        <thead><tr>
+          <th style="text-align:left;background:var(--surface-2);color:var(--ink-2);font-weight:600;font-size:12px;letter-spacing:.03em;text-transform:uppercase;padding:11px 14px;border-bottom:1px solid var(--line);">Mã hàng</th>
+          <th style="text-align:left;background:var(--surface-2);color:var(--ink-2);font-weight:600;font-size:12px;letter-spacing:.03em;text-transform:uppercase;padding:11px 14px;border-bottom:1px solid var(--line);">Tên hàng</th>
+          <th style="text-align:right;background:var(--surface-2);color:var(--ink-2);font-weight:600;font-size:12px;letter-spacing:.03em;text-transform:uppercase;padding:11px 14px;border-bottom:1px solid var(--line);">Tồn</th>
+          <th style="text-align:right;background:var(--surface-2);color:var(--ink-2);font-weight:600;font-size:12px;letter-spacing:.03em;text-transform:uppercase;padding:11px 14px;border-bottom:1px solid var(--line);">SL Thực tế</th>
+          <th style="text-align:right;background:var(--surface-2);color:var(--ink-2);font-weight:600;font-size:12px;letter-spacing:.03em;text-transform:uppercase;padding:11px 14px;border-bottom:1px solid var(--line);">Lệch</th>
+        </tr></thead>
+        <tbody>${items.map(it => {
+          const lech = it.tt - it.ton;
+          return `<tr>
+            <td style="${S.tdBase}${S.tdCode}">${it.ma}</td>
+            <td style="${S.tdBase}">${it.ten}</td>
+            <td style="${S.tdBase}${S.tdNum}">${it.ton}</td>
+            <td style="${S.tdBase}${S.tdNum}">${it.tt}</td>
+            <td style="${S.tdBase}${S.tdNum}">${deltaSpan(lech)}</td>
+          </tr>`;
+        }).join('')}</tbody></table>`;
+    }
+
+    detailMount.innerHTML = `
+      <div style="background:var(--surface);border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow-1);margin-top:14px;overflow:hidden;animation:fadeIn .25s ease;">
+        <header style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--line);background:var(--surface-2);gap:12px;flex-wrap:wrap;">
+          <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
+            ${statusBadge(p.status)}
+            <b style="font-size:15px;font-weight:700;font-family:var(--mono);">${p.ma}</b>
+            <span style="font-size:14px;color:var(--ink);">${p.cn} <span style="color:var(--ink-3);">·</span> ${p.nhom}</span>
+            <span style="color:var(--ink-3);font-size:12px;">${p.nguoi} · ${p.ngay}</span>
+          </div>
+          <div style="display:inline-flex;gap:8px;">
+            ${actions}
+          </div>
+        </header>
+        ${kpis}
+        <div style="overflow:hidden;">
+          ${itemTable}
+        </div>
+      </div>`;
+
+    // Wire "Quét tiếp phiếu này" — show toast + cue (no programmatic tab switch)
+    const btnQuetTiep = detailMount.querySelector('button.primary');
+    if (btnQuetTiep && p.status === 'scanning') {
+      btnQuetTiep.addEventListener('click', () => {
+        toast(
+          `Đã chọn ${p.ma}`,
+          `Bấm tab "Quét kiểm kê" phía trên ↑ để bắt đầu`,
+          false
+        );
+        // pulse-highlight the scan tab to draw attention
+        const scanTab = document.querySelector('.kk-seg-tab[data-pane="scan"]');
+        scanTab.animate(
+          [
+            { boxShadow: '0 0 0 0 var(--green-500)', transform: 'scale(1)' },
+            { boxShadow: '0 0 0 6px var(--green-100)', transform: 'scale(1.04)' },
+            { boxShadow: '0 0 0 0 transparent', transform: 'scale(1)' },
+          ],
+          { duration: 900, iterations: 2 }
+        );
+      });
+    }
+  }
+
+  document.getElementById('manageTableBody').addEventListener('click', (e) => {
+    const tr = e.target.closest('tr.kk-row');
+    if (!tr) return;
+    document.querySelectorAll('#manageTableBody tr.kk-row').forEach(r => r.classList.remove('selected'));
+    tr.classList.add('selected');
+    const p = PHIEU.find(x => x.ma === tr.dataset.ma);
+    renderDetail(p);
+  });
+
+  /* ────── Toast ────── */
+  function toast(msg, sub, bad) {
+    const r = document.getElementById('toastRegion');
+    const t = document.createElement('div');
+    t.style.cssText = `background:var(--surface);border:1px solid var(--line);border-left:4px solid ${bad ? 'var(--bad-500)' : 'var(--green-600)'};border-radius:10px;padding:12px 14px;box-shadow:0 12px 32px -8px rgba(15,23,42,.25);display:flex;align-items:center;gap:10px;font-size:14px;min-width:280px;max-width:360px;animation:toastIn .25s ease, toastOut .25s ease 2.7s forwards;pointer-events:auto;`;
+    t.innerHTML = `
+      <span style="width:28px;height:28px;border-radius:50%;background:${bad ? 'var(--bad-50)' : 'var(--green-50)'};color:${bad ? 'var(--bad-700)' : 'var(--green-700)'};display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;">
+        ${bad
+          ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>'
+          : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 5 5L20 7"/></svg>'}
+      </span>
+      <span><b style="font-weight:600;">${msg}</b>${sub ? `<div style="color:var(--ink-2);font-size:12px;">${sub}</div>` : ''}</span>
+    `;
+    r.appendChild(t);
+    setTimeout(() => t.remove(), 3000);
+  }
+
+  /* ────── Beep ────── */
+  function beep(freq, dur, type) {
+    try {
+      const ac = window.__ac || (window.__ac = new (window.AudioContext || window.webkitAudioContext)());
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.type = type || 'sine';
+      o.frequency.value = freq;
+      g.gain.value = 0.07;
+      o.connect(g).connect(ac.destination);
+      o.start();
+      g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + dur);
+      o.stop(ac.currentTime + dur + 0.01);
+    } catch (e) {}
+  }
+  const beepOk = () => beep(880, 0.08, 'sine');
+  const beepBad = () => { beep(220, 0.18, 'square'); setTimeout(() => beep(180, 0.18, 'square'), 100); };
+
+  /* ────── Mock master data for scan ────── */
+  const MASTER = {
+    'LTP-V005D-4BUDF': { ma: 'LTP-V005D-4BUDF', vach: 'LV005D4BU', ten: 'Đồng hồ Casio LTP-V005D-4BUDF (nữ, dây da nâu)', gia: 1450000, ton: 5 },
+    'LV005D4BU':       { ma: 'LTP-V005D-4BUDF', vach: 'LV005D4BU', ten: 'Đồng hồ Casio LTP-V005D-4BUDF (nữ, dây da nâu)', gia: 1450000, ton: 5 },
+    'LRW-200H-4CVDF':  { ma: 'LRW-200H-4CVDF',  vach: 'L200H4CV',  ten: 'Đồng hồ Casio LRW-200H-4CVDF',                    gia: 1620000, ton: 2 },
+    'L200H4CV':        { ma: 'LRW-200H-4CVDF',  vach: 'L200H4CV',  ten: 'Đồng hồ Casio LRW-200H-4CVDF',                    gia: 1620000, ton: 2 },
+    'A158WEA-7DF':     { ma: 'A158WEA-7DF',     vach: 'A15EA7DF',  ten: 'Đồng hồ Casio A158WEA-7DF',                       gia: 980000,  ton: 2 },
+    'LA-20WH-1ADF':    { ma: 'LA-20WH-1ADF',    vach: 'L20WH1AD',  ten: 'Đồng hồ Casio LA-20WH-1ADF',                      gia: 1150000, ton: 2 },
+  };
+
+  /* ────── Scan flow ────── */
+  const scanForm = document.getElementById('scanForm');
+  const scanField = document.getElementById('scanField');
+  const scanShell = document.getElementById('scanShell');
+  const badMsg = document.getElementById('badMsg');
+
+  function updateScanCard(item, quetNew) {
+    document.getElementById('scCode').textContent = item.ma;
+    document.getElementById('scName').textContent = item.ten;
+    document.getElementById('scVach').textContent = item.vach || '—';
+    document.getElementById('scPrice').innerHTML  = fmtVnd(item.gia) + ' <small style="font-family:var(--sans);font-size:12px;color:var(--ink-3);font-weight:500;">₫</small>';
+    document.getElementById('scQuet').textContent = quetNew;
+    document.getElementById('scTon').textContent  = item.ton;
+    const lech = quetNew - item.ton;
+    const lechEl = document.getElementById('scLech');
+    if (lech < 0)      { lechEl.style.color = 'var(--bad-700)';   lechEl.textContent = '−' + Math.abs(lech); }
+    else if (lech > 0) { lechEl.style.color = 'var(--green-700)'; lechEl.textContent = '+' + lech; }
+    else               { lechEl.style.color = 'var(--ink-2)';     lechEl.textContent = '0'; }
+  }
+  function flashOk()  {
+    badMsg.style.display = 'none';
+    scanShell.style.animation = 'none';
+    void scanShell.offsetWidth;
+    scanShell.style.animation = 'flashOk 550ms ease';
+    scanShell.style.borderColor = '';
+    scanShell.style.boxShadow = '';
+  }
+  function flashBad(code) {
+    document.getElementById('badMsgCode').textContent = `Mã '${code}'`;
+    badMsg.style.display = 'flex';
+    scanShell.style.animation = 'none';
+    void scanShell.offsetWidth;
+    scanShell.style.animation = 'flashBad 550ms ease';
+  }
+  document.getElementById('badMsgX').addEventListener('click', () => { badMsg.style.display = 'none'; });
+
+  function findRow(ma) {
+    return [...document.querySelectorAll('#scanTableBody tr')].find(tr => tr.dataset.ma === ma);
+  }
+
+  scanForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const raw = scanField.value.trim();
+    if (!raw) return;
+    const key = raw.toUpperCase();
+    const item = MASTER[key];
+
+    if (!item) {
+      beepBad();
+      flashBad(raw);
+      toast('Không tìm thấy mã', `'${raw}' không tồn tại trong KiotViet`, true);
+      scanField.value = '';
+      scanField.focus();
+      return;
+    }
+
+    const row = findRow(item.ma);
+    if (row) {
+      const quetCell = row.querySelector('[data-quet]');
+      const newQuet = (parseInt(quetCell.textContent) || 0) + 1;
+      quetCell.textContent = newQuet;
+      row.querySelector('input.kk-cell-edit').value = newQuet;
+      const ton = parseInt(row.children[2].textContent) || 0;
+      const lech = newQuet - ton;
+      row.querySelector('[data-lech]').innerHTML = deltaSpan(lech);
+      row.dataset.status = (lech === 0) ? 'khop' : 'lech';
+      row.style.animation = 'none'; void row.offsetWidth;
+      row.style.animation = 'rowFlash 1.4s ease';
+      const tbody = document.getElementById('scanTableBody');
+      tbody.insertBefore(row, tbody.firstChild);
+      updateScanCard(item, newQuet);
+    } else {
+      updateScanCard(item, 1);
+      toast('Phát sinh mới', `${item.ma} chèn vào phiếu`);
+    }
+
+    flashOk();
+    beepOk();
+    scanField.value = '';
+    scanField.focus();
+  });
+
+  /* ────── Auto-focus scan input ────── */
+  function focusScan() {
+    if (document.getElementById('pane-scan').style.display !== 'none') scanField.focus();
+  }
+  setTimeout(focusScan, 250);
+  document.addEventListener('click', (e) => {
+    if (['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(e.target.tagName)) return;
+    if (e.target.closest('button, a, input, textarea, select, [id="createScrim"]')) return;
+    focusScan();
+  });
+
+  /* ────── Scan input focus visual (no :focus pseudoclass on label) ────── */
+  scanField.addEventListener('focus', () => {
+    document.getElementById('scanInputLabel').style.borderColor = 'var(--green-600)';
+    document.getElementById('scanInputLabel').style.boxShadow = '0 0 0 4px var(--green-100)';
+  });
+  scanField.addEventListener('blur', () => {
+    document.getElementById('scanInputLabel').style.borderColor = 'var(--line-strong)';
+    document.getElementById('scanInputLabel').style.boxShadow = 'none';
+  });
+
+  /* ────── Modal ────── */
+  const scrim = document.getElementById('createScrim');
+  document.getElementById('btnCreate').addEventListener('click', () => { scrim.style.display = 'flex'; });
+  document.getElementById('closeCreate').addEventListener('click', () => { scrim.style.display = 'none'; });
+  document.getElementById('cancelCreate').addEventListener('click', () => { scrim.style.display = 'none'; });
+  scrim.addEventListener('click', e => { if (e.target === scrim) scrim.style.display = 'none'; });
+
+  /* ────── Initial: select KK000012 (Chờ duyệt) so detail panel is visible ────── */
+  (function preselect() {
+    const tr = document.querySelector('#manageTableBody tr[data-ma="KK000012"]');
+    if (tr) {
+      tr.classList.add('selected');
+      const p = PHIEU.find(x => x.ma === 'KK000012');
+      renderDetail(p);
+    }
+  })();
+</script>
+</body>
+</html>

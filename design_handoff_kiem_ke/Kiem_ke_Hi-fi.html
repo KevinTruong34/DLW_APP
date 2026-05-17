@@ -1,0 +1,1446 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<title>Kiểm kê — Hi-fi prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    /* — Surface — */
+    --bg: #f6f7f5;
+    --surface: #ffffff;
+    --surface-2: #f8fafc;
+    --surface-3: #f1f5f9;
+
+    /* — Lines — */
+    --line: #e5e7eb;
+    --line-strong: #cbd5e1;
+
+    /* — Ink — */
+    --ink: #0b1220;
+    --ink-2: #475569;
+    --ink-3: #94a3b8;
+
+    /* — Brand green (inventory / success) — */
+    --green-50:  #ecfdf5;
+    --green-100: #d1fae5;
+    --green-200: #a7f3d0;
+    --green-500: #10b981;
+    --green-600: #059669;
+    --green-700: #047857;
+    --green-800: #065f46;
+    --green-900: #064e3b;
+
+    /* — Semantic — */
+    --warn-50: #fffbeb;
+    --warn-200: #fde68a;
+    --warn-700: #b45309;
+    --bad-50: #fef2f2;
+    --bad-200: #fecaca;
+    --bad-500: #ef4444;
+    --bad-700: #b91c1c;
+    --info-50: #eff6ff;
+    --info-700: #1d4ed8;
+
+    /* — Radius / shadow — */
+    --r-sm: 6px;
+    --r: 10px;
+    --r-lg: 14px;
+    --r-xl: 18px;
+    --shadow-1: 0 1px 2px rgba(15,23,42,.04), 0 1px 1px rgba(15,23,42,.03);
+    --shadow-2: 0 4px 14px -4px rgba(15,23,42,.10), 0 2px 4px rgba(15,23,42,.04);
+    --shadow-card: 0 8px 28px -10px rgba(4,120,87,.18), 0 2px 6px rgba(15,23,42,.04);
+
+    --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+    --sans: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    font-family: var(--sans);
+    color: var(--ink);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  button { font-family: inherit; }
+  input  { font-family: inherit; }
+
+  /* — App shell — */
+  .app {
+    max-width: 1320px;
+    margin: 0 auto;
+    padding: 28px 28px 80px;
+  }
+
+  /* — Module header — */
+  .mod-head {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 24px;
+    margin-bottom: 22px;
+  }
+  .mod-head h1 {
+    margin: 0;
+    font-size: 26px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    color: var(--ink);
+    display: flex; align-items: center; gap: 12px;
+  }
+  .mod-head h1 .ico {
+    width: 36px; height: 36px;
+    background: var(--green-50);
+    border: 1px solid var(--green-200);
+    border-radius: var(--r);
+    display: inline-flex; align-items: center; justify-content: center;
+    color: var(--green-700);
+  }
+  .mod-head .crumb {
+    margin: 6px 0 0;
+    color: var(--ink-2);
+    font-size: 13px;
+  }
+  .mod-head .crumb b { color: var(--ink); font-weight: 600; }
+
+  .branch-pill {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    padding: 7px 12px 7px 10px;
+    border-radius: 999px;
+    font-size: 13px;
+    color: var(--ink-2);
+    box-shadow: var(--shadow-1);
+  }
+  .branch-pill .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green-600); }
+  .branch-pill b { color: var(--ink); font-weight: 600; }
+
+  /* — Segmented tabs (replaces 4 sub-tabs with 2) — */
+  .seg {
+    display: inline-flex;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    padding: 4px;
+    box-shadow: var(--shadow-1);
+    margin-bottom: 20px;
+  }
+  .seg button {
+    appearance: none;
+    border: none; background: transparent;
+    padding: 10px 18px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--ink-2);
+    cursor: pointer;
+    border-radius: var(--r);
+    display: inline-flex; align-items: center; gap: 8px;
+    transition: all .15s ease;
+  }
+  .seg button .badge {
+    background: var(--surface-3);
+    color: var(--ink-2);
+    border-radius: 999px;
+    padding: 1px 7px;
+    font-size: 11px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+  .seg button:hover { color: var(--ink); }
+  .seg button.active {
+    background: var(--ink);
+    color: #fff;
+    box-shadow: 0 1px 0 rgba(255,255,255,.1) inset, 0 1px 2px rgba(0,0,0,.15);
+  }
+  .seg button.active .badge { background: rgba(255,255,255,.18); color: #fff; }
+
+  /* — Page panes — */
+  .pane { display: none; }
+  .pane.active { display: block; animation: fade .2s ease; }
+  @keyframes fade { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+  /* — Phiếu context bar — */
+  .ctx-bar {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    padding: 14px 16px;
+    box-shadow: var(--shadow-1);
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    margin-bottom: 16px;
+  }
+  .ctx-picker {
+    display: flex; align-items: center; gap: 10px;
+    padding: 6px 10px 6px 6px;
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+    background: var(--surface-2);
+    cursor: pointer;
+    transition: all .12s ease;
+  }
+  .ctx-picker:hover { border-color: var(--line-strong); background: #fff; }
+  .ctx-picker .tag {
+    background: var(--green-700);
+    color: #fff;
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: 12px;
+    letter-spacing: .02em;
+    padding: 5px 9px;
+    border-radius: var(--r-sm);
+  }
+  .ctx-picker .meta {
+    display: flex; flex-direction: column; line-height: 1.2;
+  }
+  .ctx-picker .meta .top { font-weight: 600; color: var(--ink); font-size: 14px; }
+  .ctx-picker .meta .sub { font-size: 12px; color: var(--ink-2); }
+  .ctx-picker .chev { color: var(--ink-3); }
+
+  .progress-wrap {
+    flex: 1;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .progress-meta {
+    display: flex; justify-content: space-between; align-items: baseline;
+    font-size: 12px; color: var(--ink-2);
+  }
+  .progress-meta b {
+    color: var(--ink);
+    font-family: var(--mono); font-weight: 600;
+    font-size: 13px;
+  }
+  .progress {
+    height: 8px;
+    background: var(--surface-3);
+    border-radius: 999px;
+    overflow: hidden;
+  }
+  .progress > span {
+    display: block; height: 100%;
+    background: linear-gradient(90deg, var(--green-500), var(--green-700));
+    border-radius: 999px;
+    transition: width .35s ease;
+  }
+
+  .ctx-kpis { display: flex; gap: 10px; }
+  .ctx-kpi {
+    border: 1px solid var(--line);
+    border-radius: var(--r);
+    padding: 8px 12px;
+    background: var(--surface);
+    min-width: 84px;
+  }
+  .ctx-kpi .k { font-size: 11px; color: var(--ink-3); letter-spacing: .04em; text-transform: uppercase; font-weight: 600; }
+  .ctx-kpi .v { font-family: var(--mono); font-weight: 700; font-size: 17px; color: var(--ink); font-variant-numeric: tabular-nums; }
+  .ctx-kpi.bad .v { color: var(--bad-700); }
+  .ctx-kpi.ok  .v { color: var(--green-700); }
+
+  /* ─── HERO SCAN CARD ─── */
+  .scan-shell {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r-xl);
+    box-shadow: var(--shadow-2);
+    overflow: hidden;
+    margin-bottom: 14px;
+    transition: box-shadow .3s ease, border-color .3s ease;
+  }
+  .scan-shell.flash-ok {
+    border-color: var(--green-500);
+    box-shadow: 0 0 0 3px var(--green-100), var(--shadow-card);
+    animation: flashOk .55s ease;
+  }
+  .scan-shell.flash-bad {
+    border-color: var(--bad-500);
+    box-shadow: 0 0 0 3px var(--bad-200), 0 8px 28px -10px rgba(220,38,38,.20);
+    animation: flashBad .55s ease;
+  }
+  @keyframes flashOk { 0% { background: var(--green-50); } 100% { background: var(--surface); } }
+  @keyframes flashBad { 0% { background: var(--bad-50); } 100% { background: var(--surface); } }
+
+  .scan-card {
+    padding: 18px 20px 20px;
+    display: grid;
+    grid-template-columns: minmax(280px, 1.4fr) repeat(5, minmax(0, 1fr));
+    gap: 18px;
+    align-items: center;
+  }
+  .scan-card .item-id {
+    display: flex; flex-direction: column; gap: 4px; min-width: 0;
+  }
+  .scan-card .item-id .ribbon {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--green-50);
+    color: var(--green-700);
+    border: 1px solid var(--green-200);
+    border-radius: 999px;
+    padding: 3px 10px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    width: fit-content;
+    margin-bottom: 4px;
+  }
+  .scan-card .item-id .code {
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: 22px;
+    letter-spacing: -0.01em;
+    color: var(--ink);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .scan-card .item-id .name {
+    font-size: 13px;
+    color: var(--ink-2);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+
+  .field {
+    display: flex; flex-direction: column; gap: 3px; min-width: 0;
+    border-left: 1px solid var(--line);
+    padding-left: 14px;
+  }
+  .field .k {
+    font-size: 11px;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    font-weight: 600;
+    color: var(--ink-3);
+  }
+  .field .v {
+    font-family: var(--mono);
+    font-weight: 700;
+    font-size: 18px;
+    color: var(--ink);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .field .v small { font-family: var(--sans); font-size: 12px; color: var(--ink-3); font-weight: 500; }
+  .field.qty .v { color: var(--green-700); font-size: 22px; }
+  .field.lech.neg .v { color: var(--bad-700); }
+  .field.lech.pos .v { color: var(--green-700); }
+  .field.lech.zero .v { color: var(--ink-2); }
+
+  /* Empty state inside scan card */
+  .scan-empty {
+    padding: 28px 20px;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 8px;
+    color: var(--ink-3);
+    text-align: center;
+  }
+  .scan-empty .glyph {
+    width: 56px; height: 56px;
+    border-radius: 50%;
+    background: var(--green-50);
+    border: 1px dashed var(--green-200);
+    display: inline-flex; align-items: center; justify-content: center;
+    color: var(--green-600);
+    margin-bottom: 4px;
+  }
+  .scan-empty .t1 { font-size: 15px; font-weight: 600; color: var(--ink-2); }
+  .scan-empty .t2 { font-size: 13px; color: var(--ink-3); }
+
+  /* — Scan input row — */
+  .scan-input-row {
+    display: flex; gap: 10px;
+    margin-bottom: 18px;
+  }
+  .scan-input {
+    flex: 1;
+    display: flex; align-items: center; gap: 10px;
+    background: var(--surface);
+    border: 1.5px solid var(--line-strong);
+    border-radius: var(--r-lg);
+    padding: 4px 4px 4px 16px;
+    transition: all .15s ease;
+  }
+  .scan-input:focus-within {
+    border-color: var(--green-600);
+    box-shadow: 0 0 0 4px var(--green-100);
+  }
+  .scan-input .ico { color: var(--green-700); display: flex; }
+  .scan-input input {
+    flex: 1;
+    border: none; outline: none; background: transparent;
+    font-family: var(--mono);
+    font-size: 17px;
+    font-weight: 500;
+    color: var(--ink);
+    padding: 14px 0;
+    letter-spacing: .01em;
+  }
+  .scan-input input::placeholder { color: var(--ink-3); font-family: var(--sans); font-weight: 400; }
+  .scan-input .kbd {
+    display: inline-flex; align-items: center; gap: 4px;
+    background: var(--surface-3);
+    border: 1px solid var(--line);
+    color: var(--ink-2);
+    font-size: 11px; font-weight: 600;
+    padding: 3px 7px;
+    border-radius: 5px;
+    margin-right: 8px;
+  }
+
+  .btn {
+    appearance: none;
+    border: 1px solid var(--line-strong);
+    background: var(--surface);
+    color: var(--ink);
+    font-size: 14px;
+    font-weight: 600;
+    padding: 9px 14px;
+    border-radius: var(--r);
+    cursor: pointer;
+    display: inline-flex; align-items: center; gap: 8px;
+    transition: all .12s ease;
+    box-shadow: var(--shadow-1);
+    white-space: nowrap;
+  }
+  .btn:hover { border-color: var(--ink-3); }
+  .btn.primary {
+    background: var(--green-700);
+    border-color: var(--green-800);
+    color: #fff;
+    box-shadow: 0 1px 0 rgba(255,255,255,.1) inset, 0 1px 2px rgba(4,120,87,.30);
+  }
+  .btn.primary:hover { background: var(--green-800); }
+  .btn.lg {
+    padding: 14px 22px; font-size: 15px;
+    border-radius: var(--r-lg);
+  }
+  .btn.danger {
+    background: #fff;
+    color: var(--bad-700);
+    border-color: var(--bad-200);
+  }
+  .btn.danger:hover { background: var(--bad-50); }
+  .btn.ghost { background: transparent; box-shadow: none; border-color: transparent; color: var(--ink-2); }
+  .btn.ghost:hover { background: var(--surface-2); color: var(--ink); }
+  .btn.icon { padding: 9px; }
+
+  /* — Toolbar above table — */
+  .toolbar {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 10px;
+  }
+  .chips { display: inline-flex; gap: 6px; }
+  .chip {
+    border: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--ink-2);
+    font-size: 13px;
+    font-weight: 500;
+    padding: 6px 12px;
+    border-radius: 999px;
+    cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px;
+    transition: all .12s ease;
+  }
+  .chip:hover { border-color: var(--line-strong); color: var(--ink); }
+  .chip.active {
+    background: var(--ink);
+    color: #fff;
+    border-color: var(--ink);
+  }
+  .chip .count { font-family: var(--mono); font-weight: 700; font-size: 12px; opacity: .85; }
+  .chip.active .count { opacity: 1; }
+
+  .search {
+    display: flex; align-items: center; gap: 8px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    border-radius: var(--r);
+    padding: 7px 12px;
+    min-width: 220px;
+  }
+  .search input {
+    border: none; outline: none; background: transparent;
+    font-size: 13px; width: 100%;
+    color: var(--ink);
+  }
+  .search .ico { color: var(--ink-3); }
+
+  /* — Data table — */
+  .table-wrap {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    overflow: hidden;
+    box-shadow: var(--shadow-1);
+  }
+  table.data {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+  }
+  table.data thead th {
+    text-align: left;
+    background: var(--surface-2);
+    color: var(--ink-2);
+    font-weight: 600;
+    font-size: 12px;
+    letter-spacing: .03em;
+    text-transform: uppercase;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  table.data thead th.num { text-align: right; }
+  table.data tbody td {
+    padding: 13px 14px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: middle;
+    color: var(--ink);
+  }
+  table.data tbody tr:last-child td { border-bottom: none; }
+  table.data tbody tr { transition: background .12s ease; }
+  table.data tbody tr:hover { background: var(--surface-2); }
+  table.data td.num {
+    text-align: right;
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-weight: 500;
+  }
+  table.data td.code {
+    font-family: var(--mono);
+    font-weight: 600;
+    font-size: 13px;
+    color: var(--ink);
+  }
+  table.data td.code .vach {
+    font-family: var(--mono); font-weight: 400;
+    color: var(--ink-3);
+    font-size: 12px;
+    display: block;
+  }
+  table.data td .name-strong { font-weight: 500; color: var(--ink); }
+  table.data td .delta-pos { color: var(--green-700); font-weight: 600; }
+  table.data td .delta-neg { color: var(--bad-700); font-weight: 600; }
+  table.data td .delta-zero { color: var(--ink-3); font-weight: 500; }
+  table.data tr.flash {
+    background: var(--green-50);
+    animation: rowFlash 1.4s ease;
+  }
+  @keyframes rowFlash {
+    0% { background: var(--green-100); }
+    100% { background: var(--surface); }
+  }
+  table.data td.editable {
+    background: var(--surface-2);
+    border-left: 1px solid var(--line);
+    border-right: 1px solid var(--line);
+  }
+  table.data td.editable input {
+    width: 64px;
+    text-align: right;
+    border: 1px solid transparent;
+    background: transparent;
+    font-family: var(--mono);
+    font-variant-numeric: tabular-nums;
+    font-weight: 600;
+    font-size: 14px;
+    padding: 5px 8px;
+    border-radius: 6px;
+    color: var(--ink);
+  }
+  table.data td.editable input:hover { border-color: var(--line); background: #fff; }
+  table.data td.editable input:focus { outline: none; border-color: var(--green-600); background: #fff; box-shadow: 0 0 0 3px var(--green-100); }
+
+  /* Status badges */
+  .st {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    border: 1px solid;
+    line-height: 1.5;
+  }
+  .st::before { content: ""; width: 6px; height: 6px; border-radius: 50%; }
+  .st.scanning { background: var(--warn-50); color: var(--warn-700); border-color: var(--warn-200); }
+  .st.scanning::before { background: var(--warn-700); }
+  .st.waiting  { background: var(--info-50); color: var(--info-700); border-color: #bfdbfe; }
+  .st.waiting::before  { background: var(--info-700); }
+  .st.approved { background: var(--green-50); color: var(--green-700); border-color: var(--green-200); }
+  .st.approved::before { background: var(--green-700); }
+
+  /* — Footer actions for scan page — */
+  .footer-actions {
+    margin-top: 18px;
+    display: flex; gap: 12px;
+  }
+  .footer-actions .stretch { flex: 1; justify-content: center; }
+
+  /* — Toast — */
+  .toast-region {
+    position: fixed;
+    top: 18px; right: 22px;
+    z-index: 50;
+    display: flex; flex-direction: column; gap: 10px;
+    pointer-events: none;
+  }
+  .toast {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--green-600);
+    border-radius: var(--r);
+    padding: 12px 14px;
+    box-shadow: 0 12px 32px -8px rgba(15,23,42,.25);
+    display: flex; align-items: center; gap: 10px;
+    font-size: 14px;
+    min-width: 280px;
+    max-width: 360px;
+    animation: toastIn .25s ease, toastOut .25s ease 2.7s forwards;
+  }
+  .toast.bad { border-left-color: var(--bad-500); }
+  .toast .ico {
+    width: 28px; height: 28px;
+    border-radius: 50%;
+    background: var(--green-50);
+    color: var(--green-700);
+    display: inline-flex; align-items: center; justify-content: center;
+    flex-shrink: 0;
+  }
+  .toast.bad .ico { background: var(--bad-50); color: var(--bad-700); }
+  .toast b { font-weight: 600; }
+  .toast .sub { color: var(--ink-2); font-size: 12px; }
+  @keyframes toastIn { from { transform: translateX(16px); opacity: 0; } to { transform: none; opacity: 1; } }
+  @keyframes toastOut { to { transform: translateX(16px); opacity: 0; } }
+
+  /* — Modals / panels — */
+  .scrim {
+    position: fixed; inset: 0;
+    background: rgba(15,23,42,.32);
+    backdrop-filter: blur(2px);
+    display: none;
+    z-index: 40;
+    align-items: center;
+    justify-content: center;
+  }
+  .scrim.open { display: flex; }
+  .modal {
+    background: var(--surface);
+    width: min(640px, 92vw);
+    border-radius: var(--r-xl);
+    box-shadow: 0 24px 60px -12px rgba(15,23,42,.35);
+    overflow: hidden;
+    animation: modalIn .2s ease;
+  }
+  @keyframes modalIn { from { transform: translateY(10px); opacity: 0; } to { transform: none; opacity: 1; } }
+  .modal header {
+    padding: 18px 20px 14px;
+    border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .modal header h3 { margin: 0; font-size: 17px; font-weight: 700; }
+  .modal .body { padding: 18px 20px; display: flex; flex-direction: column; gap: 14px; }
+  .modal footer { padding: 14px 20px 18px; display: flex; justify-content: flex-end; gap: 10px; border-top: 1px solid var(--line); }
+  .field-label { font-size: 12px; font-weight: 600; color: var(--ink-2); margin-bottom: 6px; display: block; }
+  .input-wrap {
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r);
+    padding: 9px 12px;
+    background: var(--surface);
+  }
+  .input-wrap:focus-within { border-color: var(--green-600); box-shadow: 0 0 0 3px var(--green-100); }
+  .input-wrap input, .input-wrap textarea, .input-wrap select {
+    width: 100%; border: none; outline: none; background: transparent;
+    font-family: inherit; font-size: 14px; color: var(--ink); resize: vertical;
+  }
+  .preview-code {
+    background: var(--green-50);
+    border: 1px solid var(--green-200);
+    border-radius: var(--r);
+    padding: 12px 14px;
+    display: flex; align-items: center; gap: 10px;
+    font-size: 13px;
+    color: var(--green-800);
+  }
+  .preview-code b { font-family: var(--mono); font-size: 14px; color: var(--green-900); }
+
+  /* Multi-select chips for nhom hang */
+  .ms {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r);
+    padding: 8px;
+    min-height: 44px;
+    background: var(--surface);
+  }
+  .ms .tag {
+    background: var(--green-700); color: #fff;
+    padding: 3px 8px 3px 10px;
+    border-radius: 999px;
+    font-size: 12px; font-weight: 500;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .ms .tag .x { cursor: pointer; opacity: .7; }
+  .ms .tag .x:hover { opacity: 1; }
+  .ms input { flex: 1; min-width: 120px; border: none; outline: none; padding: 5px; font-size: 13px; background: transparent; }
+
+  /* Row action buttons */
+  .row-actions { display: inline-flex; gap: 4px; }
+  .row-actions .btn { padding: 6px 10px; font-size: 12px; box-shadow: none; }
+  .row-actions .btn.primary { background: var(--green-700); }
+
+  /* "Quản lý phiếu" detail panel */
+  .detail-card {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--r-lg);
+    box-shadow: var(--shadow-1);
+    margin-top: 14px;
+    overflow: hidden;
+  }
+  .detail-card header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface-2);
+  }
+  .detail-card header .title { display: flex; align-items: center; gap: 12px; }
+  .detail-card header .title b { font-size: 15px; font-weight: 700; }
+  .detail-summary { display: flex; gap: 10px; padding: 14px 18px; border-bottom: 1px solid var(--line); }
+  .detail-summary .ctx-kpi { flex: 1; }
+
+  /* Sticky scan area when scrolling */
+  .scan-sticky-wrapper { position: relative; }
+  @media (min-width: 1100px) {
+    .scan-sticky-wrapper.is-sticky {
+      position: sticky;
+      top: 12px;
+      z-index: 5;
+    }
+  }
+
+  .help-hint {
+    font-size: 12px;
+    color: var(--ink-3);
+    margin-bottom: 12px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .help-hint .pencil { color: var(--green-700); }
+
+  /* — utility — */
+  .stretch { flex: 1; }
+  .right { margin-left: auto; }
+  .muted { color: var(--ink-3); }
+  .sr { position: absolute; clip: rect(0 0 0 0); width: 1px; height: 1px; }
+
+  /* Cancel state for codes not found */
+  .scan-shell.flash-bad .bad-msg { display: flex; }
+  .bad-msg { display: none; padding: 14px 20px; align-items: center; gap: 10px; border-top: 1px dashed var(--bad-200); background: var(--bad-50); }
+  .bad-msg .ico { color: var(--bad-700); }
+  .bad-msg b { color: var(--bad-700); }
+  .bad-msg .x { margin-left: auto; cursor: pointer; color: var(--bad-700); }
+
+  /* Responsive trim */
+  @media (max-width: 1100px) {
+    .scan-card { grid-template-columns: 1fr 1fr 1fr; }
+    .scan-card .item-id { grid-column: 1 / -1; border-bottom: 1px solid var(--line); padding-bottom: 14px; }
+    .field { border-left: none; padding-left: 0; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- ── Module header ── -->
+  <div class="mod-head">
+    <div>
+      <h1>
+        <span class="ico">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="M3 9h18M9 3v18"/><circle cx="6" cy="6" r=".7" fill="currentColor"/><circle cx="6" cy="12" r=".7" fill="currentColor"/><circle cx="6" cy="18" r=".7" fill="currentColor"/></svg>
+        </span>
+        Kiểm kê
+      </h1>
+      <p class="crumb"><b>DLW · Inventory</b> &nbsp;›&nbsp; Kiểm kê &nbsp;·&nbsp; v2 redesign</p>
+    </div>
+    <div class="branch-pill">
+      <span class="dot"></span>
+      Đang ở chi nhánh: <b>100 Lê Quý Đôn</b>
+    </div>
+  </div>
+
+  <!-- ── 2 chính: Quét + Quản lý phiếu ── -->
+  <div class="seg" role="tablist">
+    <button class="active" data-pane="scan">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 8v8M11 8v8M15 8v8M19 8v8"/></svg>
+      Quét kiểm kê
+      <span class="badge">1 đang kiểm</span>
+    </button>
+    <button data-pane="manage">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3v4a1 1 0 0 0 1 1h4"/><path d="M17 21H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7l5 5v11a2 2 0 0 1-2 2z"/><path d="M9 13h6M9 17h4"/></svg>
+      Quản lý phiếu
+      <span class="badge">15</span>
+    </button>
+  </div>
+
+  <!-- ════════════════ PANE 1 — QUÉT ════════════════ -->
+  <section class="pane active" id="pane-scan">
+
+    <!-- Context bar: phiếu + progress + KPIs -->
+    <div class="ctx-bar">
+      <div class="ctx-picker" id="phieuPicker">
+        <span class="tag">KK000013</span>
+        <span class="meta">
+          <span class="top">100 LQĐ <span class="muted">·</span> Đồng hồ Casio</span>
+          <span class="sub">Nguyễn Liên · tạo 17/05 09:41</span>
+        </span>
+        <span class="chev">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 9 5 5 5-5"/></svg>
+        </span>
+      </div>
+
+      <div class="progress-wrap">
+        <div class="progress-meta">
+          <span>Tiến độ quét</span>
+          <span><b id="progressTxt">87 / 261</b> &nbsp;·&nbsp; <b id="progressPct">33%</b></span>
+        </div>
+        <div class="progress"><span id="progressBar" style="width: 33%"></span></div>
+      </div>
+
+      <div class="ctx-kpis">
+        <div class="ctx-kpi ok"><div class="k">Khớp</div><div class="v" id="kpiOk">12</div></div>
+        <div class="ctx-kpi bad"><div class="k">Lệch</div><div class="v" id="kpiBad">−174</div></div>
+      </div>
+    </div>
+
+    <!-- HERO Scan card -->
+    <div class="scan-shell" id="scanShell">
+      <div class="scan-card" id="scanCard">
+        <div class="item-id">
+          <span class="ribbon">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 5 5L20 7"/></svg>
+            Vừa quét · +1
+          </span>
+          <span class="code" id="scCode">LTP-V005D-4BUDF</span>
+          <span class="name" id="scName">Đồng hồ Casio LTP-V005D-4BUDF (nữ, dây da nâu)</span>
+        </div>
+
+        <div class="field">
+          <span class="k">Mã vạch</span>
+          <span class="v" id="scVach">LV005D4BU</span>
+        </div>
+        <div class="field">
+          <span class="k">Giá bán</span>
+          <span class="v" id="scPrice">1.450.000 <small>₫</small></span>
+        </div>
+        <div class="field qty">
+          <span class="k">SL đã quét</span>
+          <span class="v" id="scQuet">3</span>
+        </div>
+        <div class="field">
+          <span class="k">Tồn hệ thống</span>
+          <span class="v" id="scTon">5</span>
+        </div>
+        <div class="field lech neg" id="scLechField">
+          <span class="k">Lệch tạm</span>
+          <span class="v" id="scLech">−2</span>
+        </div>
+      </div>
+
+      <!-- Error overlay (shown via .flash-bad) -->
+      <div class="bad-msg">
+        <span class="ico">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+        </span>
+        <span><b id="badMsgCode">Mã 'ABCD-XYZ'</b> không tồn tại trong hệ thống KiotViet</span>
+        <span class="x" onclick="document.getElementById('scanShell').classList.remove('flash-bad')">✕</span>
+      </div>
+    </div>
+
+    <!-- Scan input -->
+    <form class="scan-input-row" id="scanForm" autocomplete="off">
+      <label class="scan-input" for="scanField">
+        <span class="ico">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M7 7v10M11 7v10M15 7v10M19 7v10"/></svg>
+        </span>
+        <input id="scanField" placeholder="Đưa con trỏ ở đây và quét mã vạch / mã hàng…" />
+        <span class="kbd">↵ Enter để +1</span>
+      </label>
+      <button type="submit" class="btn primary lg">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+        Quét +1
+      </button>
+    </form>
+
+    <!-- Toolbar above table -->
+    <div class="toolbar">
+      <div class="chips" id="scanFilterChips">
+        <span class="chip active" data-filter="all">Tất cả <span class="count">9</span></span>
+        <span class="chip" data-filter="lech">Còn lệch <span class="count">7</span></span>
+        <span class="chip" data-filter="khop">Đã khớp <span class="count">2</span></span>
+        <span class="chip" data-filter="chua">Chưa quét <span class="count">6</span></span>
+      </div>
+      <div class="stretch"></div>
+      <div class="search">
+        <span class="ico">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg>
+        </span>
+        <input placeholder="Tìm trong phiếu này…" />
+      </div>
+    </div>
+
+    <div class="help-hint">
+      <svg class="pencil" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 1 1 3 3L7 19l-4 1 1-4Z"/></svg>
+      Nháy đúp vào cột <b>SL Thực tế</b> để sửa trực tiếp · Mã vừa quét sẽ nhảy lên đầu bảng
+    </div>
+
+    <div class="table-wrap">
+      <table class="data" id="scanTable">
+        <thead><tr>
+          <th>Mã hàng / Mã vạch</th>
+          <th>Tên hàng</th>
+          <th class="num">Tồn</th>
+          <th class="num">SL Quét</th>
+          <th class="num">SL Thực tế ✏️</th>
+          <th class="num">Lệch</th>
+        </tr></thead>
+        <tbody id="scanTableBody">
+          <tr data-status="lech">
+            <td class="code">LTP-V005D-4BUDF <span class="vach">LV005D4BU</span></td>
+            <td><span class="name-strong">Đồng hồ Casio LTP-V005D-4BUDF</span></td>
+            <td class="num">1</td>
+            <td class="num" data-quet>3</td>
+            <td class="num editable"><input type="number" value="3" min="0" /></td>
+            <td class="num" data-lech><span class="delta-pos">+2</span></td>
+          </tr>
+          <tr data-status="lech">
+            <td class="code">LRW-200H-4CVDF <span class="vach">L200H4CV</span></td>
+            <td><span class="name-strong">Đồng hồ Casio LRW-200H-4CVDF</span></td>
+            <td class="num">2</td>
+            <td class="num" data-quet>2</td>
+            <td class="num editable"><input type="number" value="2" min="0" /></td>
+            <td class="num" data-lech><span class="delta-zero">0</span></td>
+          </tr>
+          <tr data-status="lech">
+            <td class="code">LA-20WH-1ADF <span class="vach">L20WH1AD</span></td>
+            <td><span class="name-strong">Đồng hồ Casio LA-20WH-1ADF</span></td>
+            <td class="num">2</td>
+            <td class="num" data-quet>1</td>
+            <td class="num editable"><input type="number" value="1" min="0" /></td>
+            <td class="num" data-lech><span class="delta-neg">−1</span></td>
+          </tr>
+          <tr data-status="chua">
+            <td class="code">LTP-V005D-4B2UDF <span class="vach">LV005D4B2</span></td>
+            <td><span class="name-strong">Đồng hồ Casio LTP-V005D-4B2UDF</span></td>
+            <td class="num">1</td>
+            <td class="num" data-quet>0</td>
+            <td class="num editable"><input type="number" value="0" min="0" /></td>
+            <td class="num" data-lech><span class="delta-neg">−1</span></td>
+          </tr>
+          <tr data-status="chua">
+            <td class="code">LTP-V005D-2B2UDF <span class="vach">LV005D2B2</span></td>
+            <td><span class="name-strong">Đồng hồ Casio LTP-V005D-2B2UDF</span></td>
+            <td class="num">1</td>
+            <td class="num" data-quet>0</td>
+            <td class="num editable"><input type="number" value="0" min="0" /></td>
+            <td class="num" data-lech><span class="delta-neg">−1</span></td>
+          </tr>
+          <tr data-status="chua">
+            <td class="code">LA-20WH-9ADF <span class="vach">L20WH9AD</span></td>
+            <td><span class="name-strong">Đồng hồ Casio LA-20WH-9ADF</span></td>
+            <td class="num">1</td>
+            <td class="num" data-quet>0</td>
+            <td class="num editable"><input type="number" value="0" min="0" /></td>
+            <td class="num" data-lech><span class="delta-neg">−1</span></td>
+          </tr>
+          <tr data-status="chua">
+            <td class="code">AE-1600HX-3AVDF <span class="vach">A160HX3AV</span></td>
+            <td><span class="name-strong">Đồng hồ Casio AE-1600HX-3AVDF</span></td>
+            <td class="num">1</td>
+            <td class="num" data-quet>0</td>
+            <td class="num editable"><input type="number" value="0" min="0" /></td>
+            <td class="num" data-lech><span class="delta-neg">−1</span></td>
+          </tr>
+          <tr data-status="chua">
+            <td class="code">A158WEA-7DF <span class="vach">A15EA7DF</span></td>
+            <td><span class="name-strong">Đồng hồ Casio A158WEA-7DF</span></td>
+            <td class="num">2</td>
+            <td class="num" data-quet>0</td>
+            <td class="num editable"><input type="number" value="0" min="0" /></td>
+            <td class="num" data-lech><span class="delta-neg">−2</span></td>
+          </tr>
+          <tr data-status="chua">
+            <td class="code">A158WEA-1DF <span class="vach">A15EA1DF</span></td>
+            <td><span class="name-strong">Đồng hồ Casio A158WEA-1DF</span></td>
+            <td class="num">1</td>
+            <td class="num" data-quet>0</td>
+            <td class="num editable"><input type="number" value="0" min="0" /></td>
+            <td class="num" data-lech><span class="delta-neg">−1</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="footer-actions">
+      <button class="btn primary lg stretch">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 5 5L20 7"/></svg>
+        Hoàn thành kiểm kê
+      </button>
+      <button class="btn lg">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+        Xuất Excel KiotViet
+      </button>
+      <button class="btn danger lg">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+        Hủy phiếu
+      </button>
+    </div>
+  </section>
+
+  <!-- ════════════════ PANE 2 — QUẢN LÝ PHIẾU ════════════════ -->
+  <section class="pane" id="pane-manage">
+    <div class="toolbar" style="margin-bottom: 14px;">
+      <div class="chips" id="manageFilters">
+        <span class="chip active" data-status="all">Tất cả <span class="count">15</span></span>
+        <span class="chip" data-status="scanning">Đang kiểm <span class="count">1</span></span>
+        <span class="chip" data-status="waiting">Chờ duyệt <span class="count">1</span></span>
+        <span class="chip" data-status="approved">Đã duyệt <span class="count">13</span></span>
+      </div>
+      <div class="stretch"></div>
+      <div class="search">
+        <span class="ico">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3-3"/></svg>
+        </span>
+        <input placeholder="Tìm mã phiếu / chi nhánh / nhóm…" />
+      </div>
+      <button class="btn primary" id="btnCreate">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+        Tạo phiếu mới
+      </button>
+    </div>
+
+    <div class="table-wrap">
+      <table class="data" id="manageTable">
+        <thead><tr>
+          <th>Mã phiếu</th>
+          <th>Chi nhánh</th>
+          <th>Nhóm hàng</th>
+          <th>Trạng thái</th>
+          <th>Người tạo</th>
+          <th>Ngày tạo</th>
+          <th>Tiến độ</th>
+          <th class="num">Hành động</th>
+        </tr></thead>
+        <tbody>
+          <tr data-row-status="scanning">
+            <td class="code">KK000013</td>
+            <td>100 LQĐ</td>
+            <td>Đồng hồ đeo tay › Casio</td>
+            <td><span class="st scanning">Đang kiểm</span></td>
+            <td>Nguyễn Liên</td>
+            <td><span class="muted">17/05 09:41</span></td>
+            <td><div class="progress" style="width:120px;"><span style="width:33%"></span></div></td>
+            <td>
+              <div class="row-actions" style="justify-content:flex-end;">
+                <button class="btn primary" data-jump-scan>▶ Quét tiếp</button>
+                <button class="btn icon" title="Hủy">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                </button>
+              </div>
+            </td>
+          </tr>
+          <tr data-row-status="waiting">
+            <td class="code">KK000012</td>
+            <td>100 LQĐ</td>
+            <td>Đồng hồ treo tường</td>
+            <td><span class="st waiting">Chờ duyệt</span></td>
+            <td>Nguyễn Liên</td>
+            <td><span class="muted">13/05 09:41</span></td>
+            <td><div class="progress" style="width:120px;"><span style="width:100%"></span></div></td>
+            <td>
+              <div class="row-actions" style="justify-content:flex-end;">
+                <button class="btn primary">✓ Duyệt</button>
+                <button class="btn icon" title="Xem chi tiết">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                </button>
+              </div>
+            </td>
+          </tr>
+          <tr data-row-status="approved">
+            <td class="code">KK000011</td>
+            <td>Coop Vũng Tàu</td>
+            <td>Đồng hồ đeo tay › DW</td>
+            <td><span class="st approved">Đã duyệt</span></td>
+            <td>Đăng Khoa</td>
+            <td><span class="muted">07/05 14:09</span></td>
+            <td><div class="progress" style="width:120px;"><span style="width:100%"></span></div></td>
+            <td>
+              <div class="row-actions" style="justify-content:flex-end;">
+                <button class="btn">👁 Chi tiết</button>
+                <button class="btn">📥 Excel</button>
+              </div>
+            </td>
+          </tr>
+          <tr data-row-status="approved">
+            <td class="code">KK000010</td>
+            <td>100 LQĐ</td>
+            <td>LC | Seiko</td>
+            <td><span class="st approved">Đã duyệt</span></td>
+            <td>Nguyễn Liên</td>
+            <td><span class="muted">28/04 20:22</span></td>
+            <td><div class="progress" style="width:120px;"><span style="width:100%"></span></div></td>
+            <td><div class="row-actions" style="justify-content:flex-end;"><button class="btn">👁</button><button class="btn">📥</button></div></td>
+          </tr>
+          <tr data-row-status="approved">
+            <td class="code">KK000009</td>
+            <td>100 LQĐ</td>
+            <td>Longines | Ogival | Fuji…</td>
+            <td><span class="st approved">Đã duyệt</span></td>
+            <td>Nguyễn Liên</td>
+            <td><span class="muted">28/04 19:57</span></td>
+            <td><div class="progress" style="width:120px;"><span style="width:100%"></span></div></td>
+            <td><div class="row-actions" style="justify-content:flex-end;"><button class="btn">👁</button><button class="btn">📥</button></div></td>
+          </tr>
+          <tr data-row-status="approved">
+            <td class="code">KK000008</td>
+            <td>100 LQĐ</td>
+            <td>Orient | Saga</td>
+            <td><span class="st approved">Đã duyệt</span></td>
+            <td>Nguyễn Liên</td>
+            <td><span class="muted">28/04 19:27</span></td>
+            <td><div class="progress" style="width:120px;"><span style="width:100%"></span></div></td>
+            <td><div class="row-actions" style="justify-content:flex-end;"><button class="btn">👁</button><button class="btn">📥</button></div></td>
+          </tr>
+          <tr data-row-status="approved">
+            <td class="code">KK000007</td>
+            <td>100 LQĐ</td>
+            <td>Citizen</td>
+            <td><span class="st approved">Đã duyệt</span></td>
+            <td>Nguyễn Liên</td>
+            <td><span class="muted">28/04 18:36</span></td>
+            <td><div class="progress" style="width:120px;"><span style="width:100%"></span></div></td>
+            <td><div class="row-actions" style="justify-content:flex-end;"><button class="btn">👁</button><button class="btn">📥</button></div></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Inline detail (waiting approval) -->
+    <div class="detail-card" id="detailCard">
+      <header>
+        <div class="title">
+          <span class="st waiting">Chờ duyệt</span>
+          <b>KK000012 · 100 LQĐ · Đồng hồ treo tường</b>
+          <span class="muted" style="font-size: 12px;">Nguyễn Liên · 13/05 09:41</span>
+        </div>
+        <div class="row-actions">
+          <button class="btn primary">✓ Duyệt & chốt phiếu</button>
+          <button class="btn danger">🗑 Hủy phiếu</button>
+        </div>
+      </header>
+      <div class="detail-summary">
+        <div class="ctx-kpi"><div class="k">Tổng thực tế</div><div class="v">142 <small style="font-family:var(--sans); font-size: 11px; color: var(--ink-3); font-weight: 500;">SKU</small></div></div>
+        <div class="ctx-kpi ok"><div class="k">Lệch tăng</div><div class="v">+4</div></div>
+        <div class="ctx-kpi bad"><div class="k">Lệch giảm</div><div class="v">−12</div></div>
+        <div class="ctx-kpi bad"><div class="k">Giá trị lệch</div><div class="v">−12.4 <small style="font-family:var(--sans); font-size: 11px; color: var(--ink-3); font-weight: 500;">triệu</small></div></div>
+      </div>
+      <div style="padding: 0 0 14px;">
+        <table class="data">
+          <thead><tr>
+            <th>Mã hàng</th>
+            <th>Tên hàng</th>
+            <th class="num">Tồn</th>
+            <th class="num">SL Thực tế</th>
+            <th class="num">Lệch</th>
+            <th class="num">Giá trị lệch</th>
+          </tr></thead>
+          <tbody>
+            <tr>
+              <td class="code">TW-NHA-001</td>
+              <td>Đồng hồ treo tường nhựa Casio IQ-01</td>
+              <td class="num">12</td><td class="num">10</td>
+              <td class="num"><span class="delta-neg">−2</span></td>
+              <td class="num delta-neg">−1.560.000</td>
+            </tr>
+            <tr>
+              <td class="code">TW-GO-114</td>
+              <td>Đồng hồ treo tường gỗ Vintage XL</td>
+              <td class="num">8</td><td class="num">8</td>
+              <td class="num"><span class="delta-zero">0</span></td>
+              <td class="num muted">0</td>
+            </tr>
+            <tr>
+              <td class="code">TW-GO-203</td>
+              <td>Đồng hồ treo tường gỗ cao cấp Rhythm</td>
+              <td class="num">5</td><td class="num">3</td>
+              <td class="num"><span class="delta-neg">−2</span></td>
+              <td class="num delta-neg">−4.200.000</td>
+            </tr>
+            <tr>
+              <td colspan="6" style="text-align: center; color: var(--ink-3); font-style: italic; font-size: 13px;">… 142 dòng (rút gọn để xem) …</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+</div>
+
+<!-- ── Toast region ── -->
+<div class="toast-region" id="toastRegion"></div>
+
+<!-- ── Modal: Tạo phiếu mới ── -->
+<div class="scrim" id="createScrim">
+  <div class="modal">
+    <header>
+      <h3>Tạo phiếu kiểm kê mới</h3>
+      <button class="btn ghost icon" id="closeCreate">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </header>
+    <div class="body">
+      <div>
+        <label class="field-label">Chi nhánh kiểm kê</label>
+        <div class="input-wrap">
+          <select>
+            <option>100 Lê Quý Đôn</option>
+            <option>Coop Vũng Tàu</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="preview-code">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41 13.42 20.58a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><circle cx="7" cy="7" r="1"/></svg>
+        Mã phiếu dự kiến: <b>KK000014</b>
+      </div>
+
+      <div>
+        <label class="field-label">Nhóm hàng kiểm kê (chọn nhiều)</label>
+        <div class="ms">
+          <span class="tag">Đồng hồ đeo tay › Casio <span class="x">✕</span></span>
+          <span class="tag">Đồng hồ đeo tay › Citizen <span class="x">✕</span></span>
+          <input placeholder="+ thêm nhóm…" />
+        </div>
+      </div>
+
+      <div>
+        <label class="field-label">Ghi chú (tùy chọn)</label>
+        <div class="input-wrap">
+          <textarea rows="3" placeholder="Ghi chú cho đợt kiểm kê này…"></textarea>
+        </div>
+      </div>
+    </div>
+    <footer>
+      <button class="btn" id="cancelCreate">Hủy</button>
+      <button class="btn primary">Tạo phiếu kiểm kê</button>
+    </footer>
+  </div>
+</div>
+
+<script>
+  /* ────── Tab switch ────── */
+  const segBtns = document.querySelectorAll('.seg button');
+  segBtns.forEach(b => b.addEventListener('click', () => {
+    segBtns.forEach(x => x.classList.remove('active'));
+    document.querySelectorAll('.pane').forEach(p => p.classList.remove('active'));
+    b.classList.add('active');
+    document.getElementById('pane-' + b.dataset.pane).classList.add('active');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }));
+
+  /* ────── Manage "▶ Quét tiếp" jumps to scan tab ────── */
+  document.querySelectorAll('[data-jump-scan]').forEach(b => b.addEventListener('click', () => {
+    document.querySelector('.seg button[data-pane="scan"]').click();
+  }));
+
+  /* ────── Filter chips ────── */
+  document.querySelectorAll('#scanFilterChips .chip').forEach(c => c.addEventListener('click', () => {
+    document.querySelectorAll('#scanFilterChips .chip').forEach(x => x.classList.remove('active'));
+    c.classList.add('active');
+    const f = c.dataset.filter;
+    document.querySelectorAll('#scanTableBody tr').forEach(tr => {
+      const st = tr.dataset.status;
+      let show = true;
+      if (f === 'lech') show = st === 'lech';
+      else if (f === 'khop') show = st === 'khop';
+      else if (f === 'chua') show = st === 'chua';
+      tr.style.display = show ? '' : 'none';
+    });
+  }));
+  document.querySelectorAll('#manageFilters .chip').forEach(c => c.addEventListener('click', () => {
+    document.querySelectorAll('#manageFilters .chip').forEach(x => x.classList.remove('active'));
+    c.classList.add('active');
+    const f = c.dataset.status;
+    document.querySelectorAll('#manageTable tbody tr').forEach(tr => {
+      tr.style.display = (f === 'all' || tr.dataset.rowStatus === f) ? '' : 'none';
+    });
+  }));
+
+  /* ────── Toast ────── */
+  function toast(msg, sub, bad) {
+    const r = document.getElementById('toastRegion');
+    const t = document.createElement('div');
+    t.className = 'toast' + (bad ? ' bad' : '');
+    t.innerHTML = `
+      <span class="ico">${bad
+        ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>'
+        : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 5 5L20 7"/></svg>'}</span>
+      <span><b>${msg}</b>${sub ? '<div class="sub">' + sub + '</div>' : ''}</span>
+    `;
+    r.appendChild(t);
+    setTimeout(() => t.remove(), 3000);
+  }
+
+  /* ────── Sound feedback ────── */
+  function beep(freq, dur, type) {
+    try {
+      const ac = window.__ac || (window.__ac = new (window.AudioContext || window.webkitAudioContext)());
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.type = type || 'sine';
+      o.frequency.value = freq;
+      g.gain.value = 0.07;
+      o.connect(g).connect(ac.destination);
+      o.start();
+      g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + dur);
+      o.stop(ac.currentTime + dur + 0.01);
+    } catch (e) { /* ignore */ }
+  }
+  function beepOk() { beep(880, 0.08, 'sine'); }
+  function beepBad() { beep(220, 0.18, 'square'); setTimeout(() => beep(180, 0.18, 'square'), 100); }
+
+  /* ────── Mock master data ────── */
+  const MASTER = {
+    'LTP-V005D-4BUDF': { ma: 'LTP-V005D-4BUDF', vach: 'LV005D4BU', ten: 'Đồng hồ Casio LTP-V005D-4BUDF (nữ, dây da nâu)', gia: 1450000, ton: 5 },
+    'LV005D4BU':       { ma: 'LTP-V005D-4BUDF', vach: 'LV005D4BU', ten: 'Đồng hồ Casio LTP-V005D-4BUDF (nữ, dây da nâu)', gia: 1450000, ton: 5 },
+    'LRW-200H-4CVDF':  { ma: 'LRW-200H-4CVDF',  vach: 'L200H4CV',  ten: 'Đồng hồ Casio LRW-200H-4CVDF',  gia: 1620000, ton: 2 },
+    'L200H4CV':        { ma: 'LRW-200H-4CVDF',  vach: 'L200H4CV',  ten: 'Đồng hồ Casio LRW-200H-4CVDF',  gia: 1620000, ton: 2 },
+    'A158WEA-7DF':     { ma: 'A158WEA-7DF',     vach: 'A15EA7DF',  ten: 'Đồng hồ Casio A158WEA-7DF',     gia: 980000,  ton: 2 },
+    'LA-20WH-1ADF':    { ma: 'LA-20WH-1ADF',    vach: 'L20WH1AD',  ten: 'Đồng hồ Casio LA-20WH-1ADF',    gia: 1150000, ton: 2 },
+  };
+  const fmtVnd = n => n.toLocaleString('vi-VN');
+
+  /* ────── Scan simulation ────── */
+  const scanForm = document.getElementById('scanForm');
+  const scanField = document.getElementById('scanField');
+  const scanShell = document.getElementById('scanShell');
+
+  function updateScanCard(item, quetNew) {
+    document.getElementById('scCode').textContent = item.ma;
+    document.getElementById('scName').textContent = item.ten;
+    document.getElementById('scVach').textContent = item.vach || '—';
+    document.getElementById('scPrice').innerHTML = fmtVnd(item.gia) + ' <small>₫</small>';
+    document.getElementById('scQuet').textContent = quetNew;
+    document.getElementById('scTon').textContent = item.ton;
+    const lech = quetNew - item.ton;
+    const f = document.getElementById('scLechField');
+    f.classList.remove('neg', 'pos', 'zero');
+    f.classList.add(lech < 0 ? 'neg' : lech > 0 ? 'pos' : 'zero');
+    document.getElementById('scLech').textContent = lech === 0 ? '0' : (lech > 0 ? '+' : '−') + Math.abs(lech);
+  }
+
+  function flashOk() {
+    scanShell.classList.remove('flash-bad');
+    scanShell.classList.remove('flash-ok');
+    void scanShell.offsetWidth;
+    scanShell.classList.add('flash-ok');
+    setTimeout(() => scanShell.classList.remove('flash-ok'), 550);
+  }
+  function flashBad(code) {
+    document.getElementById('badMsgCode').textContent = `Mã '${code}'`;
+    scanShell.classList.remove('flash-ok');
+    scanShell.classList.remove('flash-bad');
+    void scanShell.offsetWidth;
+    scanShell.classList.add('flash-bad');
+  }
+
+  function findRow(ma) {
+    return [...document.querySelectorAll('#scanTableBody tr')].find(tr =>
+      tr.querySelector('.code').textContent.trim().startsWith(ma));
+  }
+
+  scanForm.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const raw = scanField.value.trim();
+    if (!raw) return;
+    const key = raw.toUpperCase();
+    const item = MASTER[key];
+
+    if (!item) {
+      beepBad();
+      flashBad(raw);
+      toast('Không tìm thấy mã', `'${raw}' không tồn tại trong KiotViet`, true);
+      scanField.value = '';
+      scanField.focus();
+      return;
+    }
+
+    // Found — simulate +1
+    const row = findRow(item.ma);
+    if (row) {
+      const quetCell = row.querySelector('[data-quet]');
+      const newQuet = (parseInt(quetCell.textContent) || 0) + 1;
+      quetCell.textContent = newQuet;
+      // update SL Thực tế input
+      const input = row.querySelector('.editable input');
+      input.value = newQuet;
+      // update lech
+      const ton = parseInt(row.children[2].textContent) || 0;
+      const lech = newQuet - ton;
+      const lechCell = row.querySelector('[data-lech]');
+      lechCell.innerHTML = lech === 0
+        ? '<span class="delta-zero">0</span>'
+        : lech > 0
+          ? '<span class="delta-pos">+' + lech + '</span>'
+          : '<span class="delta-neg">−' + Math.abs(lech) + '</span>';
+      // re-status
+      row.dataset.status = (lech === 0) ? 'khop' : 'lech';
+      // flash + move to top
+      row.classList.remove('flash');
+      void row.offsetWidth;
+      row.classList.add('flash');
+      const tbody = document.getElementById('scanTableBody');
+      tbody.insertBefore(row, tbody.firstChild);
+
+      updateScanCard(item, newQuet);
+    } else {
+      // Phát sinh mới
+      updateScanCard(item, 1);
+      toast('Phát sinh mới', `${item.ma} chèn vào phiếu`);
+    }
+
+    flashOk();
+    beepOk();
+    scanField.value = '';
+    scanField.focus();
+  });
+
+  // Auto-focus scan field whenever pane is active
+  function focusScan() {
+    if (document.getElementById('pane-scan').classList.contains('active')) {
+      scanField.focus();
+    }
+  }
+  document.querySelector('.seg button[data-pane="scan"]').addEventListener('click', () => setTimeout(focusScan, 50));
+  setTimeout(focusScan, 250);
+
+  /* Re-focus if user clicks anywhere not interactive */
+  document.addEventListener('click', (e) => {
+    const tag = e.target.tagName;
+    if (['INPUT', 'TEXTAREA', 'SELECT', 'BUTTON'].includes(tag)) return;
+    if (e.target.closest('button, a, input, textarea, select, .chip, .scrim, .modal')) return;
+    focusScan();
+  });
+
+  /* ────── Create-phieu modal ────── */
+  const scrim = document.getElementById('createScrim');
+  document.getElementById('btnCreate').addEventListener('click', () => scrim.classList.add('open'));
+  document.getElementById('closeCreate').addEventListener('click', () => scrim.classList.remove('open'));
+  document.getElementById('cancelCreate').addEventListener('click', () => scrim.classList.remove('open'));
+  scrim.addEventListener('click', e => { if (e.target === scrim) scrim.classList.remove('open'); });
+</script>
+</body>
+</html>

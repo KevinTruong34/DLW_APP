@@ -1,0 +1,944 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<title>Kiểm kê – Wireframes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Caveat:wght@500;700&family=Patrick+Hand&family=Kalam:wght@400;700&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --ink: #1a1a1a;
+    --ink-2: #555;
+    --ink-3: #8a8a8a;
+    --paper: #faf7ef;
+    --paper-2: #f3eee0;
+    --line: #2a2a2a;
+    --accent: #1f7a4e;          /* green – inventory/success */
+    --accent-soft: #d6ecdd;
+    --warn: #c2410c;
+    --bad: #b91c1c;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #ece8db; }
+  body {
+    font-family: 'Patrick Hand', 'Kalam', system-ui, sans-serif;
+    color: var(--ink);
+    font-size: 17px;
+    line-height: 1.35;
+    padding: 32px 24px 80px;
+  }
+
+  /* ─── Top bar ─── */
+  .topbar {
+    max-width: 1280px;
+    margin: 0 auto 24px;
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: 24px;
+  }
+  .topbar h1 {
+    font-family: 'Caveat', cursive;
+    font-weight: 700;
+    margin: 0;
+    font-size: 44px;
+    letter-spacing: 0.5px;
+  }
+  .topbar p {
+    margin: 4px 0 0;
+    color: var(--ink-2);
+    font-size: 17px;
+    max-width: 640px;
+  }
+  .legend {
+    font-family: 'Patrick Hand';
+    background: var(--paper);
+    border: 1.5px solid var(--line);
+    border-radius: 6px;
+    padding: 8px 14px;
+    font-size: 15px;
+    color: var(--ink-2);
+    transform: rotate(-0.5deg);
+    box-shadow: 2px 2px 0 var(--line);
+  }
+
+  /* ─── Tabs ─── */
+  .tabs {
+    max-width: 1280px;
+    margin: 0 auto 18px;
+    display: flex;
+    gap: 0;
+    border-bottom: 2px solid var(--line);
+    padding: 0 6px;
+  }
+  .tab {
+    appearance: none;
+    background: transparent;
+    border: 2px solid var(--line);
+    border-bottom: none;
+    border-radius: 10px 10px 0 0;
+    padding: 10px 22px 14px;
+    font-family: 'Patrick Hand';
+    font-size: 19px;
+    color: var(--ink-2);
+    cursor: pointer;
+    margin-right: -2px;
+    margin-bottom: -2px;
+    background: #e3deca;
+    transition: all 0.15s ease;
+  }
+  .tab:hover { color: var(--ink); }
+  .tab.active {
+    color: var(--ink);
+    background: var(--paper);
+    border-bottom: 2px solid var(--paper);
+    z-index: 2;
+    font-weight: 700;
+  }
+  .tab small { display: block; font-size: 13px; color: var(--ink-3); font-weight: 400; }
+  .tab.active small { color: var(--ink-2); }
+
+  /* ─── Variant container ─── */
+  .variant {
+    max-width: 1280px;
+    margin: 0 auto;
+    display: none;
+  }
+  .variant.active { display: block; }
+
+  .v-header {
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    margin-bottom: 8px;
+    padding: 4px 8px;
+  }
+  .v-header h2 {
+    font-family: 'Caveat', cursive;
+    font-size: 32px;
+    margin: 0;
+  }
+  .v-header .pitch {
+    color: var(--ink-2);
+    font-size: 16px;
+  }
+
+  /* Screen "paper" frame */
+  .screen {
+    background: var(--paper);
+    border: 2px solid var(--line);
+    border-radius: 14px;
+    padding: 22px 24px 26px;
+    margin: 12px 0 28px;
+    box-shadow: 4px 4px 0 var(--line);
+    position: relative;
+  }
+  .screen::before {
+    content: attr(data-label);
+    position: absolute;
+    top: -14px; left: 22px;
+    background: #fff8d6;
+    border: 1.5px solid var(--line);
+    border-radius: 6px;
+    padding: 2px 12px;
+    font-family: 'Caveat', cursive;
+    font-weight: 700;
+    font-size: 20px;
+    transform: rotate(-1deg);
+  }
+
+  /* Sketchy UI primitives ----------------- */
+  .row { display: flex; gap: 10px; align-items: center; }
+  .col { display: flex; flex-direction: column; gap: 10px; }
+  .stretch { flex: 1; }
+
+  .btn {
+    border: 1.8px solid var(--line);
+    border-radius: 8px;
+    padding: 7px 14px;
+    background: #fff;
+    font-family: 'Patrick Hand';
+    font-size: 15px;
+    cursor: default;
+    box-shadow: 2px 2px 0 var(--line);
+    display: inline-flex; align-items: center; gap: 6px;
+    white-space: nowrap;
+  }
+  .btn.primary { background: var(--accent); color: white; }
+  .btn.ghost { background: var(--paper-2); }
+  .btn.danger { background: #fbe4e4; }
+  .btn.lg { padding: 11px 22px; font-size: 17px; }
+
+  .input {
+    border: 1.8px solid var(--line);
+    border-radius: 8px;
+    padding: 8px 12px;
+    background: #fff;
+    font-family: 'Patrick Hand';
+    font-size: 15px;
+    color: var(--ink-3);
+    flex: 1;
+    min-height: 22px;
+  }
+  .input.big {
+    font-size: 22px;
+    padding: 16px 18px;
+    min-height: 36px;
+  }
+  .input.scanner {
+    border: 2.5px dashed var(--accent);
+    background: #f1fbf5;
+    color: var(--accent);
+  }
+
+  .chip {
+    border: 1.5px solid var(--line);
+    border-radius: 999px;
+    padding: 3px 11px;
+    font-size: 14px;
+    background: #fff;
+  }
+  .chip.active { background: var(--accent); color: white; }
+  .chip.warn { background: #fef3c7; }
+  .chip.ok { background: var(--accent-soft); }
+
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    font-size: 13px;
+    border-radius: 5px;
+    border: 1.5px solid var(--line);
+    background: #fff;
+  }
+  .badge.scanning { background: #fff8d6; }
+  .badge.waiting  { background: #ffe1b3; }
+  .badge.done     { background: var(--accent-soft); }
+
+  /* Table */
+  table.wf {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: 'Patrick Hand';
+    font-size: 15px;
+    background: #fff;
+    border: 1.5px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  table.wf th, table.wf td {
+    border-bottom: 1px solid var(--ink-3);
+    padding: 8px 10px;
+    text-align: left;
+    vertical-align: middle;
+  }
+  table.wf th { background: var(--paper-2); font-weight: 700; }
+  table.wf tr:last-child td { border-bottom: none; }
+  table.wf td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  table.wf tr.just-scanned { background: #f1fbf5; }
+
+  /* Section labels */
+  .section-tag {
+    display: inline-block;
+    font-family: 'Caveat';
+    font-size: 20px;
+    color: var(--ink-2);
+    padding: 0 6px;
+    margin: 18px 0 6px;
+    border-bottom: 2px solid var(--ink-3);
+  }
+
+  /* SCAN CARD – the hero element */
+  .scancard {
+    border: 2.5px solid var(--accent);
+    border-radius: 14px;
+    background: #f1fbf5;
+    padding: 16px 18px;
+    position: relative;
+    box-shadow: 3px 3px 0 var(--accent);
+  }
+  .scancard.compact { padding: 12px 14px; }
+  .scancard .sc-label {
+    position: absolute; top: -12px; left: 14px;
+    background: var(--accent); color: white;
+    font-family: 'Caveat'; font-size: 18px; font-weight: 700;
+    padding: 1px 12px; border-radius: 5px; transform: rotate(-1deg);
+  }
+  .sc-grid {
+    display: grid;
+    grid-template-columns: 1.4fr 1fr 1fr 1fr 1fr 1fr;
+    gap: 14px;
+    align-items: stretch;
+  }
+  .sc-cell { display: flex; flex-direction: column; gap: 2px; }
+  .sc-cell .k {
+    font-size: 12px;
+    color: var(--ink-3);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .sc-cell .v {
+    font-family: 'Caveat'; font-weight: 700;
+    font-size: 22px;
+    color: var(--ink);
+    line-height: 1.05;
+  }
+  .sc-cell.big .v { font-size: 30px; color: var(--accent); }
+  .sc-cell .v.lech-neg { color: var(--bad); }
+  .sc-cell .v.lech-pos { color: var(--accent); }
+
+  /* KPI tiles */
+  .kpi {
+    border: 1.8px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 14px;
+    background: #fff;
+    min-width: 130px;
+    flex: 1;
+    box-shadow: 2px 2px 0 var(--line);
+  }
+  .kpi .k { font-size: 13px; color: var(--ink-3); }
+  .kpi .v { font-family: 'Caveat'; font-weight: 700; font-size: 26px; }
+  .kpi.ok  .v { color: var(--accent); }
+  .kpi.bad .v { color: var(--bad); }
+
+  /* progress bar */
+  .progress {
+    height: 10px;
+    background: #fff;
+    border: 1.5px solid var(--line);
+    border-radius: 6px;
+    overflow: hidden;
+    flex: 1;
+  }
+  .progress > span { display:block; height: 100%; background: var(--accent); }
+
+  /* arrows / annotations */
+  .annot {
+    font-family: 'Caveat';
+    color: var(--accent);
+    font-size: 19px;
+    transform: rotate(-2deg);
+    display: inline-block;
+    padding: 2px 8px;
+  }
+  .annot-line {
+    position: relative;
+    padding-left: 22px;
+    font-family: 'Caveat';
+    font-size: 17px;
+    color: var(--ink-2);
+    margin: 6px 0;
+  }
+  .annot-line::before {
+    content: "↳";
+    position: absolute; left: 4px; top: -2px;
+    color: var(--accent); font-weight: 700;
+  }
+
+  .notes {
+    border: 1.5px dashed var(--ink-3);
+    border-radius: 8px;
+    padding: 10px 14px;
+    background: #fffce8;
+    font-family: 'Patrick Hand';
+    font-size: 14px;
+    color: var(--ink-2);
+    margin: 8px 0 12px;
+  }
+  .notes b { color: var(--ink); font-weight: 700; }
+  .notes ul { margin: 4px 0 0; padding-left: 20px; }
+  .notes li { margin-bottom: 2px; }
+
+  /* tab pills inside variants */
+  .pills { display: flex; gap: 0; }
+  .pill {
+    border: 1.5px solid var(--line);
+    background: #fff;
+    padding: 5px 14px;
+    font-family: 'Patrick Hand';
+    font-size: 15px;
+  }
+  .pill:first-child { border-radius: 7px 0 0 7px; }
+  .pill:last-child  { border-radius: 0 7px 7px 0; }
+  .pill + .pill { border-left: none; }
+  .pill.active { background: var(--ink); color: white; }
+
+  /* sidebar list */
+  .side-list {
+    border: 1.5px solid var(--line);
+    border-radius: 8px;
+    background: #fff;
+    overflow: hidden;
+  }
+  .side-list .item {
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--ink-3);
+    font-size: 14px;
+  }
+  .side-list .item:last-child { border-bottom: none; }
+  .side-list .item.active { background: var(--accent-soft); border-left: 4px solid var(--accent); padding-left: 8px; }
+  .side-list .item .ma { font-family: 'Caveat'; font-weight: 700; font-size: 18px; }
+  .side-list .item .meta { color: var(--ink-3); font-size: 13px; }
+
+  /* history feed */
+  .feed {
+    border: 1.5px solid var(--line);
+    border-radius: 8px;
+    background: #fff;
+    padding: 6px 8px;
+  }
+  .feed .f {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 5px 6px;
+    border-bottom: 1px dashed var(--ink-3);
+    font-size: 14px;
+  }
+  .feed .f:last-child { border-bottom: none; }
+  .feed .f.ok::before { content: "✓"; color: var(--accent); font-weight: 700; margin-right: 6px; }
+  .feed .f.bad::before { content: "✕"; color: var(--bad); font-weight: 700; margin-right: 6px; }
+
+  /* ring progress */
+  .ring {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    width: 130px; height: 130px;
+    border-radius: 50%;
+    border: 5px solid var(--paper-2);
+    border-top-color: var(--accent);
+    border-right-color: var(--accent);
+    transform: rotate(-25deg);
+    margin: 8px auto;
+  }
+  .ring .num { font-family: 'Caveat'; font-size: 34px; font-weight: 700; transform: rotate(25deg); }
+  .ring .sub { font-size: 13px; color: var(--ink-3); transform: rotate(25deg); }
+
+  /* mini-card */
+  .card {
+    border: 1.5px solid var(--line);
+    border-radius: 10px;
+    background: #fff;
+    padding: 12px 14px;
+    box-shadow: 2px 2px 0 var(--line);
+  }
+  .card .title { font-family: 'Caveat'; font-weight: 700; font-size: 20px; margin-bottom: 4px; }
+  .card .desc  { font-size: 14px; color: var(--ink-2); }
+
+  /* drawing helpers */
+  .pencil { color: var(--accent); }
+  .strike { text-decoration: line-through; opacity: .6; }
+  .hint { font-family: 'Caveat'; font-size: 17px; color: var(--accent); }
+
+  .summary-row { display: flex; gap: 10px; }
+</style>
+</head>
+<body>
+
+  <div class="topbar">
+    <div>
+      <h1>Kiểm kê – Wireframe khám phá</h1>
+      <p>4 phương án thu gọn UI từ 4 tab xuống 2 khu vực, với card scan nổi bật trên cùng. Chốt 1 phương án để chuyển sang hi-fi.</p>
+    </div>
+    <div class="legend">
+      <span class="pencil">━━</span> = accent xanh lá &nbsp;·&nbsp;
+      <span style="border:1.5px dashed var(--ink-3); padding:0 4px;">dashed</span> = ghi chú &nbsp;·&nbsp;
+      <span class="hint">↳</span> = annotation
+    </div>
+  </div>
+
+  <div class="tabs" role="tablist">
+    <button class="tab active" data-v="a">Phương án A<small>Inbox + Action-per-row</small></button>
+    <button class="tab" data-v="b">Phương án B<small>Split-view (sidebar)</small></button>
+    <button class="tab" data-v="c">Phương án C<small>Kiosk hero</small></button>
+    <button class="tab" data-v="d">Phương án D<small>Dashboard 3 cột</small></button>
+  </div>
+
+  <!-- ════════ VARIANT A ════════ -->
+  <div class="variant active" data-v="a">
+    <div class="v-header">
+      <h2>A — Inbox + action-per-row</h2>
+      <span class="pitch">"Quản lý phiếu" là 1 bảng duy nhất, mỗi dòng có nút phù hợp với trạng thái. Quét = 1 trang full-screen, card scan đập vào mắt.</span>
+    </div>
+
+    <!-- Screen 1: Quản lý phiếu -->
+    <div class="screen" data-label="Tab 1 · Quản lý phiếu">
+      <div class="row" style="margin-bottom:14px; gap:14px; flex-wrap:wrap;">
+        <span class="chip active">Tất cả (15)</span>
+        <span class="chip warn">Đang kiểm (2)</span>
+        <span class="chip">Chờ duyệt (1)</span>
+        <span class="chip ok">Đã duyệt (12)</span>
+        <div class="stretch"></div>
+        <span class="input" style="max-width:240px;">🔍 tìm mã / chi nhánh…</span>
+        <span class="btn primary">＋ Tạo phiếu mới</span>
+      </div>
+
+      <table class="wf">
+        <thead><tr>
+          <th>Mã phiếu</th><th>Chi nhánh</th><th>Nhóm hàng</th><th>Trạng thái</th>
+          <th>Người tạo</th><th>Ngày tạo</th><th class="num">Tiến độ</th><th>Hành động</th>
+        </tr></thead>
+        <tbody>
+          <tr style="background:#fff8d6;">
+            <td><b>KK000013</b></td><td>100 LQĐ</td><td>Casio</td>
+            <td><span class="badge scanning">Đang kiểm</span></td>
+            <td>Nguyễn Liên</td><td>17/05 09:41</td>
+            <td><div class="progress" style="margin:0;"><span style="width:32%"></span></div></td>
+            <td><span class="btn">▶ Quét tiếp</span> <span class="btn danger">🗑</span></td>
+          </tr>
+          <tr>
+            <td><b>KK000012</b></td><td>100 LQĐ</td><td>Treo tường</td>
+            <td><span class="badge waiting">Chờ duyệt</span></td>
+            <td>Nguyễn Liên</td><td>13/05 09:41</td>
+            <td><div class="progress" style="margin:0;"><span style="width:100%"></span></div></td>
+            <td><span class="btn primary">✓ Duyệt</span> <span class="btn">👁</span></td>
+          </tr>
+          <tr>
+            <td><b>KK000011</b></td><td>Coop VT</td><td>DW</td>
+            <td><span class="badge done">Đã duyệt</span></td>
+            <td>Đăng Khoa</td><td>07/05 14:09</td>
+            <td><div class="progress" style="margin:0;"><span style="width:100%"></span></div></td>
+            <td><span class="btn">👁 Chi tiết</span> <span class="btn">📥 Excel</span></td>
+          </tr>
+          <tr><td colspan="8" style="color:var(--ink-3); text-align:center; font-style:italic;">… và 12 phiếu khác …</td></tr>
+        </tbody>
+      </table>
+
+      <div class="notes">
+        <b>Ý tưởng:</b> Gộp <span class="strike">3 tab</span> Danh sách / Tạo / Duyệt thành 1 bảng. Action button đổi theo trạng thái — đỡ phải nhảy tab.
+        <ul>
+          <li>"Tạo phiếu" mở modal/expander → tránh thêm tab</li>
+          <li>"Duyệt" chỉ enable với admin, ẩn với staff</li>
+          <li>Filter chip thay vì dropdown</li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Screen 2: Quét -->
+    <div class="screen" data-label="Tab 2 · Quét kiểm kê">
+      <div class="row" style="margin-bottom: 12px; gap:14px;">
+        <div>
+          <div style="font-size:13px; color:var(--ink-3);">PHIẾU ĐANG QUÉT</div>
+          <div style="font-family:'Caveat'; font-weight:700; font-size:28px;">KK000013 · 100 LQĐ · Casio</div>
+        </div>
+        <div class="stretch"></div>
+        <div class="kpi"><div class="k">Đã quét</div><div class="v">87 / 261</div></div>
+        <div class="kpi ok"><div class="k">Khớp</div><div class="v">12</div></div>
+        <div class="kpi bad"><div class="k">Lệch</div><div class="v">−174</div></div>
+        <span class="btn">⇋ Đổi phiếu</span>
+      </div>
+
+      <!-- The hero scan card -->
+      <div class="scancard" style="margin-bottom: 14px;">
+        <span class="sc-label">Vừa quét  ·  +1 ✓</span>
+        <div class="sc-grid">
+          <div class="sc-cell big">
+            <span class="k">Mã hàng</span>
+            <span class="v" style="font-size:34px;">LTP-V005D-4BUDF</span>
+          </div>
+          <div class="sc-cell">
+            <span class="k">Tên hàng</span>
+            <span class="v" style="font-size:18px;">Đồng hồ Casio LTP-V005D</span>
+          </div>
+          <div class="sc-cell">
+            <span class="k">Mã vạch</span>
+            <span class="v">LV005D4BU</span>
+          </div>
+          <div class="sc-cell">
+            <span class="k">Giá bán</span>
+            <span class="v">1.450.000</span>
+          </div>
+          <div class="sc-cell">
+            <span class="k">SL quét / Tồn</span>
+            <span class="v">3 / 5</span>
+          </div>
+          <div class="sc-cell">
+            <span class="k">Lệch tạm</span>
+            <span class="v lech-neg">−2</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="row" style="margin-bottom: 14px;">
+        <span class="input scanner big">▌Đưa con trỏ vào đây và quét…</span>
+        <span class="btn primary lg">Quét +1</span>
+      </div>
+      <span class="annot">↳ Auto-focus & auto-submit ngay khi máy quét bắn Enter — bỏ click "+1"</span>
+
+      <table class="wf" style="margin-top: 14px;">
+        <thead><tr>
+          <th>Mã hàng</th><th>Mã vạch</th><th>Tên hàng</th>
+          <th class="num">Tồn</th><th class="num">SL Quét</th><th class="num">SL Thực tế ✏️</th><th class="num">Lệch</th>
+        </tr></thead>
+        <tbody>
+          <tr class="just-scanned">
+            <td><b>LTP-V005D-4BUDF</b></td><td>LV005D4BU</td><td>Đồng hồ Casio</td>
+            <td class="num">1</td><td class="num">3</td><td class="num">3</td><td class="num" style="color:var(--accent);">+2</td>
+          </tr>
+          <tr><td>LRW-200H-4CVDF</td><td>L200H4CV</td><td>Đồng hồ Casio</td>
+            <td class="num">2</td><td class="num">2</td><td class="num">2</td><td class="num">0</td></tr>
+          <tr><td>A158WEA-7DF</td><td>A15EA7DF</td><td>Đồng hồ Casio</td>
+            <td class="num">2</td><td class="num">0</td><td class="num">0</td><td class="num" style="color:var(--bad);">−2</td></tr>
+        </tbody>
+      </table>
+
+      <div class="row" style="margin-top: 14px; gap: 10px;">
+        <span class="btn primary lg stretch" style="justify-content:center;">✓ Hoàn thành kiểm kê</span>
+        <span class="btn danger lg">🗑 Hủy phiếu</span>
+      </div>
+
+      <div class="notes">
+        <b>UX scan:</b> form <code>clear_on_submit=True</code> giữ nguyên. Beep khi mã không tìm thấy. Dòng vừa quét nhảy lên đầu (sort theo updated_at — đã có sẵn).
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════ VARIANT B ════════ -->
+  <div class="variant" data-v="b">
+    <div class="v-header">
+      <h2>B — Split view có sidebar</h2>
+      <span class="pitch">Sidebar trái = danh sách phiếu (sticky). Phải = chi tiết phiếu đang chọn (đọc / quét / duyệt — tất cả 1 chỗ). Chỉ còn <b>1 màn hình duy nhất</b>.</span>
+    </div>
+
+    <div class="screen" data-label="Một màn hình duy nhất – sidebar + main">
+      <div class="row" style="align-items: stretch; gap: 18px;">
+
+        <!-- Sidebar -->
+        <div style="flex: 0 0 280px;" class="col">
+          <div class="row" style="gap:6px;">
+            <span class="btn primary stretch" style="justify-content:center;">＋ Tạo phiếu</span>
+            <span class="btn ghost">⚙</span>
+          </div>
+          <div class="row" style="gap:4px; flex-wrap:wrap;">
+            <span class="chip active">Tất cả</span>
+            <span class="chip warn">Đang kiểm</span>
+            <span class="chip">Chờ duyệt</span>
+          </div>
+          <div class="side-list">
+            <div class="item active">
+              <div class="ma">KK000013</div>
+              <div class="meta">100 LQĐ · Casio<br />
+                <span style="color:var(--warn);">● Đang kiểm</span> · 87/261
+              </div>
+            </div>
+            <div class="item">
+              <div class="ma">KK000012</div>
+              <div class="meta">100 LQĐ · Treo tường<br />
+                <span style="color:var(--accent);">● Chờ duyệt</span></div>
+            </div>
+            <div class="item">
+              <div class="ma">KK000011</div>
+              <div class="meta">Coop VT · DW<br />
+                <span style="color:var(--ink-3);">● Đã duyệt</span></div>
+            </div>
+            <div class="item">
+              <div class="ma">KK000010</div>
+              <div class="meta">100 LQĐ · LC|Seiko<br />
+                <span style="color:var(--ink-3);">● Đã duyệt</span></div>
+            </div>
+            <div class="item" style="color:var(--ink-3); text-align:center; font-style:italic;">… 11 phiếu …</div>
+          </div>
+        </div>
+
+        <!-- Main -->
+        <div class="stretch col" style="min-width: 0;">
+          <div class="row" style="gap:14px;">
+            <div>
+              <div style="font-size:13px; color:var(--ink-3);">PHIẾU</div>
+              <div style="font-family:'Caveat'; font-weight:700; font-size:30px;">KK000013 · Casio</div>
+              <div style="color:var(--ink-2); font-size:14px;">100 Lê Quý Đôn · Nguyễn Liên · 17/05 09:41</div>
+            </div>
+            <div class="stretch"></div>
+            <span class="badge scanning">● Đang kiểm</span>
+            <span class="btn">📥 Excel</span>
+            <span class="btn danger">🗑 Hủy</span>
+          </div>
+
+          <div class="scancard">
+            <span class="sc-label">Vừa quét  ·  +1 ✓</span>
+            <div class="sc-grid">
+              <div class="sc-cell big"><span class="k">Mã hàng</span><span class="v" style="font-size:30px;">LTP-V005D-4BUDF</span></div>
+              <div class="sc-cell"><span class="k">Tên</span><span class="v" style="font-size:16px;">Đồng hồ Casio LTP-V005D</span></div>
+              <div class="sc-cell"><span class="k">Mã vạch</span><span class="v">LV005D4BU</span></div>
+              <div class="sc-cell"><span class="k">Giá bán</span><span class="v">1.450.000</span></div>
+              <div class="sc-cell"><span class="k">Quét / Tồn</span><span class="v">3 / 5</span></div>
+              <div class="sc-cell"><span class="k">Lệch</span><span class="v lech-neg">−2</span></div>
+            </div>
+          </div>
+
+          <div class="row">
+            <span class="input scanner big stretch">▌Quét ở đây…</span>
+            <span class="btn primary lg">+1</span>
+          </div>
+
+          <div class="row" style="gap: 10px;">
+            <div class="kpi"><div class="k">Tổng tồn</div><div class="v">261</div></div>
+            <div class="kpi ok"><div class="k">Đã quét</div><div class="v">87</div></div>
+            <div class="kpi bad"><div class="k">Lệch</div><div class="v">−174</div></div>
+            <div class="kpi"><div class="k">% hoàn thành</div><div class="v">33%</div></div>
+          </div>
+
+          <table class="wf">
+            <thead><tr>
+              <th>Mã hàng</th><th>Tên</th>
+              <th class="num">Tồn</th><th class="num">Quét</th><th class="num">Thực tế ✏️</th><th class="num">Lệch</th>
+            </tr></thead>
+            <tbody>
+              <tr class="just-scanned"><td><b>LTP-V005D-4BUDF</b></td><td>Casio LTP-V005D</td>
+                <td class="num">1</td><td class="num">3</td><td class="num">3</td><td class="num" style="color:var(--accent);">+2</td></tr>
+              <tr><td>LRW-200H-4CVDF</td><td>Casio</td>
+                <td class="num">2</td><td class="num">2</td><td class="num">2</td><td class="num">0</td></tr>
+              <tr><td>A158WEA-7DF</td><td>Casio</td>
+                <td class="num">2</td><td class="num">0</td><td class="num">0</td><td class="num" style="color:var(--bad);">−2</td></tr>
+              <tr><td colspan="6" style="text-align:center; color:var(--ink-3); font-style:italic;">… 6 dòng khác …</td></tr>
+            </tbody>
+          </table>
+
+          <div class="row" style="gap:10px;">
+            <span class="btn primary lg stretch" style="justify-content:center;">✓ Hoàn thành kiểm kê</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="notes" style="margin-top: 14px;">
+        <b>Điểm mạnh:</b> Không còn khái niệm "tab Quét" riêng — chọn phiếu ở sidebar là tự vào quét. State của phiếu quyết định nút nào hiện (Quét / Duyệt / Xem).<br />
+        <b>Cảnh báo:</b> Sidebar chiếm 280px → màn 13" có thể chật. Cần collapsible.
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════ VARIANT C ════════ -->
+  <div class="variant" data-v="c">
+    <div class="v-header">
+      <h2>C — Kiosk hero (Scan-first)</h2>
+      <span class="pitch">Tối ưu cho người dùng cầm máy quét USB. Ô quét chiếm toàn bộ phía trên, info card to gấp đôi. Table thu nhỏ làm "log". Mobile-friendly.</span>
+    </div>
+
+    <!-- Screen 1: Quản lý phiếu -->
+    <div class="screen" data-label="Quản lý phiếu (pills, không phải tab)">
+      <div class="row" style="margin-bottom: 12px;">
+        <div class="pills">
+          <span class="pill active">📋 Danh sách</span>
+          <span class="pill">＋ Tạo phiếu</span>
+          <span class="pill">✓ Duyệt (1)</span>
+        </div>
+        <div class="stretch"></div>
+        <span class="input" style="max-width:260px;">🔍 mã / chi nhánh…</span>
+      </div>
+
+      <table class="wf">
+        <thead><tr>
+          <th>Mã</th><th>Chi nhánh</th><th>Nhóm</th><th>Trạng thái</th>
+          <th>Tiến độ</th><th>Ngày</th><th></th>
+        </tr></thead>
+        <tbody>
+          <tr><td><b>KK000013</b></td><td>100 LQĐ</td><td>Casio</td>
+            <td><span class="badge scanning">Đang kiểm</span></td>
+            <td><div class="progress"><span style="width:33%"></span></div></td>
+            <td>17/05</td><td><span class="btn">▶</span></td></tr>
+          <tr><td><b>KK000012</b></td><td>100 LQĐ</td><td>Treo tường</td>
+            <td><span class="badge waiting">Chờ duyệt</span></td>
+            <td><div class="progress"><span style="width:100%"></span></div></td>
+            <td>13/05</td><td><span class="btn">▶</span></td></tr>
+          <tr><td>KK000011</td><td>Coop VT</td><td>DW</td>
+            <td><span class="badge done">Đã duyệt</span></td>
+            <td><div class="progress"><span style="width:100%"></span></div></td>
+            <td>07/05</td><td><span class="btn">👁</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Screen 2: Quét kiosk -->
+    <div class="screen" data-label="Quét kiểm kê – Kiosk mode">
+      <div class="row" style="gap:14px; margin-bottom:14px;">
+        <span class="badge scanning">● KK000013</span>
+        <span style="font-family:'Caveat'; font-size:22px;">100 LQĐ · Casio</span>
+        <div class="stretch"></div>
+        <span class="hint">87 / 261 đã quét  ·  33%</span>
+        <span class="btn">⇋ Đổi phiếu</span>
+      </div>
+
+      <!-- HERO: full-width scan input -->
+      <div class="scancard" style="padding: 24px 24px 26px;">
+        <span class="sc-label">Đang chờ quét</span>
+        <input class="input scanner big" style="width:100%; padding: 22px 22px; font-size: 28px; margin-bottom: 18px; text-align:center;" placeholder="▌  Hướng máy quét vào mã vạch  ▌" disabled />
+
+        <div style="display:grid; grid-template-columns: repeat(6, 1fr); gap: 14px;">
+          <div class="sc-cell big" style="grid-column: span 2;">
+            <span class="k">Mã vừa quét</span>
+            <span class="v" style="font-size:36px;">LTP-V005D-4BUDF</span>
+            <span style="color:var(--ink-2); font-size:14px;">Đồng hồ Casio LTP-V005D</span>
+          </div>
+          <div class="card" style="margin:0;"><div class="k" style="font-size:12px; color:var(--ink-3);">MÃ VẠCH</div><div class="title">LV005D4BU</div></div>
+          <div class="card" style="margin:0;"><div class="k" style="font-size:12px; color:var(--ink-3);">GIÁ BÁN</div><div class="title">1.450k</div></div>
+          <div class="card" style="margin:0; background:#f1fbf5;"><div class="k" style="font-size:12px; color:var(--ink-3);">SL QUÉT</div><div class="title" style="color:var(--accent); font-size:30px;">3</div></div>
+          <div class="card" style="margin:0;"><div class="k" style="font-size:12px; color:var(--ink-3);">TỒN HỆ THỐNG</div><div class="title">5</div></div>
+        </div>
+
+        <div class="row" style="margin-top: 16px; justify-content:center; gap: 8px;">
+          <span class="hint">Lệch tạm:</span>
+          <span style="font-family:'Caveat'; font-size: 34px; font-weight:700; color: var(--bad);">−2</span>
+        </div>
+      </div>
+
+      <div class="section-tag">Log quét (mới nhất ↑)</div>
+      <div class="feed">
+        <div class="f ok"><span><b>LTP-V005D-4BUDF</b> · Casio LTP-V005D</span><span style="color:var(--ink-3);">3 / 5 · 09:42:14</span></div>
+        <div class="f ok"><span><b>LRW-200H-4CVDF</b> · Casio LRW-200H</span><span style="color:var(--ink-3);">2 / 2 · 09:41:58</span></div>
+        <div class="f bad"><span><b>ABCD-XYZ</b>  <span style="color:var(--bad);">không tìm thấy trong hệ thống</span></span><span style="color:var(--ink-3);">09:41:45</span></div>
+        <div class="f ok"><span><b>A158WEA-7DF</b> · Casio A158</span><span style="color:var(--ink-3);">2 / 2 · 09:40:11</span></div>
+      </div>
+
+      <div class="row" style="margin-top: 14px; gap: 10px;">
+        <span class="btn ghost">📊 Xem bảng đầy đủ</span>
+        <div class="stretch"></div>
+        <span class="btn primary lg">✓ Hoàn thành</span>
+        <span class="btn danger">🗑</span>
+      </div>
+
+      <div class="notes">
+        <b>Trade-off:</b> Đẹp nhất, ít overload thông tin nhất — nhưng bảng đầy đủ bị ẩn (cần click "Xem bảng" để mở expander). Phù hợp nếu user 95% chỉ làm việc qua máy quét.
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════ VARIANT D ════════ -->
+  <div class="variant" data-v="d">
+    <div class="v-header">
+      <h2>D — Dashboard 3 cột</h2>
+      <span class="pitch">Màn quét chia 3 cột: Trái = scan + history feed · Giữa = progress ring + thông số phiếu · Phải = item table. Mọi info hiển thị cùng lúc, không scroll.</span>
+    </div>
+
+    <!-- Screen 1: Quản lý phiếu – KPI top -->
+    <div class="screen" data-label="Quản lý phiếu – KPI + bảng">
+      <div class="row" style="gap: 12px; margin-bottom: 14px;">
+        <div class="kpi" style="background:#fff8d6;"><div class="k">ĐANG KIỂM</div><div class="v">2</div></div>
+        <div class="kpi" style="background:#ffe1b3;"><div class="k">CHỜ DUYỆT</div><div class="v">1</div></div>
+        <div class="kpi ok"><div class="k">ĐÃ DUYỆT (30N)</div><div class="v">12</div></div>
+        <div class="kpi"><div class="k">CHÊNH LỆCH TỔNG</div><div class="v" style="color:var(--bad);">−174</div></div>
+        <div class="stretch"></div>
+        <span class="btn primary lg">＋ Tạo phiếu</span>
+      </div>
+
+      <div class="row" style="gap:10px; margin-bottom:10px; flex-wrap:wrap;">
+        <span class="chip active">Tất cả</span>
+        <span class="chip">100 LQĐ</span>
+        <span class="chip">Coop VT</span>
+        <div style="width: 1px; background:var(--ink-3); height: 22px; margin: 0 6px;"></div>
+        <span class="chip">07 ngày</span>
+        <span class="chip">30 ngày</span>
+        <span class="chip">Tùy chọn…</span>
+      </div>
+
+      <table class="wf">
+        <thead><tr><th>Mã</th><th>Chi nhánh</th><th>Nhóm hàng</th><th>Trạng thái</th><th class="num">Tiến độ</th><th class="num">Lệch GT</th><th></th></tr></thead>
+        <tbody>
+          <tr><td><b>KK000013</b></td><td>100 LQĐ</td><td>Casio</td><td><span class="badge scanning">Đang kiểm</span></td>
+            <td class="num">33%</td><td class="num" style="color:var(--bad);">−252M</td><td><span class="btn">▶ Tiếp</span></td></tr>
+          <tr><td><b>KK000012</b></td><td>100 LQĐ</td><td>Treo tường</td><td><span class="badge waiting">Chờ duyệt</span></td>
+            <td class="num">100%</td><td class="num" style="color:var(--bad);">−12M</td><td><span class="btn primary">✓ Duyệt</span></td></tr>
+          <tr><td>KK000011</td><td>Coop VT</td><td>DW</td><td><span class="badge done">Đã duyệt</span></td>
+            <td class="num">100%</td><td class="num">+3M</td><td><span class="btn">👁</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Screen 2: Quét – 3 columns -->
+    <div class="screen" data-label="Quét – 3 cột">
+      <div class="row" style="gap:14px; margin-bottom: 12px;">
+        <div>
+          <span style="font-family:'Caveat'; font-size:30px; font-weight:700;">KK000013</span>
+          <span style="color:var(--ink-2); margin-left: 8px;">100 LQĐ · Casio</span>
+        </div>
+        <div class="stretch"></div>
+        <span class="btn">⇋ Phiếu khác</span>
+        <span class="btn primary">✓ Hoàn thành</span>
+        <span class="btn danger">🗑</span>
+      </div>
+
+      <div class="row" style="align-items: stretch; gap: 14px;">
+
+        <!-- COL 1: Scan + Feed -->
+        <div class="col" style="flex: 0 0 320px;">
+          <div class="scancard compact">
+            <span class="sc-label">Quét</span>
+            <input class="input scanner big" style="width:100%; padding: 18px; font-size: 22px; text-align:center;" placeholder="▌Quét…" disabled />
+          </div>
+
+          <div class="scancard compact" style="background:#fff;">
+            <span class="sc-label" style="background:var(--ink); color:white;">Vừa quét</span>
+            <div class="col" style="gap:6px;">
+              <div><span style="color:var(--ink-3); font-size:12px;">MÃ</span> <b>LTP-V005D-4BUDF</b></div>
+              <div style="color:var(--ink-2); font-size:14px;">Đồng hồ Casio LTP-V005D</div>
+              <div class="row" style="gap:6px; flex-wrap:wrap;">
+                <span class="badge">Mã vạch · LV005D4BU</span>
+                <span class="badge">Giá · 1.450k</span>
+              </div>
+              <div class="row" style="gap:6px;">
+                <span class="badge ok">Quét: 3</span>
+                <span class="badge">Tồn: 5</span>
+                <span class="badge" style="background:#fde2e2;">Lệch: −2</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="section-tag" style="margin: 8px 0 4px;">5 lần quét gần nhất</div>
+          <div class="feed">
+            <div class="f ok"><span>LTP-V005D-4BUDF</span><span style="color:var(--ink-3);">3/5</span></div>
+            <div class="f ok"><span>LRW-200H-4CVDF</span><span style="color:var(--ink-3);">2/2</span></div>
+            <div class="f bad"><span style="color:var(--bad);">ABCD-XYZ — không có</span><span></span></div>
+            <div class="f ok"><span>A158WEA-7DF</span><span style="color:var(--ink-3);">2/2</span></div>
+            <div class="f ok"><span>LA-20WH-1ADF</span><span style="color:var(--ink-3);">1/2</span></div>
+          </div>
+        </div>
+
+        <!-- COL 2: Progress -->
+        <div class="col" style="flex: 0 0 200px; align-items:center;">
+          <div class="ring"><div class="num">33%</div><div class="sub">đã quét</div></div>
+          <div class="kpi" style="width: 100%;"><div class="k">Tổng tồn</div><div class="v">261</div></div>
+          <div class="kpi ok" style="width: 100%;"><div class="k">Đã quét</div><div class="v">87</div></div>
+          <div class="kpi bad" style="width: 100%;"><div class="k">Lệch</div><div class="v">−174</div></div>
+          <span class="annot" style="text-align:center;">↳ Progress real-time</span>
+        </div>
+
+        <!-- COL 3: Table -->
+        <div class="stretch col" style="min-width:0;">
+          <div class="row" style="gap:6px;">
+            <span class="input" style="max-width: 200px;">🔍 lọc trong phiếu…</span>
+            <div class="stretch"></div>
+            <span class="chip active">Tất cả</span>
+            <span class="chip warn">Còn lệch</span>
+            <span class="chip ok">Đã khớp</span>
+          </div>
+          <table class="wf">
+            <thead><tr><th>Mã</th><th class="num">Tồn</th><th class="num">Quét</th><th class="num">Thực tế ✏️</th><th class="num">Lệch</th></tr></thead>
+            <tbody>
+              <tr class="just-scanned"><td><b>LTP-V005D-4BUDF</b></td><td class="num">1</td><td class="num">3</td><td class="num">3</td><td class="num" style="color:var(--accent);">+2</td></tr>
+              <tr><td>LRW-200H-4CVDF</td><td class="num">2</td><td class="num">2</td><td class="num">2</td><td class="num">0</td></tr>
+              <tr><td>LA-20WH-1ADF</td><td class="num">2</td><td class="num">1</td><td class="num">1</td><td class="num" style="color:var(--bad);">−1</td></tr>
+              <tr><td>A158WEA-7DF</td><td class="num">2</td><td class="num">2</td><td class="num">2</td><td class="num">0</td></tr>
+              <tr><td>AE-1600HX-3AVDF</td><td class="num">1</td><td class="num">0</td><td class="num">0</td><td class="num" style="color:var(--bad);">−1</td></tr>
+              <tr><td colspan="5" style="text-align:center; color:var(--ink-3); font-style:italic;">… 4 dòng khác …</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="notes">
+        <b>Mật độ cao:</b> Power-user thấy mọi thứ cùng lúc, không scroll. <b>Trade-off:</b> Trên màn nhỏ &lt;1400px sẽ chật. Có thể cần collapse cột giữa thành thanh nhỏ.
+      </div>
+    </div>
+  </div>
+
+  <script>
+    document.querySelectorAll('.tab').forEach(t => {
+      t.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+        document.querySelectorAll('.variant').forEach(x => x.classList.remove('active'));
+        t.classList.add('active');
+        document.querySelector('.variant[data-v="'+t.dataset.v+'"]').classList.add('active');
+        window.scrollTo({top: 0, behavior: 'smooth'});
+      });
+    });
+  </script>
+
+</body>
+</html>

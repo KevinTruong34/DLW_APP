@@ -1,0 +1,17 @@
+/* static/kiem_ke.css — Streamlit native widget overrides for kiem_ke v2.
+ *
+ * Loaded via utils/kk_style.py::inject_kiem_ke_css() using
+ * st.markdown(unsafe_allow_html=True). Per HANDOFF section 1.1, st.html()
+ * strips <style> via DOMPurify silently — use st.markdown for global CSS.
+ *
+ * Scope: this file holds only font @import + selectors targeting
+ * Streamlit-rendered widgets via [data-testid="..."]. Content elements
+ * inside st.html() (div/span/section) must use inline style="..." with
+ * var(--token); their classes do not cross the iframe boundary.
+ *
+ * Design tokens (:root variables), @keyframes, and the DEBUG MARKER badge
+ * live in utils/kk_style.py::_CSS_VARS_BLOCK — kept in Python so they ship
+ * with the helper module as a single unit.
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');

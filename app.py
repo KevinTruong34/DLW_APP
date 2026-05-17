@@ -228,15 +228,17 @@ role_lbl  = {"admin":"Admin","ke_toan":"Kế toán","nhan_vien":"Nhân viên"}.g
     user.get("role",""), "")
 
 # Menu: BỎ Tổng quan khỏi vị trí có dashboard — chỉ còn welcome
-# Sắp xếp thứ tự theo ý anh: Tổng quan -> Hóa đơn -> Hàng hóa -> Chuyển hàng -> Kiểm kê
-menu = ["📊 Tổng quan", "🧾 Hóa đơn", "📦 Hàng hóa", "🔄 Chuyển hàng", "🧮 Kiểm kê", "🔧 Sửa chữa", "👥 Khách hàng", "📥 Nhập/Trả hàng", "📊 Báo cáo"]
+# Thứ tự: Tổng quan → Hóa đơn → Hàng hóa → Sửa chữa → Chuyển hàng → Khách hàng → Nhân viên → Nhập/Trả hàng → Kiểm kê → Báo cáo → Admin POS → Quản trị
+menu = ["📊 Tổng quan", "🧾 Hóa đơn", "📦 Hàng hóa", "🔧 Sửa chữa", "🔄 Chuyển hàng", "👥 Khách hàng"]
 
 if is_ke_toan_or_admin():
     menu.append("👥 Nhân viên")
 
+menu.extend(["📥 Nhập/Trả hàng", "🧮 Kiểm kê", "📊 Báo cáo"])
+
 if is_admin():
-    menu.append("⚙️ Quản trị")
     menu.append("🛡 Admin POS")
+    menu.append("⚙️ Quản trị")
 
 page = st.pills("nav", menu, default=menu[0], label_visibility="collapsed")
 

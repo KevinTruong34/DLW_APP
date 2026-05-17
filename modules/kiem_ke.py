@@ -1,3 +1,4 @@
+import io
 import streamlit as st
 import pandas as pd
 import uuid
@@ -11,7 +12,21 @@ from utils.db import supabase, log_action, load_hoa_don, load_the_kho, load_hang
     load_khach_hang_list, lookup_khach_hang, _upsert_khach_hang, get_archive_reminder
 from utils.auth import get_user, is_admin, is_ke_toan_or_admin, \
     get_active_branch, get_accessible_branches
-from utils.kk_style import inject_kiem_ke_css
+from utils.kk_style import (
+    inject_kiem_ke_css,
+    inject_audio_unlock_js,
+    inject_auto_focus_js,
+    play_beep_ok,
+    play_beep_bad,
+    hero_scan_card_html,
+    context_bar_html,
+    detail_empty_html,
+    detail_header_html,
+    kpi_tiles_scanning_html,
+    kpi_tiles_waiting_html,
+    hint_line_html,
+)
+
 
 def _kk_get_lines(ma_phieu: str) -> pd.DataFrame:
     res = supabase.table("phieu_kiem_ke_chi_tiet").select("*") \
@@ -255,329 +270,690 @@ def _kk_approve(ma_phieu: str) -> tuple[bool, str]:
         return False, f"Lỗi duyệt phiếu: {e}"
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# v2 helpers — không sửa signature 8 _kk_* helpers ở trên (HANDOFF section 5).
+# Mọi optimization làm ở caller (UI) hoặc helper mới dưới đây.
+# ═══════════════════════════════════════════════════════════════════════════
+
+
+def _kk_lookup_after_scan(ma_phieu: str, code: str) -> dict | None:
+    """Re-fetch row vừa scan để render hero card.
+
+    Gọi sau `_kk_scan_plus_one(ok=True)`. Returns dict với keys:
+    ma_hang, ten_hang, ma_vach, gia_ban, sl_quet, sl_thuc_te, ton.
+    Returns None nếu không tìm thấy (hiếm — chỉ khi race condition).
+    """
+    code_n = (code or "").strip().lower()
+    if not code_n:
+        return None
+    try:
+        rows = supabase.table("phieu_kiem_ke_chi_tiet") \
+            .select("ma_hang,ma_vach,ten_hang,ton_snapshot,sl_quet,sl_thuc_te") \
+            .eq("ma_phieu_kk", ma_phieu).execute().data or []
+        hit = None
+        for r in rows:
+            mh = str(r.get("ma_hang", "") or "").strip().lower()
+            mv = str(r.get("ma_vach", "") or "").strip().lower()
+            if code_n == mh or code_n == mv:
+                hit = r
+                break
+        if not hit:
+            return None
+        try:
+            gia = int(get_gia_ban_map().get(hit["ma_hang"], 0) or 0)
+        except Exception:
+            gia = 0
+        return {
+            "ma_hang": hit["ma_hang"],
+            "ten_hang": hit.get("ten_hang", "") or "",
+            "ma_vach": hit.get("ma_vach", "") or "",
+            "gia_ban": gia,
+            "sl_quet": int(hit.get("sl_quet", 0) or 0),
+            "sl_thuc_te": int(hit.get("sl_thuc_te", 0) or 0),
+            "ton": int(hit.get("ton_snapshot", 0) or 0),
+        }
+    except Exception:
+        return None
+
+
+def _fmt_phieu_date(created_at) -> str:
+    if not created_at:
+        return "—"
+    try:
+        return (pd.to_datetime(created_at, utc=True)
+                .tz_convert("Asia/Ho_Chi_Minh")
+                .strftime("%d/%m %H:%M"))
+    except Exception:
+        return str(created_at)[:16]
+
+
+def _filter_chips_row(state_key: str, default: str, chips: list[tuple[str, str, int]],
+                      extra_cols: int = 0) -> str:
+    """Render chip row + optional reserve cho extra widgets bên phải.
+
+    chips: [(label, key, count), ...]. Returns active filter key.
+    extra_cols: số columns trống bên phải (để caller chèn search/button).
+    """
+    active = st.session_state.get(state_key, default)
+    weights = [1.4] * len(chips) + [max(1, extra_cols)] * (1 if extra_cols else 0)
+    cols = st.columns(weights, gap="small")
+    for i, (label, key, count) in enumerate(chips):
+        with cols[i]:
+            is_active = (active == key)
+            if st.button(
+                f"{label} · {count}",
+                type="primary" if is_active else "secondary",
+                use_container_width=True,
+                key=f"chip_{state_key}_{key}",
+            ):
+                st.session_state[state_key] = key
+                st.rerun()
+    return active
+
+
+def _apply_scan_filter(lines: pd.DataFrame, filt: str) -> pd.DataFrame:
+    """Filter lines theo chip key trên tab Quét. Cần cột 'Lệch Tạm' + 'SL Quét'."""
+    if filt == "lech":
+        return lines[lines["Lệch Tạm"] != 0]
+    if filt == "khop":
+        return lines[(lines["Lệch Tạm"] == 0) & (lines["SL Quét"] > 0)]
+    if filt == "chua":
+        return lines[lines["SL Quét"] == 0]
+    return lines
+
+
+def _apply_manage_filter(df: pd.DataFrame, filt: str) -> pd.DataFrame:
+    """Filter phiếu list theo chip key trên tab Quản lý."""
+    if filt == "scanning":
+        return df[df["trang_thai"] == "Đang kiểm"]
+    if filt == "waiting":
+        return df[df["trang_thai"] == "Chờ duyệt admin"]
+    if filt == "approved":
+        return df[df["trang_thai"] == "Đã duyệt"]
+    return df
+
+
+@st.dialog("Tạo phiếu kiểm kê mới")
+def _dlg_create_phieu(active: str, accessible: list[str]) -> None:
+    """Dialog form thay thế sub-tab Tạo phiếu cũ (HANDOFF section 4)."""
+    cn_create = active
+    if is_ke_toan_or_admin() and len(accessible) > 1:
+        cn_create = st.selectbox(
+            "Chi nhánh kiểm kê:", accessible,
+            index=max(0, accessible.index(active)),
+            key="kk_dlg_cn",
+        )
+
+    ma_du_kien = _kk_gen_ma_phieu()
+    st.info(f"🏷️ Mã phiếu dự kiến: **{ma_du_kien}**")
+
+    master = load_hang_hoa()
+    if master.empty:
+        st.warning("Chưa có dữ liệu hàng hóa.")
+        return
+
+    if "loai_hang" in master.columns:
+        master["_cha"] = master["loai_hang"].fillna("")
+        master["_con"] = master.get("thuong_hieu", pd.Series([""] * len(master))).fillna("")
+    else:
+        nhom_col = master["nhom_hang"].fillna("") if "nhom_hang" in master.columns else pd.Series([""] * len(master))
+        split = nhom_col.str.split(">>", n=1, expand=True)
+        master["_cha"] = split[0].fillna("").str.strip()
+        master["_con"] = split[1].fillna("").str.strip() if len(split.columns) > 1 else ""
+
+    nhom_cha_list = sorted([str(x) for x in master["_cha"].unique() if str(x)])
+    if not nhom_cha_list:
+        st.warning("Không tìm thấy dữ liệu nhóm hàng.")
+        return
+
+    nhom_flat = []
+    for cha in nhom_cha_list:
+        nhom_flat.append(cha)
+        con_list = sorted([str(x) for x in master[master["_cha"] == cha]["_con"].unique() if str(x)])
+        for con in con_list:
+            nhom_flat.append(f"{cha}>>{con}")
+
+    nhom_chon_list = st.multiselect(
+        "Nhóm hàng kiểm kê (chọn nhiều):",
+        options=nhom_flat,
+        placeholder="Chọn ít nhất 1 nhóm…",
+        key=f"kk_dlg_nhom_{st.session_state.get('kk_create_count', 0)}",
+    )
+    nhom_chon = "|".join(nhom_chon_list) if nhom_chon_list else ""
+
+    ghi_chu = st.text_area(
+        "Ghi chú (tùy chọn):",
+        key=f"kk_dlg_ghi_chu_{st.session_state.get('kk_create_count', 0)}",
+        placeholder="Ghi chú cho đợt kiểm kê này…",
+    )
+
+    c_cancel, c_ok = st.columns([1, 1.4])
+    with c_cancel:
+        if st.button("Hủy", use_container_width=True, key="kk_dlg_cancel"):
+            st.rerun()
+    with c_ok:
+        if st.button("Tạo phiếu kiểm kê", type="primary",
+                     use_container_width=True, disabled=not nhom_chon,
+                     key="kk_dlg_create"):
+            ok, msg = _kk_create_phieu(cn_create, nhom_chon, ghi_chu)
+            if ok:
+                st.session_state["kk_active_ma"] = msg
+                st.session_state["kk_create_count"] = (
+                    st.session_state.get("kk_create_count", 0) + 1
+                )
+                st.session_state["kk_manage_selected"] = msg
+                load_phieu_kiem_ke.clear()
+                st.success(f"Đã tạo phiếu {msg}.")
+                st.rerun()
+            else:
+                st.error(msg)
+
+
+def _excel_download_button(lines: pd.DataFrame, ma_phieu: str, key: str,
+                            label: str = "📥 Xuất Excel KiotViet") -> None:
+    """Download button cho 2-cột Excel format KiotViet."""
+    df_export = lines[["ma_hang", "sl_thuc_te"]].copy()
+    df_export.columns = ["Mã hàng", "Số lượng"]
+    buf = io.BytesIO()
+    df_export.to_excel(buf, index=False)
+    buf.seek(0)
+    st.download_button(
+        label=label,
+        data=buf,
+        file_name=f"KiemKe_{ma_phieu}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True,
+        key=key,
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TAB QUÉT — hero card + scan flow + filter chips + items table + footer
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _render_tab_scan(active: str, accessible: list[str]) -> None:
+    try:
+        df = load_phieu_kiem_ke(tuple(accessible))
+    except Exception as e:
+        st.error(f"Lỗi tải danh sách phiếu: {e}")
+        return
+
+    if df.empty or "trang_thai" not in df.columns:
+        st.info("Chưa có phiếu kiểm kê. Mở tab **Quản lý phiếu** để tạo phiếu mới.")
+        return
+
+    candidates = df[df["trang_thai"] == "Đang kiểm"].copy()
+    if candidates.empty:
+        st.info("Không có phiếu ở trạng thái **Đang kiểm**. Tạo phiếu mới ở tab "
+                "**Quản lý phiếu**.")
+        return
+
+    # ── Phiếu picker (selectbox) ───────────────────────────────────────────
+    opts = [
+        f"{r['ma_phieu_kk']} · {r.get('chi_nhanh','')} · {r.get('nhom_cha','')}"
+        for _, r in candidates.iterrows()
+    ]
+    idx = 0
+    ma_saved = st.session_state.get("kk_active_ma")
+    if ma_saved:
+        for i, x in enumerate(opts):
+            if x.startswith(ma_saved):
+                idx = i
+                break
+    picked = st.selectbox("Phiếu đang kiểm:", opts, index=idx,
+                          key="kk_picker_label",
+                          label_visibility="collapsed")
+    ma_phieu = picked.split(" · ")[0]
+    st.session_state["kk_active_ma"] = ma_phieu
+
+    header_row = candidates[candidates["ma_phieu_kk"] == ma_phieu].iloc[0]
+
+    # ── Load lines + compute stats cho context bar + filter counts ──────────
+    try:
+        lines = _kk_get_lines(ma_phieu)
+    except Exception as e:
+        st.error(f"Lỗi tải chi tiết phiếu: {e}")
+        return
+
+    if not lines.empty:
+        lines["Lệch Tạm"] = lines["sl_thuc_te"] - lines["ton_snapshot"]
+        progress_done = int(lines["sl_thuc_te"].sum())
+        progress_total = int(lines["ton_snapshot"].sum())
+        kpi_ok = int(((lines["Lệch Tạm"] == 0) & (lines["sl_quet"] > 0)).sum())
+        kpi_bad = int(lines["Lệch Tạm"].sum())
+    else:
+        progress_done = progress_total = kpi_ok = kpi_bad = 0
+
+    # ── Context bar ────────────────────────────────────────────────────────
+    st.html(context_bar_html(
+        ma_phieu=ma_phieu,
+        chi_nhanh=str(header_row.get("chi_nhanh", "") or ""),
+        nhom_cha=str(header_row.get("nhom_cha", "") or ""),
+        created_by=str(header_row.get("created_by", "") or ""),
+        created_at_str=_fmt_phieu_date(header_row.get("created_at")),
+        progress_done=progress_done,
+        progress_total=progress_total,
+        kpi_ok=kpi_ok,
+        kpi_bad=kpi_bad,
+    ))
+
+    # ── Hero scan card (từ session state) + beep ───────────────────────────
+    last_scan = st.session_state.get("kk_last_scan")
+    flash = st.session_state.pop("kk_flash", None)
+    st.html(hero_scan_card_html(last_scan, flash))
+    if flash == "ok":
+        play_beep_ok()
+    elif flash == "bad":
+        play_beep_bad()
+
+    # ── Scan form (st.form + USB scanner pattern preserved) ────────────────
+    with st.form("kk_scan_form", clear_on_submit=True):
+        code = st.text_input(
+            "Quét mã vạch / mã hàng:",
+            key="kk_scan_code",
+            placeholder="Đưa con trỏ ở đây và quét mã vạch / mã hàng…",
+            label_visibility="collapsed",
+        )
+        submitted = st.form_submit_button(
+            "Quét +1", type="primary", use_container_width=True
+        )
+    if submitted:
+        code_clean = (code or "").strip()
+        if not code_clean:
+            st.toast("Mã quét rỗng.", icon="⚠️")
+        else:
+            ok, msg = _kk_scan_plus_one(ma_phieu, code_clean)
+            if ok:
+                item = _kk_lookup_after_scan(ma_phieu, code_clean) or {
+                    "ma_hang": msg, "ten_hang": "", "ma_vach": "",
+                    "gia_ban": 0, "sl_quet": 1, "sl_thuc_te": 1, "ton": 0,
+                }
+                if "(Phát sinh mới)" in msg:
+                    item["phat_sinh"] = True
+                st.session_state["kk_last_scan"] = item
+                st.session_state["kk_flash"] = "ok"
+            else:
+                st.session_state["kk_last_scan"] = {"error": True, "code": code_clean}
+                st.session_state["kk_flash"] = "bad"
+            # Granular invalidate — KHÔNG dùng st.cache_data.clear() global
+            # (HANDOFF section 2.1).
+            load_phieu_kiem_ke.clear()
+            st.rerun()
+
+    if lines.empty:
+        st.html(hint_line_html(
+            "Phiếu này chưa có chi tiết. Quét mã đầu tiên để bắt đầu."
+        ))
+        inject_auto_focus_js()
+        return
+
+    # ── Filter chips ───────────────────────────────────────────────────────
+    n_all = len(lines)
+    n_lech = int((lines["Lệch Tạm"] != 0).sum())
+    n_khop = int(((lines["Lệch Tạm"] == 0) & (lines["sl_quet"] > 0)).sum())
+    n_chua = int((lines["sl_quet"] == 0).sum())
+    active_filter = _filter_chips_row(
+        "kk_scan_filter", "all",
+        [("Tất cả", "all", n_all),
+         ("Còn lệch", "lech", n_lech),
+         ("Đã khớp", "khop", n_khop),
+         ("Chưa quét", "chua", n_chua)],
+    )
+
+    # ── Hint ───────────────────────────────────────────────────────────────
+    st.html(hint_line_html(
+        "Nháy đúp cột <b style='color:var(--ink-2);'>SL Thực tế</b> để sửa "
+        "trực tiếp · Mã vừa quét nhảy lên đầu bảng"
+    ))
+
+    # ── Data editor (filtered) ─────────────────────────────────────────────
+    view = lines.rename(columns={
+        "id": "ID", "ma_hang": "Mã Hàng", "ma_vach": "Mã Vạch",
+        "ten_hang": "Tên Hàng", "ton_snapshot": "Tồn Kho",
+        "sl_quet": "SL Quét", "sl_thuc_te": "SL Thực Tế",
+    })
+    view = _apply_scan_filter(view, active_filter)
+    cols = ["ID", "Mã Hàng", "Mã Vạch", "Tên Hàng", "Tồn Kho",
+            "SL Quét", "SL Thực Tế", "Lệch Tạm"]
+    cols = [c for c in cols if c in view.columns]
+
+    editor_key = f"kk_editor_{ma_phieu}_{active_filter}"
+    edited_df = st.data_editor(
+        view[cols],
+        use_container_width=True,
+        hide_index=True,
+        key=editor_key,
+        height=360,
+        column_config={
+            "ID": None,
+            "Mã Hàng": st.column_config.TextColumn(disabled=True),
+            "Mã Vạch": st.column_config.TextColumn(disabled=True),
+            "Tên Hàng": st.column_config.TextColumn(disabled=True),
+            "Tồn Kho": st.column_config.NumberColumn(disabled=True),
+            "SL Quét": st.column_config.NumberColumn(disabled=True),
+            "Lệch Tạm": st.column_config.NumberColumn(disabled=True),
+            "SL Thực Tế": st.column_config.NumberColumn(
+                "SL Thực Tế ✏️", min_value=0, step=1,
+                help="Nháy đúp để sửa số lượng thực tế",
+            ),
+        },
+    )
+
+    changes = st.session_state.get(editor_key, {}).get("edited_rows", {})
+    if changes:
+        st.warning("⚠️ Có thay đổi chưa lưu. Bấm **Lưu các dòng đã sửa** "
+                   "trước khi đổi filter hay hành động khác.")
+        if st.button("💾 Lưu các dòng đã sửa", type="primary",
+                     use_container_width=True, key=f"save_{editor_key}"):
+            try:
+                for row_idx, edit_data in changes.items():
+                    if "SL Thực Tế" in edit_data:
+                        new_sl = int(edit_data["SL Thực Tế"])
+                        row_id = int(view.iloc[int(row_idx)]["ID"])
+                        supabase.table("phieu_kiem_ke_chi_tiet").update({
+                            "sl_thuc_te": new_sl
+                        }).eq("id", row_id).execute()
+                st.success("✓ Đã cập nhật số lượng.")
+                load_phieu_kiem_ke.clear()
+                st.rerun()
+            except Exception as e:
+                st.error(f"Lỗi khi lưu: {e}")
+
+    # ── Footer actions: Complete / Excel / Cancel ─────────────────────────
+    st.markdown("")
+    c_complete, c_excel, c_cancel = st.columns([2, 1.5, 1.2])
+    with c_complete:
+        if st.button("✓ Hoàn thành kiểm kê", type="primary",
+                     use_container_width=True, disabled=bool(changes),
+                     key=f"complete_{ma_phieu}"):
+            ok, msg = _kk_complete(ma_phieu)
+            if ok:
+                load_phieu_kiem_ke.clear()
+                st.success(msg)
+                st.rerun()
+            else:
+                st.error(msg)
+    with c_excel:
+        _excel_download_button(lines, ma_phieu, key=f"dl_scan_{ma_phieu}")
+    with c_cancel:
+        if st.button("🗑 Hủy phiếu", use_container_width=True,
+                     key=f"cancel_{ma_phieu}"):
+            ok, msg = _kk_cancel_phieu(ma_phieu)
+            if ok:
+                st.session_state.pop("kk_active_ma", None)
+                load_phieu_kiem_ke.clear()
+                st.success(msg)
+                st.rerun()
+            else:
+                st.error(msg)
+
+    # ── Auto-focus (HANDOFF section 2.3 override) ─────────────────────────
+    inject_auto_focus_js()
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TAB QUẢN LÝ — toolbar + native dataframe + detail panel
+# ═══════════════════════════════════════════════════════════════════════════
+
+_STATUS_EMOJI = {
+    "Đang kiểm":       "🟡 Đang kiểm",
+    "Chờ duyệt admin": "🔵 Chờ duyệt",
+    "Đã duyệt":        "🟢 Đã duyệt",
+}
+
+
+def _render_tab_manage(active: str, accessible: list[str]) -> None:
+    try:
+        df = load_phieu_kiem_ke(tuple(accessible))
+    except Exception as e:
+        st.error(f"Lỗi tải danh sách phiếu: {e}")
+        return
+
+    # ── Toolbar: chips + search + Tạo phiếu button ─────────────────────────
+    if df.empty or "trang_thai" not in df.columns:
+        n_all = n_scan = n_wait = n_done = 0
+    else:
+        n_all = len(df)
+        n_scan = int((df["trang_thai"] == "Đang kiểm").sum())
+        n_wait = int((df["trang_thai"] == "Chờ duyệt admin").sum())
+        n_done = int((df["trang_thai"] == "Đã duyệt").sum())
+
+    chips = [
+        ("Tất cả", "all", n_all),
+        ("Đang kiểm", "scanning", n_scan),
+        ("Chờ duyệt", "waiting", n_wait),
+        ("Đã duyệt", "approved", n_done),
+    ]
+    # 4 chips + search + create button => 6 columns
+    weights = [1.4] * 4 + [3.5, 1.6]
+    cols = st.columns(weights, gap="small")
+    active_filter = st.session_state.get("kk_mgr_filter", "all")
+    for i, (label, key, count) in enumerate(chips):
+        with cols[i]:
+            is_a = (active_filter == key)
+            if st.button(
+                f"{label} · {count}",
+                type="primary" if is_a else "secondary",
+                use_container_width=True,
+                key=f"chip_mgr_{key}",
+            ):
+                st.session_state["kk_mgr_filter"] = key
+                st.session_state.pop("kk_manage_selected", None)
+                st.rerun()
+    with cols[4]:
+        search_q = st.text_input(
+            "Tìm phiếu", label_visibility="collapsed",
+            placeholder="Tìm mã phiếu / chi nhánh / nhóm…",
+            key="kk_mgr_search",
+        )
+    with cols[5]:
+        if st.button("➕ Tạo phiếu", type="primary",
+                     use_container_width=True, key="kk_mgr_create"):
+            _dlg_create_phieu(active, accessible)
+
+    if df.empty or "trang_thai" not in df.columns:
+        st.html(detail_empty_html())
+        return
+
+    # ── Filter + search ────────────────────────────────────────────────────
+    view_df = _apply_manage_filter(df, active_filter).copy()
+    if search_q:
+        q = search_q.strip().lower()
+        def _match(row):
+            blob = " ".join(str(row.get(c, "") or "") for c in
+                            ["ma_phieu_kk", "chi_nhanh", "nhom_cha"]).lower()
+            return q in blob
+        view_df = view_df[view_df.apply(_match, axis=1)]
+
+    if view_df.empty:
+        st.info("Không có phiếu nào khớp filter / search hiện tại.")
+        st.html(detail_empty_html())
+        return
+
+    # ── Build display dataframe ────────────────────────────────────────────
+    disp = view_df.copy()
+    disp["Trạng Thái"] = disp["trang_thai"].map(lambda s: _STATUS_EMOJI.get(s, s))
+    if "created_at" in disp.columns:
+        disp["Ngày Tạo"] = (pd.to_datetime(disp["created_at"], utc=True)
+                            .dt.tz_convert("Asia/Ho_Chi_Minh")
+                            .dt.strftime("%d/%m/%Y %H:%M"))
+    disp = disp.rename(columns={
+        "ma_phieu_kk": "Mã Phiếu",
+        "chi_nhanh":   "Chi Nhánh",
+        "nhom_cha":    "Nhóm Hàng",
+        "created_by":  "Người Tạo",
+    })
+    show_cols = ["Mã Phiếu", "Chi Nhánh", "Nhóm Hàng", "Trạng Thái",
+                 "Người Tạo", "Ngày Tạo"]
+    show_cols = [c for c in show_cols if c in disp.columns]
+
+    sel_event = st.dataframe(
+        disp[show_cols],
+        use_container_width=True,
+        hide_index=True,
+        on_select="rerun",
+        selection_mode="single-row",
+        height=min(380, 56 + 36 * max(1, len(disp))),
+        key=f"kk_mgr_table_{active_filter}",
+    )
+
+    # Defensive: API contract per HANDOFF section 2.5
+    try:
+        sel_rows = sel_event.selection.rows
+    except (AttributeError, TypeError):
+        sel_rows = []
+
+    if sel_rows:
+        sel_ma = disp.iloc[int(sel_rows[0])]["Mã Phiếu"]
+        st.session_state["kk_manage_selected"] = sel_ma
+
+    sel_ma = st.session_state.get("kk_manage_selected")
+    if sel_ma and (df["ma_phieu_kk"] == sel_ma).any():
+        row = df[df["ma_phieu_kk"] == sel_ma].iloc[0]
+        _render_detail_panel(sel_ma, row)
+    else:
+        st.html(detail_empty_html())
+
+
+def _render_detail_panel(ma_phieu: str, header_row) -> None:
+    """Detail panel cho phiếu được chọn — header + actions + KPIs + bảng."""
+    status = str(header_row.get("trang_thai", "") or "")
+
+    # Header
+    st.html(detail_header_html(
+        ma_phieu=ma_phieu,
+        chi_nhanh=str(header_row.get("chi_nhanh", "") or ""),
+        nhom_cha=str(header_row.get("nhom_cha", "") or ""),
+        created_by=str(header_row.get("created_by", "") or ""),
+        created_at_str=_fmt_phieu_date(header_row.get("created_at")),
+        status=status,
+    ))
+
+    try:
+        lines = _kk_get_lines(ma_phieu)
+    except Exception as e:
+        st.error(f"Lỗi tải chi tiết phiếu: {e}")
+        return
+
+    if lines.empty:
+        st.info("Phiếu này chưa có dữ liệu chi tiết.")
+        return
+
+    # ── Action buttons theo status ─────────────────────────────────────────
+    a1, a2, a3 = st.columns([1.5, 1.3, 1.3])
+    if status == "Đang kiểm":
+        with a1:
+            if st.button("▶ Quét tiếp phiếu này", type="primary",
+                         use_container_width=True, key=f"go_{ma_phieu}"):
+                st.session_state["kk_active_ma"] = ma_phieu
+                st.toast(
+                    f"Đã chọn {ma_phieu}. Bấm tab **Quét kiểm kê** phía trên ↑",
+                    icon="✨",
+                )
+        with a2:
+            if st.button("🗑 Hủy phiếu", use_container_width=True,
+                         key=f"cancel_mgr_{ma_phieu}"):
+                ok, msg = _kk_cancel_phieu(ma_phieu)
+                if ok:
+                    st.session_state.pop("kk_manage_selected", None)
+                    load_phieu_kiem_ke.clear()
+                    st.success(msg)
+                    st.rerun()
+                else:
+                    st.error(msg)
+    elif status == "Chờ duyệt admin":
+        if is_admin():
+            with a1:
+                if st.button("✓ Duyệt & chốt phiếu", type="primary",
+                             use_container_width=True, key=f"approve_{ma_phieu}"):
+                    ok, msg = _kk_approve(ma_phieu)
+                    if ok:
+                        load_phieu_kiem_ke.clear()
+                        st.success(msg)
+                        st.rerun()
+                    else:
+                        st.error(msg)
+            with a2:
+                if st.button("🗑 Hủy phiếu", use_container_width=True,
+                             key=f"cancel_mgr_{ma_phieu}"):
+                    ok, msg = _kk_cancel_phieu(ma_phieu)
+                    if ok:
+                        st.session_state.pop("kk_manage_selected", None)
+                        load_phieu_kiem_ke.clear()
+                        st.success(msg)
+                        st.rerun()
+                    else:
+                        st.error(msg)
+        else:
+            st.info("Chỉ admin mới có quyền duyệt phiếu kiểm kê.")
+    elif status == "Đã duyệt":
+        with a1:
+            _excel_download_button(lines, ma_phieu, key=f"dl_mgr_{ma_phieu}")
+
+    # ── KPI tiles + detail table ───────────────────────────────────────────
+    lines["Lệch"] = lines["sl_thuc_te"] - lines["ton_snapshot"]
+
+    if status == "Chờ duyệt admin":
+        gia_map = get_gia_ban_map()
+        lines["_gia"] = lines["ma_hang"].astype(str).map(gia_map).fillna(0).astype(int)
+        lines["_gt_thuc_te"] = lines["sl_thuc_te"] * lines["_gia"]
+        lines["_gt_lech"] = lines["Lệch"] * lines["_gia"]
+        tong_thuc_te_sl = int(lines["sl_thuc_te"].sum())
+        tong_thuc_te_gt = int(lines["_gt_thuc_te"].sum())
+        lech_tang = lines[lines["Lệch"] > 0]
+        lech_giam = lines[lines["Lệch"] < 0]
+        tong_tang_sl = int(lech_tang["Lệch"].sum())
+        tong_tang_gt = int(lech_tang["_gt_lech"].sum())
+        tong_giam_sl = int(lech_giam["Lệch"].sum())
+        tong_giam_gt = int(lech_giam["_gt_lech"].sum())
+        tong_lech_sl = tong_tang_sl + tong_giam_sl
+        tong_lech_gt = tong_tang_gt + tong_giam_gt
+        st.html(kpi_tiles_waiting_html(
+            tong_thuc_te_sl, tong_thuc_te_gt,
+            tong_tang_sl, tong_tang_gt,
+            tong_giam_sl, tong_giam_gt,
+            tong_lech_sl, tong_lech_gt,
+        ))
+    else:
+        st.html(kpi_tiles_scanning_html(
+            tong_ton=int(lines["ton_snapshot"].sum()),
+            tong_quet=int(lines["sl_thuc_te"].sum()),
+            tong_lech=int(lines["Lệch"].sum()),
+        ))
+
+    detail = lines.rename(columns={
+        "ma_hang": "Mã Hàng", "ten_hang": "Tên Hàng",
+        "ton_snapshot": "Tồn Kho", "sl_thuc_te": "SL Thực Tế",
+        "sl_quet": "SL Quét",
+    })
+    dcols = ["Mã Hàng", "Tên Hàng", "Tồn Kho", "SL Quét", "SL Thực Tế", "Lệch"]
+    if status == "Chờ duyệt admin":
+        detail["Giá trị lệch"] = lines["_gt_lech"]
+        dcols.append("Giá trị lệch")
+    dcols = [c for c in dcols if c in detail.columns]
+    st.markdown("")
+    st.dataframe(detail[dcols], use_container_width=True,
+                 hide_index=True, height=320)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Module entry
+# ═══════════════════════════════════════════════════════════════════════════
+
 def module_kiem_ke():
     inject_kiem_ke_css()
+    inject_audio_unlock_js()
+
     st.markdown("### 🧮 Kiểm kê")
-    st.caption("MVP v1.1: Quét +1, hỗ trợ lọc nhóm con, Hủy phiếu rác.")
+    st.caption("v2 redesign — quét nhanh, quản lý gọn.")
+
     active = get_active_branch()
     accessible = get_accessible_branches()
 
-    # PR 1 (skeleton): 4 sub-tab cũ → 2 tab v2. Tab "Quản lý phiếu" tạm bọc
-    # 3 sub-tab cũ (Danh sách / Tạo phiếu / Duyệt admin) để giữ nguyên logic.
-    # PR 4-6 sẽ refactor thành native st.dataframe + detail panel + @st.dialog
-    # theo HANDOFF_kiem_ke_v2_to_claude_code.md section 3.
     tab_scan, tab_manage = st.tabs(["Quét kiểm kê", "Quản lý phiếu"])
 
     with tab_scan:
-        try:
-            df = load_phieu_kiem_ke(tuple(accessible))
-            if df.empty:
-                st.info("Chưa có phiếu để quét.")
-            else:
-                candidates = df[df["trang_thai"] == "Đang kiểm"].copy() if "trang_thai" in df.columns else pd.DataFrame()
-                if candidates.empty:
-                    st.info("Không có phiếu ở trạng thái Đang kiểm.")
-                else:
-                    opts = [f"{r['ma_phieu_kk']} · {r.get('chi_nhanh','')} · {r.get('nhom_cha','')}" for _, r in candidates.iterrows()]
-                    idx = 0
-                    ma_saved = st.session_state.get("kk_active_ma")
-                    if ma_saved:
-                        for i, x in enumerate(opts):
-                            if x.startswith(ma_saved):
-                                idx = i; break
-
-                    picked = st.selectbox("Chọn phiếu đang kiểm:", opts, index=idx)
-                    ma_phieu = picked.split(" · ")[0]
-                    st.session_state["kk_active_ma"] = ma_phieu
-
-                    with st.form("kk_scan_form", clear_on_submit=True):
-                        code = st.text_input("Quét mã vạch / mã hàng:", key="kk_scan_code", placeholder="Đưa con trỏ ở đây và quét...")
-                        submitted = st.form_submit_button("Quét +1", use_container_width=True)
-                    if submitted:
-                        ok, msg = _kk_scan_plus_one(ma_phieu, code)
-                        if ok:
-                            st.success(f"✓ Đã cộng +1 cho mã {msg}")
-                            st.cache_data.clear()
-                        else:
-                            st.warning(msg)
-
-                    lines = _kk_get_lines(ma_phieu)
-                    if not lines.empty:
-                        view = lines.copy()
-                        view["Lệch Tạm"] = view["sl_thuc_te"] - view["ton_snapshot"]
-
-                        rename_map = {
-                            "id": "ID", "ma_hang": "Mã Hàng", "ma_vach": "Mã Vạch", "ten_hang": "Tên Hàng",
-                            "ton_snapshot": "Tồn Kho", "sl_quet": "SL Quét", "sl_thuc_te": "SL Thực Tế"
-                        }
-                        view = view.rename(columns=rename_map)
-                        cols = ["ID", "Mã Hàng", "Mã Vạch", "Tên Hàng", "Tồn Kho", "SL Quét", "SL Thực Tế", "Lệch Tạm"]
-                        cols = [c for c in cols if c in view.columns]
-
-                        editor_key = f"kk_editor_{ma_phieu}"
-                        st.caption("💡 *Mẹo: Nháy đúp vào ô thuộc cột **SL Thực Tế ✏️** để sửa trực tiếp.*")
-                        edited_df = st.data_editor(
-                            view[cols],
-                            use_container_width=True,
-                            hide_index=True,
-                            key=editor_key,
-                            height=360,
-                            column_config={
-                                "ID": None,
-                                "Mã Hàng": st.column_config.TextColumn(disabled=True),
-                                "Mã Vạch": st.column_config.TextColumn(disabled=True),
-                                "Tên Hàng": st.column_config.TextColumn(disabled=True),
-                                "Tồn Kho": st.column_config.NumberColumn(disabled=True),
-                                "SL Quét": st.column_config.NumberColumn(disabled=True),
-                                "Lệch Tạm": st.column_config.NumberColumn(disabled=True),
-                                "SL Thực Tế": st.column_config.NumberColumn(
-                                    "SL Thực Tế ✏️",
-                                    min_value=0,
-                                    step=1,
-                                    help="Nháy đúp để sửa số lượng thực tế"
-                                )
-                            }
-                        )
-
-                        changes = st.session_state.get(editor_key, {}).get("edited_rows", {})
-                        if changes:
-                            st.warning("⚠️ Bảng có thay đổi chưa lưu. Hãy bấm 'Lưu các dòng đã sửa' trước khi làm việc khác!")
-                            if st.button("💾 Lưu các dòng đã sửa", type="primary", use_container_width=True):
-                                try:
-                                    for row_idx, edit_data in changes.items():
-                                        if "SL Thực Tế" in edit_data:
-                                            new_sl = int(edit_data["SL Thực Tế"])
-                                            row_id = int(view.iloc[row_idx]["ID"])
-                                            supabase.table("phieu_kiem_ke_chi_tiet").update({
-                                                "sl_thuc_te": new_sl
-                                            }).eq("id", row_id).execute()
-                                    st.success("✓ Đã cập nhật số lượng thành công!")
-                                    st.cache_data.clear()
-                                    st.rerun()
-                                except Exception as e:
-                                    st.error(f"Lỗi khi lưu: {e}")
-
-                        st.markdown("---")
-                        c1, c2, c3 = st.columns(3)
-                        with c1: st.metric("Tổng tồn", f"{int(view['Tồn Kho'].sum())}")
-                        with c2: st.metric("Tổng quét", f"{int(view['SL Quét'].sum())}")
-                        with c3:
-                            lech = int(view["Lệch Tạm"].sum())
-                            st.metric("Tổng chênh lệch", f"{lech:+d}")
-
-                        st.markdown("---")
-                        # Nút Hủy luôn hiển thị (không phụ thuộc vào changes)
-                        if not changes:
-                            c_left, c_right = st.columns(2)
-                            with c_left:
-                                if st.button("Hoàn thành kiểm kê", type="primary", use_container_width=True):
-                                    ok, msg = _kk_complete(ma_phieu)
-                                    if ok: st.success(msg); st.rerun()
-                                    else: st.error(msg)
-                            with c_right:
-                                if st.button("🗑️ Hủy phiếu này", type="secondary", use_container_width=True):
-                                    ok, msg = _kk_cancel_phieu(ma_phieu)
-                                    if ok:
-                                        st.session_state.pop("kk_active_ma", None)
-                                        st.success(msg); st.rerun()
-                                    else: st.error(msg)
-                        else:
-                            # Khi có thay đổi chưa lưu: chỉ hiện nút Hủy, ẩn Hoàn thành
-                            if st.button("🗑️ Hủy phiếu này", type="secondary", use_container_width=True, key="kk_cancel_pending"):
-                                ok, msg = _kk_cancel_phieu(ma_phieu)
-                                if ok:
-                                    st.session_state.pop("kk_active_ma", None)
-                                    st.success(msg); st.rerun()
-                                else: st.error(msg)
-        except Exception as e:
-            st.error(f"Lỗi màn hình quét kiểm kê: {e}")
+        _render_tab_scan(active, accessible)
 
     with tab_manage:
-        sub_list, sub_create, sub_approve = st.tabs(
-            ["Danh sách phiếu", "Tạo phiếu", "Duyệt admin"]
-        )
-
-        with sub_list:
-            try:
-                df = load_phieu_kiem_ke(tuple(accessible))
-                if df.empty:
-                    st.info("Chưa có phiếu kiểm kê.")
-                else:
-                    view = df.copy()
-                    if "created_at" in view.columns:
-                        view["Ngày Tạo"] = (pd.to_datetime(view["created_at"], utc=True)
-                                            .dt.tz_convert("Asia/Ho_Chi_Minh")
-                                            .dt.strftime("%d/%m/%Y %H:%M"))
-                    rename_map = {
-                        "ma_phieu_kk": "Mã Phiếu", "chi_nhanh": "Chi Nhánh",
-                        "nhom_cha": "Nhóm Hàng", "trang_thai": "Trạng Thái",
-                        "created_by": "Người Tạo", "ghi_chu": "Ghi Chú"
-                    }
-                    view = view.rename(columns=rename_map)
-                    cols = ["Mã Phiếu", "Chi Nhánh", "Nhóm Hàng", "Trạng Thái", "Người Tạo", "Ngày Tạo", "Ghi Chú"]
-                    cols = [c for c in cols if c in view.columns]
-                    st.dataframe(view[cols], use_container_width=True, hide_index=True, height=380)
-
-                    # Xem chi tiết phiếu đã duyệt
-                    st.markdown("---")
-                    st.caption("📋 Xem chi tiết mặt hàng của một phiếu:")
-                    ma_options = view["Mã Phiếu"].tolist() if "Mã Phiếu" in view.columns else []
-                    picked_ma = st.selectbox("Chọn phiếu để xem chi tiết:", ["-- Chọn phiếu --"] + ma_options, key="kk_list_detail_pick")
-                    if picked_ma != "-- Chọn phiếu --":
-                        detail = _kk_get_lines(picked_ma)
-                        if detail.empty:
-                            st.info("Phiếu này chưa có dữ liệu chi tiết.")
-                        else:
-                            detail["Chênh lệch"] = detail["sl_thuc_te"] - detail["ton_snapshot"]
-                            detail_view = detail.rename(columns={
-                                "ma_hang": "Mã Hàng", "ten_hang": "Tên Hàng",
-                                "ton_snapshot": "Tồn Sổ Sách", "sl_thuc_te": "SL Thực Tế",
-                                "sl_quet": "SL Quét"
-                            })
-                            dcols = ["Mã Hàng", "Tên Hàng", "Tồn Sổ Sách", "SL Quét", "SL Thực Tế", "Chênh lệch"]
-                            dcols = [c for c in dcols if c in detail_view.columns]
-                            st.dataframe(detail_view[dcols], use_container_width=True, hide_index=True, height=360)
-
-                            # Xuất Excel import KiotViet — đặt ở đây để luôn truy cập được
-                            # kể cả sau khi phiếu đã duyệt xong
-                            import io
-                            df_export = detail[["ma_hang", "sl_thuc_te"]].copy()
-                            df_export.columns = ["Mã hàng", "Số lượng"]
-                            buf = io.BytesIO()
-                            df_export.to_excel(buf, index=False)
-                            buf.seek(0)
-                            st.download_button(
-                                label="📥 Xuất Excel import KiotViet",
-                                data=buf,
-                                file_name=f"KiemKe_{picked_ma}.xlsx",
-                                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                use_container_width=True,
-                                key=f"dl_kk_{picked_ma}"
-                            )
-            except Exception as e:
-                st.error(f"Lỗi tải danh sách: {e}")
-
-        with sub_create:
-            cn_create = active
-            if is_ke_toan_or_admin() and len(accessible) > 1:
-                cn_create = st.selectbox("Chi nhánh kiểm kê:", accessible, index=max(0, accessible.index(active)))
-
-            ma_du_kien = _kk_gen_ma_phieu()
-            st.info(f"🏷️ Mã phiếu dự kiến: **{ma_du_kien}**")
-
-            master = load_hang_hoa()
-            if master.empty:
-                st.warning("Chưa có dữ liệu hàng hóa.")
-            else:
-                # Dùng loai_hang + thuong_hieu nếu có, fallback nhom_hang cũ
-                if "loai_hang" in master.columns:
-                    master["_cha"] = master["loai_hang"].fillna("")
-                    master["_con"] = master.get("thuong_hieu", pd.Series([""] * len(master))).fillna("")
-                else:
-                    nhom_col = master["nhom_hang"].fillna("") if "nhom_hang" in master.columns else pd.Series([""] * len(master))
-                    split = nhom_col.str.split(">>", n=1, expand=True)
-                    master["_cha"] = split[0].fillna("").str.strip()
-                    master["_con"] = split[1].fillna("").str.strip() if len(split.columns) > 1 else ""
-
-                nhom_cha_list = sorted([str(x) for x in master["_cha"].unique() if str(x)])
-
-                if not nhom_cha_list:
-                    st.warning("Không tìm thấy dữ liệu nhóm hàng.")
-                else:
-                    # Build danh sách phẳng: gồm cả nhóm cha và nhóm con "Cha >> Con"
-                    nhom_flat = []
-                    for cha in nhom_cha_list:
-                        nhom_flat.append(cha)
-                        con_list = sorted([str(x) for x in master[master["_cha"] == cha]["_con"].unique() if str(x)])
-                        for con in con_list:
-                            nhom_flat.append(f"{cha}>>{con}")  # khớp format DB, không có dấu cách
-
-                    nhom_chon_list = st.multiselect(
-                        "Chọn nhóm hàng kiểm kê (có thể chọn nhiều):",
-                        options=nhom_flat,
-                        placeholder="Chọn ít nhất 1 nhóm...",
-                        key=f"kk_nhom_select_{st.session_state.get('kk_create_count', 0)}"
-                    )
-
-                    if nhom_chon_list:
-                        st.caption(f"Đã chọn: {', '.join(nhom_chon_list)}")
-                        # Lưu dưới dạng chuỗi phân cách "|" để truyền vào hàm tạo phiếu
-                        nhom_chon = "|".join(nhom_chon_list)
-                    else:
-                        nhom_chon = ""
-
-                    ghi_chu = st.text_area("Ghi chú phiếu:", key=f"kk_ghi_chu_{st.session_state.get('kk_create_count', 0)}", placeholder="Ghi chú đợt kiểm kê...")
-                    if st.button("Tạo phiếu kiểm kê", type="primary", use_container_width=True, disabled=not nhom_chon):
-                        ok, msg = _kk_create_phieu(cn_create, nhom_chon, ghi_chu)
-                        if ok:
-                            st.session_state["kk_active_ma"] = msg
-                            # Tăng counter để reset multiselect và text_area
-                            st.session_state["kk_create_count"] = st.session_state.get("kk_create_count", 0) + 1
-                            st.success(f"Đã tạo phiếu {msg}.")
-                            st.rerun()
-                        else:
-                            st.error(msg)
-
-        with sub_approve:
-            if not is_admin():
-                st.info("Chỉ admin có quyền duyệt phiếu kiểm kê.")
-            else:
-                try:
-                    df = load_phieu_kiem_ke(tuple(accessible))
-                    pending = df[df["trang_thai"] == "Chờ duyệt admin"].copy() if (not df.empty and "trang_thai" in df.columns) else pd.DataFrame()
-                    if pending.empty:
-                        st.info("Không có phiếu chờ duyệt.")
-                    else:
-                        opts = [f"{r['ma_phieu_kk']} · {r.get('chi_nhanh','')} · {r.get('nhom_cha','')}" for _, r in pending.iterrows()]
-                        picked = st.selectbox("Phiếu chờ duyệt:", opts, key="kk_pending_pick")
-                        ma_phieu = picked.split(" · ")[0]
-                        lines = _kk_get_lines(ma_phieu)
-                        if not lines.empty:
-                            lines["Lệch Dự Kiến"] = lines["sl_thuc_te"] - lines["ton_snapshot"]
-
-                            # Lấy giá bán để tính giá trị
-                            gia_map = get_gia_ban_map()
-                            lines["_gia"] = lines["ma_hang"].astype(str).map(gia_map).fillna(0).astype(int)
-                            lines["_gt_thuc_te"] = lines["sl_thuc_te"] * lines["_gia"]
-                            lines["_gt_lech"] = lines["Lệch Dự Kiến"] * lines["_gia"]
-
-                            tong_thuc_te_sl = int(lines["sl_thuc_te"].sum())
-                            tong_thuc_te_gt = int(lines["_gt_thuc_te"].sum())
-                            lech_tang = lines[lines["Lệch Dự Kiến"] > 0]
-                            lech_giam = lines[lines["Lệch Dự Kiến"] < 0]
-                            tong_tang_sl = int(lech_tang["Lệch Dự Kiến"].sum())
-                            tong_tang_gt = int(lech_tang["_gt_lech"].sum())
-                            tong_giam_sl = int(lech_giam["Lệch Dự Kiến"].sum())
-                            tong_giam_gt = int(lech_giam["_gt_lech"].sum())
-                            tong_lech_sl = tong_tang_sl + tong_giam_sl
-                            tong_lech_gt = tong_tang_gt + tong_giam_gt
-
-                            def fmt_vnd(x): return f"{x:,.0f}".replace(",", ".")
-
-                            m1, m2, m3, m4 = st.columns(4)
-                            with m1: st.metric(f"Tổng thực tế ({tong_thuc_te_sl})", fmt_vnd(tong_thuc_te_gt))
-                            with m2: st.metric(f"Lệch tăng (+{tong_tang_sl})", fmt_vnd(tong_tang_gt))
-                            with m3: st.metric(f"Lệch giảm ({tong_giam_sl})", fmt_vnd(abs(tong_giam_gt)))
-                            with m4: st.metric(f"Tổng chênh ({tong_lech_sl:+d})", fmt_vnd(tong_lech_gt))
-                            view = lines.rename(columns={
-                                "ma_hang": "Mã Hàng", "ten_hang": "Tên Hàng",
-                                "ton_snapshot": "Tồn Kho", "sl_thuc_te": "SL Thực Tế"
-                            })
-                            cols = ["Mã Hàng", "Tên Hàng", "Tồn Kho", "SL Thực Tế", "Lệch Dự Kiến"]
-                            cols = [c for c in cols if c in view.columns]
-                            st.dataframe(view[cols], use_container_width=True, hide_index=True, height=320)
-                            st.warning("Lưu ý: Rà soát kỹ trước khi duyệt.")
-
-                            c_left, c_right = st.columns(2)
-                            with c_left:
-                                if st.button("Duyệt & chốt phiếu", type="primary", use_container_width=True):
-                                    ok, msg = _kk_approve(ma_phieu)
-                                    if ok: st.success(msg); st.rerun()
-                                    else: st.error(msg)
-                            with c_right:
-                                if st.button("🗑️ Hủy / Xóa phiếu", type="secondary", use_container_width=True):
-                                    ok, msg = _kk_cancel_phieu(ma_phieu)
-                                    if ok: st.success(msg); st.rerun()
-                                    else: st.error(msg)
-                except Exception as e:
-                    st.error(f"Lỗi màn hình duyệt phiếu: {e}")
+        _render_tab_manage(active, accessible)

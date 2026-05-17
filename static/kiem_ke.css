@@ -1,17 +1,220 @@
-/* static/kiem_ke.css — Streamlit native widget overrides for kiem_ke v2.
+/* static/kiem_ke.css — Streamlit native widget overrides cho kiem_ke v2.
  *
- * Loaded via utils/kk_style.py::inject_kiem_ke_css() using
+ * Loaded qua utils/kk_style.py::inject_kiem_ke_css() bằng
  * st.markdown(unsafe_allow_html=True). Per HANDOFF section 1.1, st.html()
- * strips <style> via DOMPurify silently — use st.markdown for global CSS.
+ * strip <style> qua DOMPurify silently — st.markdown là path an toàn.
  *
- * Scope: this file holds only font @import + selectors targeting
- * Streamlit-rendered widgets via [data-testid="..."]. Content elements
- * inside st.html() (div/span/section) must use inline style="..." with
- * var(--token); their classes do not cross the iframe boundary.
+ * Scope: file này chỉ chứa font @import + selectors target
+ * Streamlit-rendered widgets qua [data-testid="..."]. Content elements
+ * trong st.html() (div/span/section) phải dùng inline style="..." với
+ * var(--token); class không vượt iframe boundary.
  *
- * Design tokens (:root variables), @keyframes, and the DEBUG MARKER badge
- * live in utils/kk_style.py::_CSS_VARS_BLOCK — kept in Python so they ship
- * with the helper module as a single unit.
+ * Design tokens (:root vars) + @keyframes live trong
+ * utils/kk_style.py::_CSS_VARS_BLOCK (Python để ship cùng helper module).
  */
 
 @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+
+/* ── Tabs: green underline cho active tab ─────────────────────────────── */
+
+div[data-testid="stTabs"] [data-baseweb="tab-list"] {
+    gap: 8px;
+    border-bottom: 1px solid var(--line);
+}
+div[data-testid="stTabs"] button[data-baseweb="tab"] {
+    font-family: var(--sans);
+    font-weight: 600;
+    color: var(--ink-2);
+    padding: 10px 14px;
+}
+div[data-testid="stTabs"] button[data-baseweb="tab"][aria-selected="true"] {
+    color: var(--green-700);
+}
+div[data-testid="stTabs"] [data-baseweb="tab-highlight"] {
+    background-color: var(--green-700) !important;
+    height: 3px !important;
+    border-radius: 2px;
+}
+
+
+/* ── Text input: scan field + search ──────────────────────────────────── */
+
+div[data-testid="stTextInput"] input,
+div[data-testid="stTextInputRootElement"] input {
+    font-family: var(--mono);
+    font-size: 15px;
+    padding: 10px 14px;
+    border: 1.5px solid var(--line-strong);
+    border-radius: 12px;
+    background: var(--surface);
+    color: var(--ink);
+}
+div[data-testid="stTextInput"] input:focus,
+div[data-testid="stTextInputRootElement"] input:focus {
+    border-color: var(--green-600);
+    box-shadow: 0 0 0 4px var(--green-100);
+    outline: none;
+}
+div[data-testid="stTextInput"] input::placeholder {
+    color: var(--ink-3);
+    font-family: var(--sans);
+}
+
+/* Scan input inside form: bigger */
+div[data-testid="stForm"] div[data-testid="stTextInput"] input {
+    font-size: 17px;
+    padding: 14px 16px;
+    border-radius: 14px;
+}
+
+
+/* ── Selectbox: align with text input ─────────────────────────────────── */
+
+div[data-testid="stSelectbox"] > div > div {
+    border-radius: 10px;
+    border-color: var(--line-strong);
+}
+
+
+/* ── Text area: dialog form ───────────────────────────────────────────── */
+
+div[data-testid="stTextArea"] textarea {
+    font-family: var(--sans);
+    border-radius: 10px;
+    border: 1px solid var(--line-strong);
+    padding: 10px 12px;
+}
+div[data-testid="stTextArea"] textarea:focus {
+    border-color: var(--green-600);
+    box-shadow: 0 0 0 3px var(--green-100);
+    outline: none;
+}
+
+
+/* ── Buttons ──────────────────────────────────────────────────────────── */
+
+div[data-testid="stButton"] button,
+div[data-testid="stFormSubmitButton"] button,
+div[data-testid="stDownloadButton"] button {
+    font-family: var(--sans);
+    font-weight: 600;
+    font-size: 14px;
+    border-radius: 10px;
+    padding: 8px 16px;
+    transition: transform .08s ease, box-shadow .15s ease,
+                background .15s ease, border-color .15s ease;
+    border: 1px solid var(--line-strong);
+    background: var(--surface);
+    color: var(--ink);
+}
+div[data-testid="stButton"] button:hover,
+div[data-testid="stFormSubmitButton"] button:hover,
+div[data-testid="stDownloadButton"] button:hover {
+    border-color: var(--green-600);
+    color: var(--green-700);
+    background: var(--surface-2);
+}
+div[data-testid="stButton"] button:active {
+    transform: translateY(1px);
+}
+
+/* Primary buttons — green accent */
+div[data-testid="stButton"] button[kind="primary"],
+div[data-testid="stButton"] button[data-testid="baseButton-primary"],
+div[data-testid="stFormSubmitButton"] button[kind="primary"],
+div[data-testid="stFormSubmitButton"] button[data-testid="baseButton-primary"] {
+    background: var(--green-700);
+    border-color: var(--green-700);
+    color: #ffffff;
+    box-shadow: var(--shadow-1);
+}
+div[data-testid="stButton"] button[kind="primary"]:hover,
+div[data-testid="stButton"] button[data-testid="baseButton-primary"]:hover,
+div[data-testid="stFormSubmitButton"] button[kind="primary"]:hover,
+div[data-testid="stFormSubmitButton"] button[data-testid="baseButton-primary"]:hover {
+    background: var(--green-800);
+    border-color: var(--green-800);
+    color: #ffffff;
+    box-shadow: var(--shadow-2);
+}
+
+
+/* ── Dataframe + data_editor: header + grid ───────────────────────────── */
+
+div[data-testid="stDataFrame"],
+div[data-testid="stDataEditor"] {
+    border-radius: 14px;
+    overflow: hidden;
+    border: 1px solid var(--line);
+    box-shadow: var(--shadow-1);
+}
+div[data-testid="stDataFrame"] [data-testid="StyledDataFrameDataContainer"],
+div[data-testid="stDataEditor"] [data-testid="StyledDataFrameDataContainer"] {
+    border-radius: 0;
+}
+/* Header cells — surface-2 background, uppercase tiny caps */
+div[data-testid="stDataFrame"] .glideDataEditor,
+div[data-testid="stDataEditor"] .glideDataEditor {
+    --gdg-bg-header: var(--surface-2);
+    --gdg-bg-header-hovered: var(--surface-3);
+    --gdg-bg-cell: var(--surface);
+    --gdg-text-header: var(--ink-2);
+    --gdg-text-dark: var(--ink);
+    --gdg-text-light: var(--ink-2);
+    --gdg-border-color: var(--line);
+    --gdg-accent-color: var(--green-600);
+    --gdg-accent-light: var(--green-50);
+    --gdg-cell-horizontal-padding: 12px;
+    --gdg-font-family: var(--sans);
+    --gdg-header-font-style: 600 12px;
+}
+
+
+/* ── Form container: trim native border (we have our own scan input wrap) */
+
+div[data-testid="stForm"] {
+    border: none;
+    padding: 0;
+}
+
+
+/* ── Caption styling ──────────────────────────────────────────────────── */
+
+div[data-testid="stCaptionContainer"] {
+    color: var(--ink-3);
+    font-size: 12.5px;
+}
+
+
+/* ── Metric (used in legacy fallback paths) ───────────────────────────── */
+
+div[data-testid="stMetric"] {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 12px;
+}
+div[data-testid="stMetric"] [data-testid="stMetricLabel"] {
+    color: var(--ink-3);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    font-weight: 600;
+}
+div[data-testid="stMetric"] [data-testid="stMetricValue"] {
+    font-family: var(--mono);
+    color: var(--ink);
+    font-size: 18px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+
+/* ── Dialog: tighter padding + green accent ───────────────────────────── */
+
+div[data-testid="stModal"] [role="dialog"],
+div[role="dialog"][aria-modal="true"] {
+    border-radius: 18px;
+    box-shadow: 0 24px 60px -12px rgba(15,23,42,.35);
+}

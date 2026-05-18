@@ -376,16 +376,11 @@ def _apply_manage_filter(df: pd.DataFrame, filt: str) -> pd.DataFrame:
 @st.dialog("Tạo phiếu kiểm kê mới")
 def _dlg_create_phieu(active: str, accessible: list[str]) -> None:
     """Dialog form thay thế sub-tab Tạo phiếu cũ (HANDOFF section 4)."""
+    # Lock chi nhánh = active. View/Quét/Quản lý chỉ thấy phiếu của active,
+    # nên tạo phiếu cho branch khác sẽ tạo "phiếu ẩn" — disable selector.
     cn_create = active
-    if is_ke_toan_or_admin() and len(accessible) > 1:
-        cn_create = st.selectbox(
-            "Chi nhánh kiểm kê:", accessible,
-            index=max(0, accessible.index(active)),
-            key="kk_dlg_cn",
-        )
-
-    ma_du_kien = _kk_gen_ma_phieu()
-    st.info(f"🏷️ Mã phiếu dự kiến: **{ma_du_kien}**")
+    st.info(f"🏷️ Mã phiếu dự kiến: **{_kk_gen_ma_phieu()}**  ·  "
+            f"📍 Chi nhánh: **{active}**")
 
     master = load_hang_hoa()
     if master.empty:
@@ -472,8 +467,10 @@ def _excel_download_button(lines: pd.DataFrame, ma_phieu: str, key: str,
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _render_tab_scan(active: str, accessible: list[str]) -> None:
+    # Branch scoping: chỉ load phiếu của chi nhánh đang đăng nhập (active),
+    # không phải tất cả accessible. Áp dụng cho mọi role (admin/kế toán/nv).
     try:
-        df = load_phieu_kiem_ke(tuple(accessible))
+        df = load_phieu_kiem_ke((active,))
     except Exception as e:
         st.error(f"Lỗi tải danh sách phiếu: {e}")
         return
@@ -703,8 +700,9 @@ _STATUS_EMOJI = {
 
 
 def _render_tab_manage(active: str, accessible: list[str]) -> None:
+    # Branch scoping: như _render_tab_scan, chỉ load phiếu chi nhánh active.
     try:
-        df = load_phieu_kiem_ke(tuple(accessible))
+        df = load_phieu_kiem_ke((active,))
     except Exception as e:
         st.error(f"Lỗi tải danh sách phiếu: {e}")
         return
